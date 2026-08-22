@@ -495,6 +495,17 @@ export class ClaudeAgent {
         (payload.error && typeof payload.error === 'object' && typeof payload.error.message === 'string' && payload.error.message) ||
         'O Claude recusou o login. Tente de novo.';
       this.logLogin(`troca de token (${body.grant_type}): HTTP ${response.status} — ${detail}`);
+      // 429 aqui NAO e culpa do aluno nem defeito do Edvid: o endpoint esta
+      // saudavel (sondado — codigo invalido devolve 400 invalid_grant), e a
+      // Anthropic esta limitando a troca de token. As tentativas com espera
+      // ja rodaram e nao adiantaram, entao a saida honesta e dizer o que
+      // aconteceu e oferecer o caminho que NAO passa por esse limite.
+      if (response.status === 429) {
+        throw new OauthHttpError(
+          'A Anthropic está limitando as tentativas de login agora. Espere alguns minutos e tente de novo — ou conecte pela chave de API, que não passa por esse limite.',
+          response.status,
+        );
+      }
       throw new OauthHttpError(detail, response.status);
     }
     this.logLogin(`troca de token (${body.grant_type}): HTTP ${response.status} ok`);

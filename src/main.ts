@@ -29,8 +29,6 @@ import {
   catalogEntry,
   chatRoute,
   keyProbe,
-  routeCandidates,
-  shouldFailover,
 } from './ai-catalog';
 import {
   geminiAspect,
@@ -3508,11 +3506,32 @@ function catalogFile(): string {
 }
 
 async function readStoredCatalog(): Promise<StoredCatalog> {
+  let stored: StoredCatalog;
   try {
-    return JSON.parse(await readFile(catalogFile(), 'utf8')) as StoredCatalog;
+    stored = JSON.parse(await readFile(catalogFile(), 'utf8')) as StoredCatalog;
   } catch {
     return {};
   }
+  // PROVEDOR QUE SAIU DO CATALOGO nao pode continuar valendo. Quando as IAs
+  // gratuitas foram removidas, o "ollama" guardado aqui continuava sendo
+  // escrito como model_provider no config.toml — e com um provedor
+  // customizado ativo o Codex responde `account: null` no account/read, ou
+  // seja, o Edvid dizia que o ChatGPT NAO estava conectado mesmo com o login
+  // feito e o token no disco. Foi o defeito que o aluno relatou.
+  const conhecido = (id: string): boolean => catalogEntry(id) !== null;
+  const chat = asText(stored.chatProviderId);
+  const providers = Object.fromEntries(
+    Object.entries(stored.providers ?? {}).filter(([id]) => conhecido(id)),
+  );
+  const limpo: StoredCatalog = {
+    ...stored,
+    providers,
+    chatProviderId: chat && conhecido(chat) ? chat : null,
+  };
+  if (JSON.stringify(limpo) !== JSON.stringify(stored)) {
+    await writeStoredCatalog(limpo).catch(() => {});
+  }
+  return limpo;
 }
 
 async function writeStoredCatalog(stored: StoredCatalog): Promise<void> {
@@ -3561,129 +3580,6 @@ function broadcastActiveModel(state: ActiveModelState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('ai-catalog:active-model', state);
   }
-}
-
-// Provedor bateu no limite: descansa 30 min. E o que faz o Edvid seguir para o
-// proximo em vez de encerrar a geracao.
-const CATALOG_COOLDOWN_MS = 30 * 60_000;
-
-async function markCatalogCooldown(providerId: string): Promise<void> {
-  const stored = await readStoredCatalog();
-  const providers = stored.providers ?? {};
-  const saved = providers[providerId];
-  if (!saved) return;
-  providers[providerId] = { ...saved, cooldownUntil: Date.now() + CATALOG_COOLDOWN_MS };
-  await writeStoredCatalog({ ...stored, providers });
-  broadcastCatalog(catalogStateFrom({ ...stored, providers }));
-}
-
-// Uma imagem, num provedor do catalogo. Cada formato tem seu jeito de pedir e
-// de devolver os bytes; o resto do aplicativo so ve Buffer ou erro.
-async function generateCatalogImage(
-  choice: { providerId: string; modelId: string },
-  credentials: Record<string, string>,
-  prompt: string,
-  uso: ImageUse | null,
-): Promise<Buffer> {
-  const framed = promptWithFraming(prompt, uso);
-  if (choice.providerId === 'cloudflare') {
-    const accountId = asText(credentials.accountId);
-    const { width, height } = pixelSize(uso);
-    // Largura e altura sao opcionais no Workers AI. Se o modelo recusar o
-    // tamanho, a segunda chamada vai sem eles: melhor uma imagem no formato
-    // errado do que nenhuma imagem.
-    const call = (withSize: boolean): Promise<Response> => net.fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${choice.modelId}`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${credentials.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: framed, steps: 4, ...(withSize ? { width, height } : {}) }),
-      },
-    );
-    let response = await call(uso !== null);
-    if (!response.ok && response.status === 400 && uso !== null) response = await call(false);
-    const payload = (await response.json().catch(() => null)) as
-      | { result?: { image?: string }; errors?: { message?: string }[] }
-      | null;
-    if (!response.ok || !payload?.result?.image) {
-      const detail = payload?.errors?.[0]?.message ?? `HTTP ${response.status}`;
-      throw new OpenRouterLikeError(detail, response.status);
-    }
-    return Buffer.from(payload.result.image, 'base64');
-  }
-
-  if (choice.providerId === 'openrouter') {
-    const response = await net.fetch('https://openrouter.ai/api/v1/images', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${credentials.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: choice.modelId, prompt: framed }),
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { data?: { b64_json?: string }[]; error?: { message?: string } }
-      | null;
-    const base64 = payload?.data?.[0]?.b64_json;
-    if (!response.ok || !base64) {
-      const detail = payload?.error?.message ?? `HTTP ${response.status}`;
-      throw new OpenRouterLikeError(detail, response.status);
-    }
-    return Buffer.from(base64, 'base64');
-  }
-
-  throw new OpenRouterLikeError(`Provedor ${choice.providerId} não sabe gerar imagem.`, null);
-}
-
-class OpenRouterLikeError extends Error {
-  constructor(message: string, readonly status: number | null) {
-    super(message);
-  }
-}
-
-// Gera passando pela CADEIA do catalogo: o primeiro que responder entrega. Quem
-// bater no limite entra em descanso e a vez passa adiante, com aviso no chat.
-async function generateImageFromCatalog(
-  prompt: string,
-  uso: ImageUse | null,
-  onlyProvider: string | null = null,
-): Promise<Buffer | null> {
-  const stored = await readStoredCatalog();
-  const state = catalogStateFrom(stored);
-  const connected = state.connections
-    .filter((connection) => connection.connected)
-    .map((connection) => ({ id: connection.id, cooldownUntil: connection.cooldownUntil }));
-  if (connected.length === 0) return null;
-  const candidates = routeCandidates({
-    capability: 'imagem',
-    connected: onlyProvider ? connected.filter((item) => item.id === onlyProvider) : connected,
-    freeOnly: state.freeOnly,
-    now: Date.now(),
-  });
-  let lastError: Error | null = null;
-  for (const [index, choice] of candidates.entries()) {
-    const credentials = stored.providers?.[choice.providerId]?.fields ?? {};
-    broadcastActiveModel({
-      role: 'image',
-      providerId: choice.providerId,
-      providerName: choice.providerName,
-      modelLabel: choice.modelLabel,
-      free: choice.free,
-    });
-    try {
-      return await generateCatalogImage(choice, credentials, prompt, uso);
-    } catch (error) {
-      const status = error instanceof OpenRouterLikeError ? error.status : null;
-      const message = error instanceof Error ? error.message : String(error);
-      lastError = error instanceof Error ? error : new Error(message);
-      if (!shouldFailover(status, message) || index === candidates.length - 1) break;
-      await markCatalogCooldown(choice.providerId);
-      const next = candidates[index + 1];
-      broadcastCodexEvent({
-        type: 'error',
-        message: `${choice.providerName} atingiu o limite. Continuando com ${next.providerName}.`,
-      });
-    }
-  }
-  if (lastError) throw lastError;
-  return null;
 }
 
 // Motor de chat vindo do catálogo (ex.: Ollama). Devolve o que o Codex precisa
@@ -4005,15 +3901,10 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
     const provider = aiRoles.image;
     // O catalogo tem prioridade sobre as contas fixas: e onde estao as opcoes
     // de camada gratuita, e a cadeia dele ja troca de provedor sozinha.
-    const catalogState = catalogStateFrom(await readStoredCatalog());
-    const catalogHasImage = catalogState.connections.some(
-      (connection) => connection.connected
-        && (catalogEntry(connection.id)?.capabilities.includes('imagem') ?? false),
-    );
-    if (!provider && !catalogHasImage && !aiRoles.imageCatalog) {
+    if (!provider) {
       broadcastCodexEvent({
         type: 'error',
-        message: `A edição pediu ${pending.length === 1 ? 'uma imagem' : `${pending.length} imagens`}, mas nenhuma IA de imagem está conectada. Conecte uma IA em Configurações → Conexões (há opções com camada gratuita).`,
+        message: `A edição pediu ${pending.length === 1 ? 'uma imagem' : `${pending.length} imagens`}, mas nenhuma IA de imagem está conectada. Conecte o ChatGPT ou o Gemini em Configurações → Conexões.`,
       });
       return { status: 'error', error: 'Nenhuma IA de imagem conectada.' };
     }
@@ -4024,20 +3915,7 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
     for (const request of pending) {
       const target = path.join(imagesDirectory, request.arquivo);
       try {
-        // A ESCOLHA DO ALUNO manda. Antes o catálogo vencia sempre que
-        // estivesse conectado, e o seletor de imagem era decorativo: ele via
-        // a Cloudflare na lista e continuava usando o Gemini.
-        const escolhaCatalogo = aiRoles.imageCatalog;
-        const useCatalog = escolhaCatalogo
-          ? true
-          : (catalogHasImage && !provider);
-        const fromCatalog = useCatalog
-          ? await generateImageFromCatalog(request.prompt, request.uso, escolhaCatalogo)
-          : null;
-        if (fromCatalog) {
-          await mkdir(imagesDirectory, { recursive: true });
-          await writeFile(target, fromCatalog);
-        } else if (provider === 'gemini') {
+        if (provider === 'gemini') {
           const image = await (await geminiAgentReady()).generateImage(
             promptWithFraming(request.prompt, request.uso),
             geminiAspect(request.uso),

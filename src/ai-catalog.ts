@@ -99,43 +99,6 @@ export const AI_CATALOG: AiCatalogEntry[] = [
     note: 'Chave do Google AI Studio. MEDIDO em conta real: a chave NÃO gera imagem na camada gratuita — o Google responde que a cota acabou. Serve para texto; para imagem grátis, use a Cloudflare.',
   },
   {
-    id: 'cloudflare',
-    name: 'Cloudflare Workers AI',
-    capabilities: ['imagem', 'texto'],
-    pricing: 'free',
-    auth: ['apikey'],
-    keyUrl: 'https://dash.cloudflare.com/profile/api-tokens',
-    credentials: [
-      { key: 'accountId', label: 'Account ID', secret: false, placeholder: 'ID da conta Cloudflare' },
-      { key: 'apiKey', label: 'API Token', secret: true },
-    ],
-    models: [
-      { id: '@cf/black-forest-labs/flux-1-schnell', label: 'FLUX.1 Schnell', capability: 'imagem', free: true },
-    ],
-    note: 'Camada gratuita diária generosa (cerca de 2 mil imagens por dia).',
-  },
-  {
-    id: 'ollama',
-    name: 'Ollama Cloud',
-    capabilities: ['texto'],
-    pricing: 'mixed',
-    auth: ['apikey'],
-    keyUrl: 'https://ollama.com/settings/keys',
-    credentials: [{ key: 'apiKey', label: 'Chave de API', secret: true }],
-    openaiBaseUrl: 'https://ollama.com/v1',
-    envKey: 'OLLAMA_API_KEY',
-    models: [
-      // Sondado em ollama.com/api/tags. Modelos grandes de texto, sem imagem.
-      { id: 'gpt-oss:120b', label: 'GPT-OSS 120B', capability: 'texto', free: true },
-      { id: 'qwen3.5:397b', label: 'Qwen3.5 397B', capability: 'texto', free: true },
-      { id: 'deepseek-v4-flash:preview', label: 'DeepSeek V4 Flash', capability: 'texto', free: true },
-    ],
-    // Fala o formato da OpenAI em https://ollama.com/v1/chat/completions
-    // (verificado: responde 401 sem chave, 200 em /v1/models) — e por isso
-    // pode virar motor do chat quando o papel de texto entrar no catalogo.
-    note: 'Modelos grandes de texto na nuvem. Não gera imagem.',
-  },
-  {
     id: 'treblo',
     name: 'Treblo',
     capabilities: ['musica'],
@@ -151,23 +114,6 @@ export const AI_CATALOG: AiCatalogEntry[] = [
     ],
     note: 'Trilha sonora sob medida. Créditos gratuitos no cadastro; depois é por assinatura.',
   },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    capabilities: ['texto', 'imagem'],
-    pricing: 'mixed',
-    auth: ['apikey'],
-    keyUrl: 'https://openrouter.ai/keys',
-    credentials: [{ key: 'apiKey', label: 'Chave de API', secret: true }],
-    openaiBaseUrl: 'https://openrouter.ai/api/v1',
-    envKey: 'OPENROUTER_API_KEY',
-    models: [
-      { id: 'openai/gpt-oss-120b:free', label: 'GPT-OSS 120B (grátis)', capability: 'texto', free: true },
-      { id: 'google/gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', capability: 'imagem', free: false },
-      { id: 'openai/gpt-5-image-mini', label: 'GPT-5 Image Mini', capability: 'imagem', free: false },
-    ],
-    note: 'Uma chave, muitos modelos. Os modelos de imagem são pagos (frações de centavo por imagem).',
-  },
 ];
 
 export type ConnectedProvider = {
@@ -176,60 +122,8 @@ export type ConnectedProvider = {
   cooldownUntil?: number | null;
 };
 
-export type RouteRequest = {
-  capability: AiCapability;
-  connected: ConnectedProvider[];
-  // Ligado pelo aluno: so entra modelo que nao gasta dinheiro dele.
-  freeOnly: boolean;
-  // Agora, em ms. Recebido de fora para o modulo continuar puro.
-  now: number;
-};
-
-export type RouteChoice = {
-  providerId: string;
-  providerName: string;
-  modelId: string;
-  modelLabel: string;
-  free: boolean;
-};
-
-export function catalogEntry(providerId: string): AiCatalogEntry | null {
-  return AI_CATALOG.find((entry) => entry.id === providerId) ?? null;
-}
-
-// Todos os candidatos capazes de atender o papel, do melhor para o pior.
-// Ordem: gratuito antes de pago (o aluno nao paga sem precisar) e, dentro do
-// mesmo preco, a ordem em que o provedor aparece no catalogo.
-export function routeCandidates(request: RouteRequest): RouteChoice[] {
-  const candidates: RouteChoice[] = [];
-  for (const connected of request.connected) {
-    if (connected.cooldownUntil && connected.cooldownUntil > request.now) continue;
-    const entry = catalogEntry(connected.id);
-    if (!entry) continue;
-    for (const model of entry.models) {
-      if (model.capability !== request.capability) continue;
-      if (request.freeOnly && !model.free) continue;
-      candidates.push({
-        providerId: entry.id,
-        providerName: entry.name,
-        modelId: model.id,
-        modelLabel: model.label,
-        free: model.free,
-      });
-    }
-  }
-  return candidates.sort((a, b) => Number(b.free) - Number(a.free));
-}
-
-export function routeFor(request: RouteRequest): RouteChoice | null {
-  return routeCandidates(request)[0] ?? null;
-}
-
-// Erro que significa "tente outro provedor" em vez de "desista": limite de uso
-// e indisponibilidade passam; prompt recusado ou chave errada, nao.
-export function shouldFailover(status: number | null, message: string): boolean {
-  if (status === 429 || (status !== null && status >= 500)) return true;
-  return /limit|quota|exceeded|unavailable|sem conexão|timeout|esgotad/iu.test(message);
+export function catalogEntry(id: string): AiCatalogEntry | null {
+  return AI_CATALOG.find((entry) => entry.id === id) ?? null;
 }
 
 // --- VERIFICACAO DE CHAVE --------------------------------------------------
@@ -271,27 +165,6 @@ export function keyProbe(
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
         refusedStatus: [401, 403],
       };
-    case 'ollama':
-      return {
-        url: 'https://ollama.com/api/tags',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        refusedStatus: [401, 403],
-      };
-    case 'openrouter':
-      return {
-        url: 'https://openrouter.ai/api/v1/key',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        refusedStatus: [401, 403],
-      };
-    case 'cloudflare': {
-      const accountId = credentials.accountId ?? '';
-      if (!accountId) return null;
-      return {
-        url: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/models/search?per_page=1`,
-        headers: { Authorization: `Bearer ${apiKey}` },
-        refusedStatus: [400, 401, 403],
-      };
-    }
     default:
       // Treblo tem verificacao propria (POST) e vive no main; qualquer outro
       // provedor novo cai aqui e o teste diz isso, em vez de mentir.

@@ -1213,6 +1213,31 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.22.0: as IAs gratuitas saíram, e o motivo é mais forte do que preferência.
+  O aluno relatou que ChatGPT e Claude não conectavam "mesmo fazendo o login
+  normalmente". São DUAS causas diferentes, e a primeira era nossa:
+  (1) CHATGPT. O log do Codex mostra a troca OAuth com `status=200 OK` e o
+  auth.json no disco com os tokens. Mesmo assim `account/read` devolvia
+  `account: null`. Medido com o MESMO auth.json e só trocando o config:
+      com  model_provider = "edvid-ollama"  →  account: null
+      sem  o provedor customizado           →  chatgpt · plus · e-mail certo
+  Ou seja: escolher um provedor do catálogo para o chat CEGA o Edvid para a
+  conta do ChatGPT. Foi o recurso de motor alternativo que criou o defeito.
+  Com Cloudflare, Ollama e OpenRouter fora, nenhum provedor do catálogo tem
+  `openaiBaseUrl` — e o teste agora reprova qualquer entrada nova que tenha,
+  para isso não voltar sem alguém rever o efeito.
+  MIGRAÇÃO: `readStoredCatalog` limpa provedor guardado que não existe mais.
+  Sem isso o "ollama" no ai-catalog.json continuaria virando model_provider e
+  o ChatGPT seguiria invisível depois da atualização.
+  (2) CLAUDE. HTTP 429 na troca do código por token, cinco tentativas, também
+  em 20/08. NÃO é defeito nosso: sondado com um código inválido, o endpoint
+  responde 400 invalid_grant — está saudável e a requisição está certa. É
+  limite da Anthropic. O que dava para melhorar era a mensagem, que agora diz
+  o que houve e oferece a chave de API, que não passa por esse limite.
+  DE QUEBRA: a cadeia de failover de imagem do catálogo ficou sem provedores
+  (Cloudflare e OpenRouter eram os únicos) e foi removida junto com
+  `routeCandidates`/`routeFor`/`shouldFailover` — código morto com teste que
+  não dava mais para escrever com honestidade.
 - 0.21.5: o indicador de "quem está atendendo" virou uma linha só. Ele saía
   como "Imagem · Cloudflare Workers AI · FLUX.1 Schnell" a 12px, com badge de
   11px, logo abaixo de seletores de 8,5px — quebrava em duas linhas e pesava

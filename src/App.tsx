@@ -3849,7 +3849,8 @@ export function App() {
                   );
                 })}
               </div>
-              <p className="settings-note">IAs gratuitas podem ter resultados insatisfatórios.</p>
+              {/* O aviso sobre IAs gratuitas saiu junto com elas (0.22.0). */}
+              <p className="settings-note">Conecte a conta que você já paga. O Treblo é o que compõe a trilha sonora.</p>
             </div>
 
             <div className="settings-block">
