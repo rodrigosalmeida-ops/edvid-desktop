@@ -42,7 +42,7 @@ export const HUB_NAME: Record<GenerationHub, string> = {
 // Porta fixa de retorno do login. Precisa ser fixa porque o endereco de
 // retorno vai REGISTRADO no hub no primeiro login e fica guardado: mudar a
 // porta depois invalidaria o registro. Quando a porta esta ocupada caimos para
-// a seguinte e o registro e refeito (ver redirectChanged abaixo).
+// a seguinte, e o registro e refeito no proximo login.
 const CALLBACK_PORTS = [54546, 54547, 54548];
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -114,10 +114,23 @@ class HubAuthStore implements OAuthClientProvider {
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     const stored = await this.read();
-    // Registro feito para OUTRO endereco de retorno nao serve: o hub recusaria
-    // o code. Melhor registrar de novo do que falhar num erro opaco.
-    if (stored.redirectUri && stored.redirectUri !== this.redirect) return undefined;
+    // Registro feito para OUTRO endereco de retorno nao serve para AUTORIZAR:
+    // o hub recusaria o code. Mas serve para RENOVAR o token, que so precisa
+    // do client_id. Esconder o registro aqui deixaria a renovacao sem
+    // client_id e derrubaria uma conta perfeitamente conectada — por isso a
+    // decisao de re-registrar mora no login (que sabe que vai autorizar de
+    // novo) e nao nesta leitura.
     return stored.client;
+  }
+
+  // Endereco de retorno com que ESTE hub foi registrado, se ja houve login.
+  static async registeredRedirect(file: string): Promise<string | null> {
+    try {
+      const stored = JSON.parse(await readFile(file, 'utf8')) as StoredAuth;
+      return stored.redirectUri ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async saveClientInformation(client: OAuthClientInformationMixed): Promise<void> {
@@ -188,6 +201,19 @@ export class McpHub {
     private readonly openBrowser: (url: string) => void,
   ) {}
 
+  private storeFile(): string {
+    return path.join(this.storeDir, `${this.hub}.json`);
+  }
+
+  // A conta pode ter sido registrada numa porta alternativa (a primeira estava
+  // ocupada naquele dia). Reabrir na porta padrao apagaria a correspondencia
+  // com o que o hub tem registrado.
+  private async storeAtRegisteredPort(): Promise<HubAuthStore> {
+    const registrado = await HubAuthStore.registeredRedirect(this.storeFile());
+    const porta = Number(registrado?.match(/:(\d+)\//u)?.[1]);
+    return this.authStore(CALLBACK_PORTS.includes(porta) ? porta : this.port);
+  }
+
   private authStore(port = this.port): HubAuthStore {
     if (!this.store || this.port !== port) {
       this.port = port;
@@ -224,7 +250,7 @@ export class McpHub {
   private async ensure(): Promise<Client> {
     if (this.client) return this.client;
     if (this.connecting) return this.connecting;
-    const store = this.authStore();
+    const store = await this.storeAtRegisteredPort();
     if (!(await store.hasTokens())) throw new HubNeedsLogin(this.hub);
 
     this.connecting = (async () => {
@@ -259,9 +285,13 @@ export class McpHub {
     await this.close();
     const { server, port } = await listen();
     const store = this.authStore(port);
-    // Um login novo descarta o registro antigo: se a porta mudou, o endereco
-    // de retorno mudou junto.
     await store.invalidateCredentials('tokens');
+    // Porta diferente da que foi registrada = endereco de retorno diferente, e
+    // o hub recusaria o code. Registro velho fora, para o SDK registrar de novo.
+    const registrado = await HubAuthStore.registeredRedirect(this.storeFile());
+    if (registrado && registrado !== `http://127.0.0.1:${port}/callback`) {
+      await store.invalidateCredentials('client');
+    }
 
     const transport = new StreamableHTTPClientTransport(new URL(HUB_URL[this.hub]), {
       authProvider: store,
@@ -335,13 +365,18 @@ async function listen(): Promise<{ server: Server; port: number }> {
   for (const port of CALLBACK_PORTS) {
     try {
       const server = createServer();
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, '127.0.0.1', () => {
-          server.removeListener('error', reject);
-          resolve();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.once('error', reject);
+          server.listen(port, '127.0.0.1', () => {
+            server.removeListener('error', reject);
+            resolve();
+          });
         });
-      });
+      } catch (error) {
+        server.close();
+        throw error;
+      }
       return { server, port };
     } catch (error) {
       last = error;
