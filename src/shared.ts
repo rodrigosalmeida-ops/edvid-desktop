@@ -236,6 +236,11 @@ export type AiRole = 'chat' | 'image';
 export type AiRolesState = {
   chat: AiProvider;
   image: AiProvider | null;
+  // IA de imagem vinda do CATALOGO (Cloudflare, OpenRouter...). Fica separada
+  // de `image` porque aquele campo so aceita as tres contas fixas — e sem
+  // este o aluno via a Cloudflare no seletor e nao conseguia escolher: a
+  // selecao voltava sozinha para o Gemini.
+  imageCatalog: string | null;
   chatPinned: boolean;
   imagePinned: boolean;
 };
@@ -398,6 +403,7 @@ export type EdvidDesktopApi = {
   logoutCodex: () => Promise<CodexAccountState>;
   getAiRoles: () => Promise<AiRolesState>;
   setAiRole: (role: AiRole, provider: AiProvider | null, pinned: boolean) => Promise<AiRolesState>;
+  setImageCatalogProvider: (id: string | null) => Promise<AiRolesState>;
   onAiRoles: (listener: (state: AiRolesState) => void) => () => void;
   fulfillImageRequests: (directory: string) => Promise<ImageGenState>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.

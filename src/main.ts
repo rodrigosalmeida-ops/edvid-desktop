@@ -3064,7 +3064,7 @@ function getCodexAppServer(): CodexAppServer {
 // canal (codex:event) e o chat nao sabe a diferenca.
 
 const AI_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini']);
-let aiRoles: AiRolesState = { chat: 'chatgpt', image: null, chatPinned: false, imagePinned: false };
+let aiRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false };
 let claudeAgent: ClaudeAgent | null = null;
 
 function appSettingsFile(): string {
@@ -3080,6 +3080,9 @@ async function loadAppSettings(): Promise<void> {
     if (typeof parsed.imageProvider === 'string' && AI_PROVIDERS.has(parsed.imageProvider)) {
       aiRoles.image = parsed.imageProvider as AiProvider;
     }
+    if (typeof parsed.imageCatalog === 'string' && parsed.imageCatalog) {
+      aiRoles.imageCatalog = parsed.imageCatalog;
+    }
     aiRoles.chatPinned = parsed.chatPinned === true;
     aiRoles.imagePinned = parsed.imagePinned === true;
   } catch {
@@ -3093,6 +3096,13 @@ function broadcastAiRoles(): void {
   }
 }
 
+async function setImageCatalogProvider(id: string | null): Promise<AiRolesState> {
+  aiRoles = { ...aiRoles, imageCatalog: id, image: id ? null : aiRoles.image, imagePinned: false };
+  await persistAiRoles();
+  broadcastAiRoles();
+  return aiRoles;
+}
+
 async function setAiRole(
   role: 'chat' | 'image',
   provider: AiProvider | null,
@@ -3101,8 +3111,19 @@ async function setAiRole(
   if (role === 'chat') {
     if (provider) aiRoles = { ...aiRoles, chat: provider, chatPinned: pinned };
   } else {
-    aiRoles = { ...aiRoles, image: provider, imagePinned: provider ? pinned : false };
+    // Escolher uma conta fixa desfaz a escolha do catalogo, e vice-versa:
+    // duas fontes para o mesmo papel so gerariam ambiguidade.
+    aiRoles = {
+      ...aiRoles, image: provider, imageCatalog: provider ? null : aiRoles.imageCatalog,
+      imagePinned: provider ? pinned : false,
+    };
   }
+  await persistAiRoles();
+  broadcastAiRoles();
+  return aiRoles;
+}
+
+async function persistAiRoles(): Promise<void> {
   await writeFile(
     appSettingsFile(),
     `${JSON.stringify(
@@ -3111,13 +3132,12 @@ async function setAiRole(
         imageProvider: aiRoles.image,
         chatPinned: aiRoles.chatPinned,
         imagePinned: aiRoles.imagePinned,
+        imageCatalog: aiRoles.imageCatalog,
       },
       null,
       2,
     )}\n`,
   ).catch(() => {});
-  broadcastAiRoles();
-  return aiRoles;
 }
 
 function broadcastClaudeAccount(state: ClaudeAccountState): void {
@@ -3616,7 +3636,11 @@ class OpenRouterLikeError extends Error {
 
 // Gera passando pela CADEIA do catalogo: o primeiro que responder entrega. Quem
 // bater no limite entra em descanso e a vez passa adiante, com aviso no chat.
-async function generateImageFromCatalog(prompt: string, uso: ImageUse | null): Promise<Buffer | null> {
+async function generateImageFromCatalog(
+  prompt: string,
+  uso: ImageUse | null,
+  onlyProvider: string | null = null,
+): Promise<Buffer | null> {
   const stored = await readStoredCatalog();
   const state = catalogStateFrom(stored);
   const connected = state.connections
@@ -3625,7 +3649,7 @@ async function generateImageFromCatalog(prompt: string, uso: ImageUse | null): P
   if (connected.length === 0) return null;
   const candidates = routeCandidates({
     capability: 'imagem',
-    connected,
+    connected: onlyProvider ? connected.filter((item) => item.id === onlyProvider) : connected,
     freeOnly: state.freeOnly,
     now: Date.now(),
   });
@@ -3982,7 +4006,7 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
       (connection) => connection.connected
         && (catalogEntry(connection.id)?.capabilities.includes('imagem') ?? false),
     );
-    if (!provider && !catalogHasImage) {
+    if (!provider && !catalogHasImage && !aiRoles.imageCatalog) {
       broadcastCodexEvent({
         type: 'error',
         message: `A edição pediu ${pending.length === 1 ? 'uma imagem' : `${pending.length} imagens`}, mas nenhuma IA de imagem está conectada. Conecte uma IA em Configurações → Conexões (há opções com camada gratuita).`,
@@ -3996,7 +4020,16 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
     for (const request of pending) {
       const target = path.join(imagesDirectory, request.arquivo);
       try {
-        const fromCatalog = catalogHasImage ? await generateImageFromCatalog(request.prompt, request.uso) : null;
+        // A ESCOLHA DO ALUNO manda. Antes o catálogo vencia sempre que
+        // estivesse conectado, e o seletor de imagem era decorativo: ele via
+        // a Cloudflare na lista e continuava usando o Gemini.
+        const escolhaCatalogo = aiRoles.imageCatalog;
+        const useCatalog = escolhaCatalogo
+          ? true
+          : (catalogHasImage && !provider);
+        const fromCatalog = useCatalog
+          ? await generateImageFromCatalog(request.prompt, request.uso, escolhaCatalogo)
+          : null;
         if (fromCatalog) {
           await mkdir(imagesDirectory, { recursive: true });
           await writeFile(target, fromCatalog);
@@ -4437,6 +4470,9 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle('ai:roles-get', () => aiRoles);
+
+  ipcMain.handle('ai:image-catalog', (_event, input: { id?: string | null }) =>
+    setImageCatalogProvider(input.id ? asText(input.id) : null));
 
   ipcMain.handle(
     'ai:role-set',

@@ -2041,7 +2041,7 @@ export function App() {
   // Quem está atendendo agora: mostrado abaixo do campo de texto do chat.
   const [activeModel, setActiveModel] = useState<ActiveModelState>(null);
   const [geminiLoaded, setGeminiLoaded] = useState(false);
-  const [aiRoles, setAiRoles] = useState<AiRolesState>({ chat: 'chatgpt', image: null, chatPinned: false, imagePinned: false });
+  const [aiRoles, setAiRoles] = useState<AiRolesState>({ chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false });
   const [imageGen, setImageGen] = useState<ImageGenState>({ status: 'idle' });
   const [imageContinuationAt, setImageContinuationAt] = useState<number | null>(null);
   // Cobrança da animação sob medida prometida e não escrita: uma por projeto.
@@ -2153,8 +2153,9 @@ export function App() {
     && entry.capabilities.includes('imagem')
     && aiCatalog.connections.some((item) => item.id === entry.id && item.connected)
   ));
-  const imageSelection = aiRoles.image
-    ?? (catalogImageProviders[0] ? `catalogo:${catalogImageProviders[0].id}` : '');
+  const imageSelection = aiRoles.imageCatalog
+    ? `catalogo:${aiRoles.imageCatalog}`
+    : aiRoles.image ?? (catalogImageProviders[0] ? `catalogo:${catalogImageProviders[0].id}` : '');
   // Já conectada: o modal mostra o que está valendo (e-mail do login ou chave
   // mascarada) em vez de abrir vazio, como se não houvesse conexão.
   const connectSaved = Boolean(connectEntry && providerStatus(connectEntry).connected);
@@ -3611,14 +3612,16 @@ export function App() {
                     value={imageSelection}
                     onChange={(event) => {
                       const value = event.target.value;
-                      if (value === '__conectar') {
-                        setSettingsOpen(true);
+                      // Escolher um provedor do catálogo RETORNAVA sem fazer
+                      // nada, e a seleção voltava sozinha para o Gemini: o
+                      // aluno via a Cloudflare na lista e não conseguia usá-la.
+                      if (value.startsWith('catalogo:')) {
+                        void window.edvidDesktop
+                          .setImageCatalogProvider(value.slice('catalogo:'.length))
+                          .then(setAiRoles);
                         return;
                       }
-                      // Provedor do catálogo: quem gera é a cadeia, então a
-                      // escolha aqui é só "usar o catálogo" (a ordem e o
-                      // fallback continuam automáticos).
-                      if (value.startsWith('catalogo:')) return;
+                      void window.edvidDesktop.setImageCatalogProvider(null).then(setAiRoles);
                       switchImageProvider((value || null) as AiProvider | null);
                     }}
                   >
@@ -3633,22 +3636,21 @@ export function App() {
                     {catalogImageProviders.map((entry) => (
                       <option key={entry.id} value={`catalogo:${entry.id}`}>{entry.name}</option>
                     ))}
-                    <option value="__conectar">Conectar…</option>
                   </select>
                 </label>
                 <label className="role-select" title="IA que compõe a trilha sonora">
                   <Icon name="music" />
                   <select
                     value={catalogMusicProviders[0] ? `catalogo:${catalogMusicProviders[0].id}` : ''}
-                    onChange={(event) => {
-                      if (event.target.value === '__conectar') setSettingsOpen(true);
+                    onChange={() => {
+                      // A trilha tem um provedor só; a lista existe para o
+                      // aluno ver qual é, e conectar se faz nas configurações.
                     }}
                   >
                     {catalogMusicProviders.length === 0 && <option value="">Nenhuma</option>}
                     {catalogMusicProviders.map((entry) => (
                       <option key={entry.id} value={`catalogo:${entry.id}`}>{entry.name}</option>
                     ))}
-                    <option value="__conectar">Conectar…</option>
                   </select>
                 </label>
               </div>

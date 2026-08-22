@@ -130,7 +130,7 @@ let approvalPreviewScheduled = false;
 // onboarding); ?ia=manual força o fluxo de colar o código do Claude.
 const qaSearch = () => new URLSearchParams(window.location.search);
 let qaChatGptConnected = !qaSearch().has('ia') && !qaSearch().has('semchatgpt');
-let qaRoles: AiRolesState = { chat: 'chatgpt', image: null, chatPinned: false, imagePinned: false };
+let qaRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false };
 const rolesListeners = new Set<(state: AiRolesState) => void>();
 
 function emitRoles(): void {
@@ -513,6 +513,11 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       return { status: 'transcrevendo', done: 0, total: 1 };
     },
     buildPhase2: async () => {},
+    setImageCatalogProvider: async (id) => {
+      qaRoles = { ...qaRoles, imageCatalog: id, image: id ? null : qaRoles.image };
+      emitRoles();
+      return qaRoles;
+    },
     applyTimelineRanges: async (_directory, ranges) => {
       window.setTimeout(() => emitCleanCut({ status: 'cortando' }), 200);
       window.setTimeout(() => {

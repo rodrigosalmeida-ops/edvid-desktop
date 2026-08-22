@@ -34,6 +34,7 @@ const api: EdvidDesktopApi = {
   cancelChatGPTLogin: () => ipcRenderer.invoke('codex:login-cancel'),
   logoutCodex: () => ipcRenderer.invoke('codex:logout'),
   getAiRoles: () => ipcRenderer.invoke('ai:roles-get'),
+  setImageCatalogProvider: (id) => ipcRenderer.invoke('ai:image-catalog', { id }),
   setAiRole: (role, provider, pinned) => ipcRenderer.invoke('ai:role-set', { role, provider, pinned }),
   onAiRoles: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AiRolesState) => listener(state);

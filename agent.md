@@ -1213,6 +1213,28 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.21.3: seletor de imagem preso no Gemini, e faxina do bucket de releases.
+  (1) SELETOR PRESO. Escolher a Cloudflare no seletor de imagem não fazia nada
+  e a seleção voltava para o Gemini: o `onChange` tinha `if
+  (value.startsWith('catalogo:')) return;`. O papel de imagem só aceitava as
+  três contas fixas (`AiProvider`), então não havia onde guardar a escolha.
+  Novo campo `imageCatalog` em AiRolesState, e a geração passou a HONRAR a
+  escolha — antes o catálogo vencia sempre que estivesse conectado, o que
+  tornava o seletor decorativo. As opções "Conectar…" saíram dos seletores de
+  imagem e música: o de chat não tinha, e conectar se faz nas configurações.
+  (2) BUCKET DE RELEASES: 25,7 GB, com tudo desde a primeira versão. Novo
+  `scripts/prune-releases.mjs` guarda as 3 versões mais novas de cada família.
+  153 objetos, 21,29 GB liberados; sobraram 4,4 GB. Três invariantes que o
+  script verifica sempre: nada citado por feed.json ou win32/RELEASES sai; os
+  nomes estáveis (Edvid.dmg, EdvidSetup.exe) ficam; e `runtimes/` NUNCA é
+  tocado — o pacote é escolhido por chave do manifesto e um aluno numa versão
+  antiga ainda baixa o dele. Rodar sem `--apply` só lista.
+  DE PASSAGEM, no mesmo dia: o token do Cloudflare foi recusado no meio de um
+  release. A Cloudflare tem DOIS tipos de token e cada um valida num endereço
+  — usuário em `/user/tokens/verify`, conta em `/accounts/<id>/tokens/verify`.
+  Os dois scripts de publicação checavam só o primeiro e recusavam um token de
+  conta perfeitamente válido, com a mensagem inútil "verify falhou". Agora
+  tentam os dois e imprimem o motivo da Cloudflare.
 - 0.21.2: RESPOSTA MEDIDA — o Gemini NÃO tem cota gratuita de imagem por API.
   A dúvida vinha de duas conversas (a documentação pública é contraditória e o
   Google parou de publicar a tabela da camada gratuita). Com a chave do aluno
