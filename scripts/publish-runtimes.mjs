@@ -36,12 +36,24 @@ if (!packInfo) {
   process.exit(1);
 }
 
-const verify = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
-  headers: { Authorization: `Bearer ${apiToken}` },
-});
-const tokenId = (await verify.json())?.result?.id;
-if (!verify.ok || !tokenId) {
-  console.error('Token do Cloudflare invalido (verify falhou).');
+// Dois tipos de token na Cloudflare, cada um com seu endereco de verificacao:
+// token de usuario responde em /user/tokens/verify e token da CONTA so em
+// /accounts/<id>/tokens/verify. Checar so o primeiro recusava um token de
+// conta perfeitamente valido — ver o comentario igual em publish-update.mjs.
+const verificar = (url) => fetch(url, { headers: { Authorization: `Bearer ${apiToken}` } });
+let verify = await verificar('https://api.cloudflare.com/client/v4/user/tokens/verify');
+let verifyBody = await verify.json().catch(() => null);
+if (!verifyBody?.result?.id) {
+  verify = await verificar(`https://api.cloudflare.com/client/v4/accounts/${accountId}/tokens/verify`);
+  verifyBody = await verify.json().catch(() => null);
+}
+const tokenId = verifyBody?.result?.id;
+if (!tokenId) {
+  const motivo = (verifyBody?.errors ?? [])
+    .map((erro) => `${erro?.code ?? '?'}: ${erro?.message ?? 'sem mensagem'}`)
+    .join(' | ') || `HTTP ${verify.status}`;
+  console.error(`Token do Cloudflare recusado — ${motivo}`);
+  console.error('Atualize o secret EDVID_CF_API_TOKEN com um token que tenha "R2 > Edit".');
   process.exit(1);
 }
 const s3 = new S3Client({

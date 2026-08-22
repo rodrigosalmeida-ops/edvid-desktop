@@ -69,13 +69,32 @@ if (isWindowsRelease) {
 }
 
 // Access Key ID = id do token (verify); Secret = SHA-256 do valor do token.
-const verify = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
-  headers: { Authorization: `Bearer ${apiToken}` },
-});
-const verifyBody = await verify.json();
+// A Cloudflare tem DOIS tipos de token e cada um valida num endereco:
+// token de usuario (My Profile > API Tokens) responde em /user/tokens/verify,
+// e token da CONTA (Manage Account > API Tokens) so responde em
+// /accounts/<id>/tokens/verify. Verificar so o primeiro fazia um token de
+// conta perfeitamente valido ser recusado com "Invalid API Token" — meia hora
+// de investigacao no meio de um release, com a credencial certa na mao.
+const verificar = (url) => fetch(url, { headers: { Authorization: `Bearer ${apiToken}` } });
+let verify = await verificar('https://api.cloudflare.com/client/v4/user/tokens/verify');
+let verifyBody = await verify.json().catch(() => null);
+if (!verifyBody?.result?.id) {
+  verify = await verificar(`https://api.cloudflare.com/client/v4/accounts/${accountId}/tokens/verify`);
+  verifyBody = await verify.json().catch(() => null);
+}
 const tokenId = verifyBody?.result?.id;
 if (!verify.ok || !tokenId) {
-  console.error('Token do Cloudflare invalido (verify falhou).');
+  // "verify falhou" nao dizia NADA: o token pode ter expirado, sido revogado
+  // ou perdido a permissao de R2, e cada caso tem uma acao diferente. A
+  // Cloudflare devolve o motivo — imprimir o motivo dela custa nada e evita
+  // meia hora de adivinhacao no meio de um release.
+  const motivo = (verifyBody?.errors ?? [])
+    .map((erro) => `${erro?.code ?? '?'}: ${erro?.message ?? 'sem mensagem'}`)
+    .join(' | ') || `HTTP ${verify.status}`;
+  console.error(`Token do Cloudflare recusado — ${motivo}`);
+  console.error('Crie um token novo em dash.cloudflare.com > Manage Account > API Tokens,');
+  console.error('com permissao "R2 > Edit" na conta, e atualize EDVID_CF_API_TOKEN no signing.env.');
+  console.error('O build assinado e notarizado ja esta pronto em out/make: e so repetir o publish.');
   process.exit(1);
 }
 const s3 = new S3Client({
