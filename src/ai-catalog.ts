@@ -298,3 +298,20 @@ export function keyProbe(
       return null;
   }
 }
+
+// --- QUEM CONDUZ A CONVERSA ------------------------------------------------
+// Havia DUAS verdades sobre isso: o seletor mostrava o provedor do catalogo e
+// o roteamento no main olhava o papel de chat das contas fixas. Com Ollama no
+// catalogo e "gemini" no papel — que fica assim sozinho quando o aluno conecta
+// uma chave do Gemini —, o seletor dizia "Ollama Cloud" e a mensagem ia para o
+// agente do Gemini, que respondia "conecte sua chave do Gemini para
+// conversar". Uma funcao so, usada pelos dois lados.
+export type ChatRoute = { kind: 'catalog'; id: string } | { kind: 'fixed'; provider: string };
+
+export function chatRoute(catalogChatProviderId: string | null | undefined, role: string): ChatRoute {
+  const catalog = String(catalogChatProviderId ?? '').trim();
+  // O catalogo tem PRECEDENCIA: e a escolha mais recente e explicita do aluno,
+  // e e o que o seletor mostra.
+  if (catalog) return { kind: 'catalog', id: catalog };
+  return { kind: 'fixed', provider: role };
+}

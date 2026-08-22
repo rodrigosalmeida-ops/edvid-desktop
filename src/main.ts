@@ -27,6 +27,7 @@ import { JCUT_LEAD_SECONDS, cutMatchesEdl, extractionArgs, mixArgs, muxArgs, pla
 import {
   AI_CATALOG,
   catalogEntry,
+  chatRoute,
   keyProbe,
   routeCandidates,
   shouldFailover,
@@ -1314,7 +1315,10 @@ const reviewInFlight = new Map<string, Promise<void>>();
 // unico caso em que a resposta costuma sair em ingles: ChatGPT e Claude
 // obedecem a regra 1 das instrucoes.
 function chatNeedsReview(): boolean {
-  return codexEngine !== null && aiRoles.chat !== 'claude' && aiRoles.chat !== 'gemini';
+  // codexEngine so e diferente de null quando um provedor do catalogo conduz a
+  // conversa; checar tambem o papel das contas fixas dava falso negativo com o
+  // papel desatualizado (o mesmo descompasso que mandava a mensagem ao Gemini).
+  return codexEngine !== null;
 }
 
 // Veio em ingles: pede ao MESMO modelo para reescrever em portugues. E uma
@@ -4431,10 +4435,14 @@ function registerIpcHandlers(): void {
     // ingles. O aluno nao ve esta linha — a interface mostra o que ele
     // escreveu, nao o que foi enviado.
     const outgoing = `${text}${PT_BR_TURN_REMINDER}`;
-    if (aiRoles.chat === 'claude') {
+    // A rota vem da MESMA regra que o seletor mostra: com provedor do catalogo
+    // escolhido, a conversa vai pelo Codex com aquele motor, e nunca para o
+    // Claude ou o Gemini.
+    const rota = chatRoute((await readStoredCatalog()).chatProviderId, aiRoles.chat);
+    if (rota.kind === 'fixed' && rota.provider === 'claude') {
       return (await claudeAgentReady()).sendMessage(resolvedProjectDirectory, outgoing);
     }
-    if (aiRoles.chat === 'gemini') {
+    if (rota.kind === 'fixed' && rota.provider === 'gemini') {
       return (await geminiAgentReady()).sendMessage(resolvedProjectDirectory, outgoing);
     }
     return (await codexServer()).sendMessage(resolvedProjectDirectory, outgoing);

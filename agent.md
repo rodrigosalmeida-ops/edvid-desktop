@@ -1213,6 +1213,20 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.21.4: o chat mostrava "Ollama Cloud" e falava com o Gemini.
+  Mesma família do defeito anterior, agora no chat: havia DUAS verdades sobre
+  quem conduz a conversa. O seletor lia `aiCatalog.chatProviderId` e o
+  roteamento no main lia `aiRoles.chat`. Conectar uma chave do Gemini deixa o
+  papel em "gemini" sozinho, e a partir daí o seletor dizia Ollama e a
+  mensagem ia para o agente do Gemini — que respondia "conecte sua chave do
+  Gemini para conversar", sobre uma conversa que o aluno tinha mandado para
+  outro provedor.
+  Uma função só (`chatRoute`) usada pelos dois lados, com teste. O catálogo
+  tem precedência porque é a escolha explícita e recente do aluno, e é o que o
+  seletor mostra.
+  PADRÃO A VIGIAR: sempre que a interface deriva um estado por um caminho e o
+  main decide por outro, é questão de tempo até discordarem. Os dois defeitos
+  de hoje (seletor de imagem e rota do chat) são o mesmo erro.
 - 0.21.3: seletor de imagem preso no Gemini, e faxina do bucket de releases.
   (1) SELETOR PRESO. Escolher a Cloudflare no seletor de imagem não fazia nada
   e a seleção voltava para o Gemini: o `onChange` tinha `if

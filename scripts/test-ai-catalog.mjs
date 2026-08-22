@@ -21,7 +21,7 @@ try {
     '--skipLibCheck', '--outDir', outDir,
   ], { stdio: 'inherit' });
 
-  const { AI_CATALOG, catalogEntry, keyProbe, routeCandidates, routeFor, shouldFailover } =
+  const { AI_CATALOG, catalogEntry, chatRoute, keyProbe, routeCandidates, routeFor, shouldFailover } =
     await import(pathToFileURL(path.join(outDir, 'ai-catalog.js')).href);
 
   const AGORA = 1_000_000;
@@ -123,7 +123,21 @@ try {
     assert.ok(probe !== null || entry.id === 'treblo', `${entry.id} não sabe verificar a própria chave`);
   }
 
-  console.log('test:ai-catalog ok — rota gratuita primeiro, failover só no que adianta e cada chave testada no seu provedor.');
+  // --- Quem conduz a conversa: UMA verdade só -------------------------------
+  // Havia duas: o seletor mostrava o provedor do catálogo e o roteamento olhava
+  // o papel das contas fixas. Com Ollama no catálogo e "gemini" no papel — que
+  // fica assim sozinho quando o aluno conecta uma chave do Gemini — o seletor
+  // dizia "Ollama Cloud" e a mensagem ia para o agente do Gemini, que respondia
+  // "conecte sua chave do Gemini para conversar".
+  assert.deepEqual(chatRoute('ollama', 'gemini'), { kind: 'catalog', id: 'ollama' },
+    'com provedor do catálogo escolhido, ele conduz — o papel antigo não pode vencer');
+  assert.deepEqual(chatRoute(null, 'gemini'), { kind: 'fixed', provider: 'gemini' });
+  assert.deepEqual(chatRoute('', 'claude'), { kind: 'fixed', provider: 'claude' });
+  assert.deepEqual(chatRoute(undefined, 'chatgpt'), { kind: 'fixed', provider: 'chatgpt' });
+  // Espaço em branco não é escolha.
+  assert.deepEqual(chatRoute('   ', 'chatgpt'), { kind: 'fixed', provider: 'chatgpt' });
+
+  console.log('test:ai-catalog ok — rota gratuita primeiro, chave no provedor certo e uma só verdade sobre quem conduz o chat.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
