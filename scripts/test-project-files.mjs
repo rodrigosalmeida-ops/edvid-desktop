@@ -89,6 +89,50 @@ try {
   assert.equal(resultado.finalVideo, 'teste11_final.mp4');
   assert.equal(readFileSync(path.join(projeto, 'teste11_final.mp4'), 'utf8'), 'render 26');
 
+  // --- 6. A raiz fica só com o material do aluno e o resultado -------------
+  // Reproduz a raiz real do projeto "iPhone 18 Pro 4": três restos do agente,
+  // um thumbnail, a gravação do aluno, o final e a pasta de b-roll dele.
+  const raiz = path.join(outDir, 'iPhone 18 Pro 4');
+  escrever(path.join(raiz, 'IMG_63424.MOV'), 'gravação do aluno');
+  escrever(path.join(raiz, 'iPhone 18 Pro 4_final.mp4'), 'resultado');
+  escrever(path.join(raiz, 'iPhone_18_Pro_4_final_silent.mp4'), 'resto do agente');
+  escrever(path.join(raiz, 'new_trilha_silente.mp3'), 'resto do agente');
+  escrever(path.join(raiz, 'trilha_trimmed.mp3'), '');
+  escrever(path.join(raiz, 'thumbnail.jpg'), 'capa');
+  escrever(path.join(raiz, 'videos', 'azul.mp4'), 'b-roll do aluno');
+  escrever(path.join(raiz, 'videos', 'fim.mp4'), 'b-roll do aluno');
+  escrever(path.join(raiz, 'edit', 'edl.json'), JSON.stringify({
+    sources: { 'IMG_63424.MOV': 'IMG_63424.MOV' },
+    ranges: [{ source: 'IMG_63424.MOV', start: 0, end: 10 }],
+  }));
+
+  const arrumado = await consolidateProjectFolder(raiz);
+  assert.equal(arrumado.tidied.length, 4, `moveu demais ou de menos: ${arrumado.tidied}`);
+
+  // O que é do aluno NUNCA sai.
+  assert.equal(readFileSync(path.join(raiz, 'IMG_63424.MOV'), 'utf8'), 'gravação do aluno');
+  assert.ok(existsSync(path.join(raiz, 'videos', 'azul.mp4')), 'a pasta de b-roll fica intocada');
+  assert.ok(existsSync(path.join(raiz, 'videos', 'fim.mp4')));
+  assert.ok(existsSync(path.join(raiz, 'iPhone 18 Pro 4_final.mp4')), 'o resultado fica na raiz');
+
+  // O trabalho foi para edit/derivados, movido e não apagado.
+  for (const nome of ['iPhone_18_Pro_4_final_silent.mp4', 'new_trilha_silente.mp3', 'trilha_trimmed.mp3', 'thumbnail.jpg']) {
+    assert.ok(!existsSync(path.join(raiz, nome)), `${nome} tinha de sair da raiz`);
+    assert.ok(existsSync(path.join(raiz, 'edit', 'derivados', nome)), `${nome} tinha de estar guardado`);
+  }
+  assert.equal(readFileSync(path.join(raiz, 'edit', 'derivados', 'thumbnail.jpg'), 'utf8'), 'capa', 'movido, não recriado');
+
+  // Rodar de novo não move mais nada.
+  assert.deepEqual((await consolidateProjectFolder(raiz)).tidied, []);
+
+  // SEM corte ainda, nada é mexido: o app não sabe o que é material do aluno.
+  const virgem = path.join(outDir, 'virgem');
+  escrever(path.join(virgem, 'IMG_1.MOV'), 'bruto');
+  escrever(path.join(virgem, 'anotacoes.txt'), 'minhas ideias');
+  assert.deepEqual((await consolidateProjectFolder(virgem)).tidied, [],
+    'sem EDL o app não tem como distinguir material de trabalho');
+  assert.ok(existsSync(path.join(virgem, 'anotacoes.txt')));
+
   // --- Rodar de novo não pode mudar nada nem apagar mais nada -------------
   const segunda = await consolidateProjectFolder(projeto);
   assert.deepEqual(segunda.removed, [], 'a segunda passagem não apaga nada');

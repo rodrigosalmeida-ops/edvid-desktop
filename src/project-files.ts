@@ -9,6 +9,7 @@ import {
   RENDER_DIR,
   finalVideoName,
   rendersToDelete,
+  tidyRootFile,
 } from './project-layout';
 
 async function isDirectory(target: string): Promise<boolean> {
@@ -144,11 +145,74 @@ async function repointRenderStamp(projectDirectory: string): Promise<string | nu
   return path.basename(corrected);
 }
 
+// Arquivo solto na raiz vai para edit/derivados/.
+//
+// MOVE, nunca apaga, e nunca sobrescreve: se ja existir um com o mesmo nome
+// la, o da raiz fica onde esta e quem decide e o aluno.
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']);
+
+async function edlSourceNames(projectDirectory: string): Promise<string[]> {
+  try {
+    const edl = JSON.parse(
+      await readFile(path.join(projectDirectory, EDIT_DIR, 'edl.json'), 'utf8'),
+    ) as { sources?: Record<string, string>; ranges?: Array<{ source?: string }> };
+    const nomes = new Set<string>();
+    for (const [id, caminho] of Object.entries(edl.sources ?? {})) {
+      nomes.add(path.basename(id));
+      if (typeof caminho === 'string') nomes.add(path.basename(caminho));
+    }
+    for (const range of edl.ranges ?? []) {
+      if (typeof range.source === 'string') nomes.add(path.basename(range.source));
+    }
+    return [...nomes];
+  } catch {
+    return [];
+  }
+}
+
+export async function tidyProjectRoot(projectDirectory: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(projectDirectory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const finalName = finalVideoName(path.basename(projectDirectory));
+  const sources = await edlSourceNames(projectDirectory);
+  // Sem corte ainda nao ha o que saber sobre o material: melhor nao mexer.
+  if (!sources.length) return [];
+
+  const destino = path.join(projectDirectory, EDIT_DIR, 'derivados');
+  const movidos: string[] = [];
+  for (const entry of entries) {
+    if (entry.name === EDIT_DIR) continue;
+    const mover = tidyRootFile({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      finalName,
+      edlSources: sources,
+      videoExtensions: VIDEO_EXTENSIONS,
+    });
+    if (!mover) continue;
+    const alvo = path.join(destino, entry.name);
+    if (await exists(alvo)) continue;
+    try {
+      await mkdir(destino, { recursive: true });
+      await rename(path.join(projectDirectory, entry.name), alvo);
+      movidos.push(entry.name);
+    } catch {
+      // Volume somente leitura ou arquivo em uso: fica onde esta.
+    }
+  }
+  return movidos;
+}
+
 // Uma pasta so, e sem versao velha ocupando disco. Idempotente: roda a cada
 // abertura e conserta tambem os projetos criados antes desta versao.
 export async function consolidateProjectFolder(projectDirectory: string): Promise<{
   removed: string[];
   finalVideo: string | null;
+  tidied: string[];
 }> {
   await migrateLegacyLayout(projectDirectory);
   const keepName = await repointRenderStamp(projectDirectory);
@@ -164,5 +228,8 @@ export async function consolidateProjectFolder(projectDirectory: string): Promis
       finalVideo = await publishFinalVideo(projectDirectory, rendered);
     }
   }
-  return { removed, finalVideo };
+  // A raiz e do aluno: so o material dele e o resultado. Feito por ultimo,
+  // depois de o final existir — senao ele seria movido junto.
+  const tidied = await tidyProjectRoot(projectDirectory);
+  return { removed, finalVideo, tidied };
 }

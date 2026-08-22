@@ -102,7 +102,42 @@ try {
   assert.ok(origens.includes('edicao/fase_2'));
   assert.ok(origens.includes('transcricao_raw'));
 
-  console.log('test:project-layout ok — arquivo-par do macOS fora, final na raiz e só 4 renders guardados.');
+  // --- 6b. O que pode ficar na raiz do projeto ------------------------------
+  // A raiz de um projeto real virou: trilha_trimmed.mp3 (ZERO bytes, tentativa
+  // falha do agente), new_trilha_silente.mp3, iPhone_18_Pro_4_final_silent.mp4
+  // (91s COM áudio, apesar do nome) e thumbnail.jpg — restos de o agente ter
+  // remontado a trilha na mão. Junto com eles havia "videos/", uma pasta com
+  // sete clipes de b-roll gravados PELO ALUNO.
+  const VIDEOS = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']);
+  const mover = (name, isDirectory = false) => layout.tidyRootFile({
+    name,
+    isDirectory,
+    finalName: 'iPhone 18 Pro 4_final.mp4',
+    edlSources: ['IMG_63424.MOV'],
+    videoExtensions: VIDEOS,
+  });
+
+  // Fica: material do aluno e resultado.
+  assert.equal(mover('IMG_63424.MOV'), false, 'a gravação do aluno nunca sai da raiz');
+  assert.equal(mover('iPhone 18 Pro 4_final.mp4'), false, 'o resultado fica na raiz');
+  assert.equal(mover('videos', true), false, 'PASTA do aluno nunca é movida');
+  assert.equal(mover('edit', true), false);
+  assert.equal(mover('.DS_Store'), false, 'oculto não vale a viagem');
+
+  // Sai: trabalho.
+  assert.equal(mover('trilha_trimmed.mp3'), true);
+  assert.equal(mover('new_trilha_silente.mp3'), true);
+  assert.equal(mover('thumbnail.jpg'), true);
+  assert.equal(mover('iPhone_18_Pro_4_final_silent.mp4'), true, 'derivado do próprio final sai');
+
+  // A regra mais importante: VÍDEO na raiz é material do aluno até prova em
+  // contrário. Mover a gravação dele por engano é muito pior do que uma raiz
+  // bagunçada, então só sai o que nasceu do próprio resultado.
+  assert.equal(mover('outra_gravacao.MOV'), false, 'vídeo desconhecido é do aluno');
+  assert.equal(mover('b-roll da loja.mp4'), false);
+  assert.equal(mover('IMG_9999.MOV'), false, 'footage novo ainda não usado no corte fica');
+
+    console.log('test:project-layout ok — arquivo-par do macOS fora, final na raiz e só 4 renders guardados.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

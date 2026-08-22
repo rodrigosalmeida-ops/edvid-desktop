@@ -71,3 +71,44 @@ export const LEGACY_MOVES: ReadonlyArray<{ from: readonly string[]; to: readonly
   { from: ['transcricao_raw'], to: [EDIT_DIR, 'transcricao_raw'] },
   { from: ['transcrição_raw'], to: [EDIT_DIR, 'transcricao_raw'] },
 ];
+
+// --- O QUE PODE FICAR NA RAIZ DO PROJETO -----------------------------------
+// So o material do aluno e o resultado. Tudo o mais e trabalho, e trabalho
+// mora em edit/.
+//
+// A raiz de um projeto real tinha virado: "trilha_trimmed.mp3" (ZERO bytes, a
+// tentativa falha do agente de cortar a trilha), "new_trilha_silente.mp3" e
+// "iPhone_18_Pro_4_final_silent.mp4" (91s COM audio, apesar do nome) — restos
+// de o agente ter remontado a trilha na mao antes de isso virar codigo.
+
+// Pastas NUNCA sao movidas: e onde o aluno organiza o material dele (a mesma
+// pasta tinha "videos/" com sete clipes de b-roll gravados por ele).
+export function tidyRootFile(input: {
+  name: string;
+  isDirectory: boolean;
+  finalName: string;
+  edlSources: readonly string[];
+  videoExtensions: ReadonlySet<string>;
+}): boolean {
+  const { name, isDirectory, finalName, edlSources, videoExtensions } = input;
+  if (isDirectory) return false;
+  if (name.startsWith('.')) return false;          // ocultos e pares do macOS
+  if (name === finalName) return false;            // o resultado
+  if (edlSources.includes(name)) return false;     // fonte declarada no corte
+
+  const extension = name.includes('.') ? `.${name.split('.').pop()?.toLowerCase()}` : '';
+  if (videoExtensions.has(extension)) {
+    // VIDEO na raiz e material do aluno ate prova em contrario — mover a
+    // gravacao dele por engano seria muito pior do que uma raiz bagunçada.
+    // A unica excecao e o que nasceu do proprio resultado: "<projeto>_final"
+    // com sufixo (o "_final_silent" que o agente deixou para tras).
+    const semExtensao = name.slice(0, name.length - extension.length);
+    const baseFinal = finalName.replace(/\.mp4$/iu, '');
+    const derivado = semExtensao !== baseFinal
+      && semExtensao.replace(/[ _-]/gu, '').toLowerCase()
+        .startsWith(baseFinal.replace(/[ _-]/gu, '').toLowerCase());
+    return derivado;
+  }
+  // Qualquer outro arquivo solto (mp3, jpg, json, txt) e trabalho.
+  return true;
+}

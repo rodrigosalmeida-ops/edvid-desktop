@@ -1213,6 +1213,27 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.22.1: a raiz do projeto volta a ser do aluno. A raiz de um projeto real
+  tinha: `trilha_trimmed.mp3` (ZERO bytes — tentativa falha do agente de
+  cortar a trilha), `new_trilha_silente.mp3` (91s de áudio), 
+  `iPhone_18_Pro_4_final_silent.mp4` (91s COM áudio, apesar do nome) e
+  `thumbnail.jpg` — restos de o agente ter remontado a trilha na mão, antes de
+  isso virar código. Agora `tidyProjectRoot` leva arquivo solto para
+  `edit/derivados/` a cada abertura, e a instrução proíbe o agente de escrever
+  QUALQUER arquivo na raiz.
+  AS TRÊS TRAVAS, todas por medo de comer material do aluno:
+  1. PASTA nunca é movida. Na mesma raiz havia `videos/` com sete clipes de
+     b-roll gravados por ele.
+  2. VÍDEO na raiz é do aluno até prova em contrário. A única exceção é o que
+     nasceu do próprio resultado (`<projeto>_final` com sufixo) — mover uma
+     gravação por engano é muito pior do que uma raiz bagunçada.
+  3. SEM corte ainda, nada é mexido: sem EDL o app não tem como saber o que é
+     material e o que é trabalho.
+  Move, nunca apaga, e nunca sobrescreve. Medido contra a estrutura real: a
+  raiz ficou com a gravação, o final, `edit/` e `videos/`.
+  A VIGIAR (não mexido): `videos/` é varrido como fonte pelo `collectMedia`, o
+  que significa que um b-roll solto ali entraria no próximo corte limpo junto
+  com a fala. Não alterei porque muda comportamento sem pedido.
 - 0.22.0: as IAs gratuitas saíram, e o motivo é mais forte do que preferência.
   O aluno relatou que ChatGPT e Claude não conectavam "mesmo fazendo o login
   normalmente". São DUAS causas diferentes, e a primeira era nossa:
