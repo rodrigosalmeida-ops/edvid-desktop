@@ -414,6 +414,17 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     onActiveModel: (listener) => {
       if (qaActiveModel) setTimeout(() => listener(qaActiveModel), 0);
       activeModelListeners.add(listener);
+      // Com ?catalogo, mostra quem esta atendendo: e a unica forma de ver o
+      // indicador do rodape sem uma geracao real acontecendo.
+      if (qaCatalogConnected) {
+        window.setTimeout(() => listener({
+          role: 'image',
+          providerId: 'cloudflare',
+          providerName: 'Cloudflare Workers AI',
+          modelLabel: 'FLUX.1 Schnell',
+          free: true,
+        }), 500);
+      }
       return () => activeModelListeners.delete(listener);
     },
     saveTimelineModel: async () => {

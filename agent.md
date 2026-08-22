@@ -1213,6 +1213,13 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.21.5: o indicador de "quem está atendendo" virou uma linha só. Ele saía
+  como "Imagem · Cloudflare Workers AI · FLUX.1 Schnell" a 12px, com badge de
+  11px, logo abaixo de seletores de 8,5px — quebrava em duas linhas e pesava
+  mais que os controles que acompanha. Agora: ícone do papel, o MODELO e o
+  badge, tudo em 8,5px, 13px de altura. O provedor saiu do texto porque já
+  está escrito no seletor imediatamente acima; segue no title para quem passar
+  o mouse.
 - 0.21.4: o chat mostrava "Ollama Cloud" e falava com o Gemini.
   Mesma família do defeito anterior, agora no chat: havia DUAS verdades sobre
   quem conduz a conversa. O seletor lia `aiCatalog.chatProviderId` e o

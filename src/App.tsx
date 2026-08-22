@@ -3658,9 +3658,14 @@ export function App() {
                   provedor troca sozinho no meio do trabalho; sem isto o aluno
                   não teria como saber quem respondeu. */}
               {activeModel && (
-                <p className="active-model" title={`${activeModel.providerName} · ${activeModel.modelLabel}`}>
+                <p className="active-model" title={`${activeModel.role === 'image' ? 'Imagem' : 'Chat'} · ${activeModel.providerName} · ${activeModel.modelLabel}`}>
                   <span className="active-model-dot" aria-hidden="true" />
-                  {activeModel.role === 'image' ? 'Imagem' : 'Chat'} · {activeModel.providerName} · {activeModel.modelLabel}
+                  {/* Só o ícone do papel e o MODELO: o provedor já está escrito
+                      no seletor logo acima, e repeti-lo aqui fazia a linha
+                      quebrar em duas. Ele segue no title, para quem passar o
+                      mouse. */}
+                  <Icon name={activeModel.role === 'image' ? 'image' : 'chat'} />
+                  {activeModel.modelLabel}
                   {activeModel.free && <span className="badge free">Gratuito</span>}
                 </p>
               )}
