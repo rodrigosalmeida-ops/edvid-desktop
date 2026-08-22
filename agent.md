@@ -1213,6 +1213,61 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.24.0: HUB DE GERAÇÃO POR MCP (Higgsfield) — imagem e vídeo pela conta do
+  aluno, com nível de qualidade escolhido nas Configurações.
+  QUEM É O CLIENTE MCP: o APP, não o agente. Dava para plugar nos três agentes
+  (o Codex aceita `[mcp_servers]`, o SDK do Claude aceita `mcpServers`, o
+  Gemini já recebe `mcpServers` na sessão) e seria menos código — e seria o
+  mesmo padrão que falhou seis vezes: o agente teria de lembrar de forçar
+  1080p, desligar o áudio, acertar a proporção e salvar no lugar certo, e o
+  resultado mudaria conforme o aluno escolheu ChatGPT, Claude ou Gemini. Uma
+  implementação, um login (`src/mcp-hub.ts`, OAuth com PKCE e registro
+  dinâmico pelo SDK oficial; token 0600 em `userData/mcp/`).
+  MEDIDO no catálogo real via `models_explore`, e três coisas quebrariam
+  caladas: (1) 720p é o PADRÃO de quase todo modelo de vídeo — fullHD tem de
+  ir escrito; (2) `generate_audio` vem LIGADO — o modelo compõe fala e trilha
+  próprias, que entrariam por baixo da voz do aluno (desligamos no pedido onde
+  dá, e o ffmpeg tira a faixa na entrada de qualquer jeito, porque o Veo 3.1
+  nem oferece a chave); (3) `grok_video_v15` e `minimax_hailuo` não têm
+  controle de proporção nenhum e `gemini_omni`/`seedance_2_0_mini` têm teto de
+  720p — ficam fora por medição, não por gosto.
+  CUSTO MEDIDO com `get_cost` (preflight que não submete job nem gasta nada),
+  clipe vertical de 4-5s em 1080p e mudo: kling3_0_turbo 10, seedance1_5 12,
+  kling3_0 mode=4k 30, cinematic_studio_3_0 40, veo3_1 ultra 43,6. Imagem 9:16:
+  z_image 0,15, soul_2 0,12, nano_banana 1, nano_banana_2 2k 2,
+  nano_banana_pro 2k 2, gpt_image_2 2k high 7.
+  DUAS COISAS QUE A MEDIÇÃO DERRUBOU e que eu teria escrito errado: o VARIANTE
+  pesa mais que o modelo (o mesmo veo3_1 custa 43,6 em ultra/preview e 11 em
+  high/fast — não existe "modelo caro", existe configuração cara); e soul_2
+  custa 0,12, MENOS que o modelo mais barato do catálogo, então retrato vale
+  em todos os níveis, e não só do Médio para cima como eu tinha escrito.
+  E uma para dizer em voz alta: o mercado tem DUAS faixas de preço, não
+  quatro. Regular e Médio ficam a 20% um do outro; Alto e Extremo custam três
+  a quatro vezes mais. Os quatro degraus existem porque o aluno pensa em
+  quatro degraus, mas o dinheiro só muda quando ele passa do Médio para o Alto.
+  TETO DE 2k NA IMAGEM em todos os níveis: a entrega é 1080x1920 e a faixa da
+  tela dividida tem 1080x749. O que o nível move é o MODELO, não o tamanho.
+  A tabela autorada é INTENÇÃO; o catálogo vivo é a VERDADE — todo parâmetro é
+  conferido contra o que o modelo declara e um candidato que não bate é
+  descartado, em vez de virar pedido inválido (`src/generation-tier.ts`). O
+  nível DESCE quando o catálogo não tem quem atenda, e nunca sobe: crédito
+  gasto não volta.
+  TRÊS DEFEITOS CORRIGIDOS no caminho: (1) `aiRoles.imageCatalog` era gravado,
+  persistido e mostrado no seletor, mas `fulfillImageRequests` lia só
+  `aiRoles.image` — e escolher um provedor do catálogo zera esse campo, então
+  o aluno escolhia e recebia "nenhuma IA de imagem conectada". Estava dormente
+  desde a saída das IAs gratuitas e voltaria a ser o caminho principal.
+  (2) O modal abria com DUAS seções "Entrar com a conta" para o hub, a de cima
+  com um botão que não fazia nada. (3) `mediaTier` dava o tier MAIS ALTO a um
+  .mp4 em `edit/clipes/`: sendo sempre o arquivo mais recente, o b-roll gerado
+  roubaria o preview do render. Daí a quarta categoria `insumo` em
+  `src/media-selection.ts` — que também conserta `assets/*.mp4`, tratado como
+  gravação do aluno e varrido para dentro do corte limpo desde sempre.
+  Ícones: `higgsfield.png`, `magnific.webp` e `treblo.webp` estavam em
+  `src/brand/ai/` e nunca tinham sido importados — os cards caíam na letra.
+  MAGNIFIC: entrada criada no catálogo mas SEM tabela de níveis. Autorar uma
+  sem medir o catálogo dele seria a frase fixa da trilha de novo: parece
+  pronta e não serve. `resolveGeneration` devolve null até a medição.
 - 0.23.0: PRÉVIA DO TRECHO ALTERADO antes do render inteiro. Medido no
   projeto real do aluno (91s, 1080x1920, dois renders de tamanhos diferentes
   para separar custo fixo de custo por quadro): 8,4 quadros/s mais 9,4s de
@@ -2233,6 +2288,8 @@ npm run test:member-auth
 npm run test:project-layout
 npm run test:project-files
 npm run test:clean-cut-pipeline
+npm run test:generation-tier
+npm run test:hub-generation
 EDVID_TEST_VIDEO=<um vídeo falado> npm run test:clean-cut-live
 git diff --check
 ```
@@ -2245,6 +2302,9 @@ npx vite --host 127.0.0.1 --port 4831
 
 O `src/qa-browser-api.ts` fornece projeto, mídia, EDL, eventos e aprovações
 simulados. Validar visualmente mudanças importantes, além da tipagem.
+Parâmetros úteis: `?hub` liga o Higgsfield conectado (exercita os seletores de
+nível, o papel de vídeo e o card da conexão sem precisar de conta); `?render`,
+`?imagens`, `?catalogo`, `?ia`, `?semchatgpt` cobrem os outros estados.
 
 Empacotamento completo:
 

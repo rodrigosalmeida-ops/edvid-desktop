@@ -35,6 +35,10 @@ const api: EdvidDesktopApi = {
   logoutCodex: () => ipcRenderer.invoke('codex:logout'),
   getAiRoles: () => ipcRenderer.invoke('ai:roles-get'),
   setImageCatalogProvider: (id) => ipcRenderer.invoke('ai:image-catalog', { id }),
+  setVideoCatalogProvider: (id) => ipcRenderer.invoke('ai:video-catalog', { id }),
+  setGenerationTier: (kind, tier) => ipcRenderer.invoke('ai:tier-set', { kind, tier }),
+  loginHub: (hub) => ipcRenderer.invoke('hub:login', { hub }),
+  disconnectHub: (hub) => ipcRenderer.invoke('hub:disconnect', { hub }),
   setAiRole: (role, provider, pinned) => ipcRenderer.invoke('ai:role-set', { role, provider, pinned }),
   onAiRoles: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AiRolesState) => listener(state);
@@ -42,6 +46,7 @@ const api: EdvidDesktopApi = {
     return () => ipcRenderer.removeListener('ai:roles', handler);
   },
   fulfillImageRequests: (directory) => ipcRenderer.invoke('image:fulfill', { directory }),
+  fulfillVideoRequests: (directory) => ipcRenderer.invoke('video:fulfill', { directory }),
   fulfillMusicRequests: (directory) => ipcRenderer.invoke('music:fulfill', { directory }),
   applyJcut: (directory) => ipcRenderer.invoke('jcut:apply', { directory }),
   syncJcut: (directory) => ipcRenderer.invoke('jcut:sync', { directory }),

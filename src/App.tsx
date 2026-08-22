@@ -43,6 +43,11 @@ const captionThumbs: Record<Exclude<CaptionStyle, 'none'>, { kind: 'video' | 'im
 import chatgptMark from './brand/ai/chatgpt-mark.svg';
 import claudeMark from './brand/ai/claude-mark.svg';
 import geminiMark from './brand/ai/gemini-mark.svg';
+// Estavam em src/brand/ai/ desde sempre e nunca foram importados: os cards do
+// Treblo e dos hubs caiam na letra inicial de reserva.
+import higgsfieldMark from './brand/ai/higgsfield.png';
+import magnificMark from './brand/ai/magnific.webp';
+import trebloMark from './brand/ai/treblo.webp';
 import type {
   ActiveModelState,
   AiProvider,
@@ -71,6 +76,7 @@ import type {
   WhisperModelState,
 } from './shared';
 import { AI_CATALOG, catalogEntry, type AiCatalogEntry } from './ai-catalog';
+import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
 import {
   VIDEO_TRACK_ID,
   VOICE_TRACK_ID,
@@ -2041,7 +2047,8 @@ export function App() {
   // Quem está atendendo agora: mostrado abaixo do campo de texto do chat.
   const [activeModel, setActiveModel] = useState<ActiveModelState>(null);
   const [geminiLoaded, setGeminiLoaded] = useState(false);
-  const [aiRoles, setAiRoles] = useState<AiRolesState>({ chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false });
+  const [aiRoles, setAiRoles] = useState<AiRolesState>({ chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false,
+  videoCatalog: null, tiers: { imagem: DEFAULT_TIER.imagem, video: DEFAULT_TIER.video } });
   const [imageGen, setImageGen] = useState<ImageGenState>({ status: 'idle' });
   const [imageContinuationAt, setImageContinuationAt] = useState<number | null>(null);
   // Cobrança da animação sob medida prometida e não escrita: uma por projeto.
@@ -2131,6 +2138,9 @@ export function App() {
     chatgpt: chatgptMark,
     claude: claudeMark,
     gemini: geminiMark,
+    higgsfield: higgsfieldMark,
+    magnific: magnificMark,
+    treblo: trebloMark,
   };
   const connectEntry = connectTarget ? catalogEntry(connectTarget) : null;
   // IAs do catálogo (não-builtIn) conectadas e capazes de imagem: entram no
@@ -2153,6 +2163,13 @@ export function App() {
     && entry.capabilities.includes('imagem')
     && aiCatalog.connections.some((item) => item.id === entry.id && item.connected)
   ));
+  const catalogVideoProviders = AI_CATALOG.filter((entry) => (
+    entry.capabilities.includes('video')
+    && aiCatalog.connections.some((item) => item.id === entry.id && item.connected)
+  ));
+  const videoSelection = aiRoles.videoCatalog
+    ? `catalogo:${aiRoles.videoCatalog}`
+    : (catalogVideoProviders[0] ? `catalogo:${catalogVideoProviders[0].id}` : '');
   const imageSelection = aiRoles.imageCatalog
     ? `catalogo:${aiRoles.imageCatalog}`
     : aiRoles.image ?? (catalogImageProviders[0] ? `catalogo:${catalogImageProviders[0].id}` : '');
@@ -2376,6 +2393,11 @@ export function App() {
     }
     if (imageGen.status === 'generating') {
       const total = imageGen.total ?? 0;
+      // Quando o hub atende, a nota já diz o que está sendo feito, em que
+      // nível e quanto custa — e crédito precisa aparecer ANTES de gastar.
+      if (imageGen.note) {
+        return total > 1 ? `${imageGen.note} · ${imageGen.done ?? 0} de ${total}` : imageGen.note;
+      }
       return total > 1 ? `Gerando as imagens · ${imageGen.done ?? 0} de ${total}` : 'Gerando a imagem';
     }
     if (musicBusy) return 'Compondo a trilha sonora';
@@ -2476,6 +2498,9 @@ export function App() {
     if (!directory) return;
     // O andamento chega por onImageGenState; sem pedidos o main devolve idle.
     void window.edvidDesktop.fulfillImageRequests(directory).catch(() => {});
+    // Clipes seguem o mesmo caminho, em fila própria: um vídeo leva minutos e
+    // não pode segurar as imagens, que levam segundos.
+    void window.edvidDesktop.fulfillVideoRequests(directory).catch(() => {});
     // Trilha segue o mesmo caminho: sem pedido em edit/musica/, volta na hora.
     void window.edvidDesktop.fulfillMusicRequests(directory)
       .then((result) => {
@@ -3658,6 +3683,27 @@ export function App() {
                     ))}
                   </select>
                 </label>
+                {/* VÍDEO. Não existe par conta-fixa/catálogo como na imagem:
+                    nenhuma das três contas do topo gera vídeo, então o papel é
+                    só do catálogo. */}
+                <label className="role-select" title="IA que gera os clipes pedidos pela edição">
+                  <Icon name="video" />
+                  <select
+                    value={videoSelection}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      void window.edvidDesktop
+                        .setVideoCatalogProvider(value.startsWith('catalogo:') ? value.slice('catalogo:'.length) : null)
+                        .then(setAiRoles)
+                        .catch(() => {});
+                    }}
+                  >
+                    {catalogVideoProviders.length === 0 && <option value="">Nenhuma</option>}
+                    {catalogVideoProviders.map((entry) => (
+                      <option key={entry.id} value={`catalogo:${entry.id}`}>{entry.name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label className="role-select" title="IA que compõe a trilha sonora">
                   <Icon name="music" />
                   <select
@@ -3908,7 +3954,12 @@ export function App() {
             <div className="connect-body">
               {connectEntry.note && <p className="settings-note">{connectEntry.note}</p>}
 
-              {connectEntry.auth.includes('login') && (
+              {/* Login das contas FIXAS (ChatGPT e Claude), que têm fluxo
+                  próprio no main. O hub por MCP também declara auth:['login'],
+                  e sem este `!oauthHub` o modal abria com DUAS seções "Entrar
+                  com a conta" — a de cima com um botão que não fazia nada,
+                  porque o clique só sabe tratar builtIn. */}
+              {connectEntry.auth.includes('login') && !connectEntry.oauthHub && (
                 <div className="connect-section">
                   <h4>Entrar com a conta</h4>
                   {connectedByLogin
@@ -3939,6 +3990,84 @@ export function App() {
                 </div>
               )}
 
+              {/* HUB DE GERAÇÃO por MCP: não há chave para colar. O aluno
+                  entra com a conta e o gasto sai do crédito do plano dele.
+                  Com o login feito aparecem os dois níveis — é aqui que ele
+                  decide quanto vale gastar, e vale para todos os projetos. */}
+              {connectEntry.oauthHub && (
+                <div className="connect-section">
+                  <h4>Entrar com a conta</h4>
+                  {connectSaved
+                    ? (
+                      <>
+                        <div className="connect-account">
+                          <div>
+                            <strong className="connected-label">Conectado</strong>
+                            <small>Gerando pelo crédito do seu plano</small>
+                          </div>
+                          <button
+                            type="button"
+                            className="account-action"
+                            onClick={() => void window.edvidDesktop
+                              .disconnectHub(connectEntry.id)
+                              .then(setAiCatalog)
+                              .catch((error) => setConnectError(errorMessage(error)))}
+                          >
+                            Sair
+                          </button>
+                        </div>
+                        <div className="tier-grid">
+                          {(['imagem', 'video'] as GenerationKind[])
+                            .filter((kind) => connectEntry.capabilities.includes(kind))
+                            .map((kind) => (
+                              <label className="tier-select" key={kind}>
+                                <span><Icon name={kind === 'imagem' ? 'image' : 'video'} />Nível {kind === 'imagem' ? 'das imagens' : 'dos vídeos'}</span>
+                                <select
+                                  value={aiRoles.tiers[kind] ?? DEFAULT_TIER[kind]}
+                                  onChange={(event) => void window.edvidDesktop
+                                    .setGenerationTier(kind, event.target.value)
+                                    .then(setAiRoles)
+                                    .catch((error) => setConnectError(errorMessage(error)))}
+                                >
+                                  {TIERS.map((tier) => (
+                                    <option key={tier} value={tier}>{TIER_LABEL[tier]}</option>
+                                  ))}
+                                </select>
+                                <small>{TIER_NOTE[kind][(aiRoles.tiers[kind] ?? DEFAULT_TIER[kind]) as keyof typeof TIER_LABEL]}</small>
+                              </label>
+                            ))}
+                        </div>
+                      </>
+                    )
+                    : (
+                      <>
+                        <p className="settings-note">Sem chave de API: o login abre no navegador e o Edvid gera com o crédito do seu plano.</p>
+                        <button
+                          type="button"
+                          className="account-action primary"
+                          disabled={connectTesting}
+                          onClick={() => {
+                            setConnectError(null);
+                            setConnectTesting(true);
+                            void window.edvidDesktop
+                              .loginHub(connectEntry.id)
+                              .then(setAiCatalog)
+                              .catch((error) => setConnectError(errorMessage(error)))
+                              .finally(() => setConnectTesting(false));
+                          }}
+                        >
+                          {connectTesting ? 'Conclua no navegador…' : 'Entrar'}
+                        </button>
+                      </>
+                    )}
+                  {connectError && <p className="settings-note error">{connectError}</p>}
+                </div>
+              )}
+
+              {/* Sem credencial declarada não há seção de chave: o hub por MCP
+                  mostrava um campo vazio e um link para "criar chave" que não
+                  existe. */}
+              {connectEntry.credentials.length > 0 && (
               <div className="connect-section">
                 <h4>Chave de API</h4>
                 {!connectedByKey && (
@@ -4001,6 +4130,7 @@ export function App() {
                 {connectTested && <p className="settings-note ok">{connectTested}</p>}
                 {connectError && <p className="settings-note error">{connectError}</p>}
               </div>
+              )}
 
               {connectEntry.pricing !== 'free' && connectEntry.models.some((model) => model.free) && (
                 <label className="catalog-toggle">

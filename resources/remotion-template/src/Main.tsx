@@ -40,7 +40,10 @@ const fontFamily = POPPINS;
 
 // ============ TYPES + DATA ====================================================
 type Caption = {text: string; startMs: number; endMs: number};
-type Insert = {src: string; start: number; end: number};
+// `kind` acompanha o Split: o b-roll gerado no hub vem em .mp4, e um insert
+// so de imagem obrigaria a tela dividida mesmo quando o clipe deveria ocupar
+// o cartao inteiro. `muted` nao e enfeite — o clipe entra por baixo da voz.
+type Insert = {kind?: 'image' | 'video'; src: string; start: number; end: number};
 // Tela dividida OFICIAL: a midia ocupa uma FAIXA e o video segue no resto.
 // kind "video" toca o arquivo (mudo) em loop de cover; bandTop escolhe qual
 // faixa vertical do video 9:16 aparece na parte dele (fracao do topo);
@@ -483,7 +486,7 @@ const CARD_W = 780;
 const CARD_H = 500;
 const CARD_TOP = 90;
 
-const InsertCard: React.FC<{src: string; totalFrames: number}> = ({src, totalFrames}) => {
+const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'}> = ({src, totalFrames, kind}) => {
   const frame = useCurrentFrame();
   const enter = interpolate(frame, [0, 9], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
   const exit = interpolate(frame, [totalFrames - 7, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
@@ -496,7 +499,9 @@ const InsertCard: React.FC<{src: string; totalFrames: number}> = ({src, totalFra
     <AbsoluteFill style={{justifyContent: 'flex-start', alignItems: 'center'}}>
       <Sfx src="whoosh.mp3" />
       <div style={{width: CARD_W, height: CARD_H, marginTop: CARD_TOP, borderRadius: 28, overflow: 'hidden', opacity, scale: String(scale), translate: `0px ${y}px`, boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
-        <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+        {kind === 'video'
+          ? <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+          : <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />}
       </div>
     </AbsoluteFill>
   );
@@ -511,7 +516,7 @@ const Inserts: React.FC = () => {
         const duration = Math.round((it.end - it.start) * fps);
         return (
           <Sequence key={i} from={from} durationInFrames={duration} layout="none">
-            <InsertCard src={it.src} totalFrames={duration} />
+            <InsertCard src={it.src} kind={it.kind} totalFrames={duration} />
           </Sequence>
         );
       })}

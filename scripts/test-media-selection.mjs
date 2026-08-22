@@ -66,6 +66,36 @@ try {
   assert.equal(kindOf('Vídeo novo.mov'), 'source');
   assert.equal(mediaTier('assets/b-roll.mp4'), 0);
 
+  // --- Clipe gerado pelo hub é INSUMO, não render (0.24.0) ------------------
+  // Um b-roll gerado no Higgsfield cai em edit/clipes/ e é um .mp4 dentro de
+  // edit/ como qualquer outro. Sem a lista de pastas de insumo ele pegava o
+  // tier mais alto e, sendo sempre o arquivo mais recente, roubava o preview:
+  // o aluno pedia um b-roll e via o player trocar a edição inteira por quatro
+  // segundos de paisagem.
+  assert.equal(mediaTier('edit/clipes/cidade_noite.mp4'), 0);
+  assert.equal(mediaTier('edit/imagens/fundo.mp4'), 0);
+  assert.equal(mediaTier('edit/derivados/sem_audio.mp4'), 0);
+  assert.equal(mediaTier('edit/remotion/public/clipes/cidade_noite.mp4'), 0);
+  const comBroll = pickPreviewMedia([
+    { relativePath: 'edit/fase_2/fase_2_v3.mp4', modifiedAt: 1000 },
+    { relativePath: 'edit/clipes/cidade_noite.mp4', modifiedAt: 9999 },
+  ]);
+  assert.equal(comBroll.relativePath, 'edit/fase_2/fase_2_v3.mp4', 'o render continua sendo o preview');
+  // E o clipe também não pode virar fonte do próximo corte limpo: entraria na
+  // timeline junto com a gravação do aluno. Isso já valia para assets/ antes
+  // desta versão — um b-roll guardado lá era tratado como gravação do aluno.
+  for (const caminho of [
+    'edit/clipes/cidade_noite.mp4',
+    'assets/b-roll.mp4',
+    'edit/imagens/fundo.mp4',
+    'edit/derivados/sem_audio.mp4',
+  ]) {
+    assert.equal(kindOf(caminho), 'insumo', `${caminho} é material de entrada`);
+  }
+  // A gravação do aluno continua sendo fonte, esteja onde estiver.
+  assert.equal(kindOf('IMG_6342.MOV'), 'source');
+  assert.equal(kindOf('gravacoes/IMG_6343.MOV'), 'source');
+
   // --- Fase 1: correcao mais nova substitui o corte anterior ---------------
   const aposCorrecao = pickPreviewMedia([
     { relativePath: 'edicao/corte_limpo/corte_limpo_v1.mp4', modifiedAt: 1000 },

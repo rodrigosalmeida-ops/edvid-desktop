@@ -43,7 +43,12 @@ export type ProjectMedia = {
   duration: number;
   fps: number;
   orientation: 'vertical' | 'horizontal';
-  kind: 'source' | 'clean-cut' | 'final';
+  // "insumo" e material que ENTRA na edicao: b-roll gerado no hub, imagem,
+  // derivado. Nao e gravacao do aluno (nao entra no corte limpo) e nao e
+  // render (nao disputa o preview). Sem esta quarta categoria, todo .mp4 em
+  // assets/ ja era tratado como gravacao do aluno e entrava na timeline do
+  // proximo corte junto com o material dele.
+  kind: 'source' | 'clean-cut' | 'final' | 'insumo';
 };
 
 export type ProjectTimelineSegment = {
@@ -232,7 +237,7 @@ export type CleanCutState = {
 // ferramenta do Codex e atrelada a conta ChatGPT, nao a chave de API).
 export type AiProvider = 'chatgpt' | 'claude' | 'gemini';
 
-export type AiRole = 'chat' | 'image';
+export type AiRole = 'chat' | 'image' | 'video';
 
 // "Pinned" = escolha explicita do aluno: as regras automaticas nao mexem em
 // papel fixado enquanto o provedor fixado continuar conectado e capaz.
@@ -246,6 +251,13 @@ export type AiRolesState = {
   imageCatalog: string | null;
   chatPinned: boolean;
   imagePinned: boolean;
+  // VIDEO so existe pelo catalogo: nenhuma das tres contas fixas gera video.
+  // Por isso nao ha par `video` / `videoCatalog` como na imagem.
+  videoCatalog: string | null;
+  // Nivel de geracao escolhido nas Configuracoes, por tipo. Vive aqui e nao no
+  // projeto porque e preferencia de conta: vale para todos os projetos ate o
+  // aluno mudar. Ver generation-tier.ts para o que cada nivel custa.
+  tiers: { imagem: string; video: string };
 };
 
 // CATALOGO DE IAs (0.15.0): alem das tres contas fixas, o aluno conecta
@@ -290,6 +302,11 @@ export type ImageGenState = {
   total?: number;
   done?: number;
   error?: string;
+  // Frase curta para o badge de trabalho: qual hub, que nivel e quanto custa.
+  // Custo de credito precisa aparecer ANTES de terminar, nao depois — e o
+  // dinheiro do aluno, e o badge e onde ele ja olha para saber o que o Edvid
+  // esta fazendo.
+  note?: string;
 };
 
 // J-Cut deterministico aplicado pelo aplicativo: o video do corte e copiado
@@ -407,8 +424,14 @@ export type EdvidDesktopApi = {
   getAiRoles: () => Promise<AiRolesState>;
   setAiRole: (role: AiRole, provider: AiProvider | null, pinned: boolean) => Promise<AiRolesState>;
   setImageCatalogProvider: (id: string | null) => Promise<AiRolesState>;
+  setVideoCatalogProvider: (id: string | null) => Promise<AiRolesState>;
+  setGenerationTier: (kind: 'imagem' | 'video', tier: string) => Promise<AiRolesState>;
+  // Hubs de geracao por MCP: entra com a conta, sem chave nenhuma.
+  loginHub: (hub: string) => Promise<CatalogState>;
+  disconnectHub: (hub: string) => Promise<CatalogState>;
   onAiRoles: (listener: (state: AiRolesState) => void) => () => void;
   fulfillImageRequests: (directory: string) => Promise<ImageGenState>;
+  fulfillVideoRequests: (directory: string) => Promise<ImageGenState>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;

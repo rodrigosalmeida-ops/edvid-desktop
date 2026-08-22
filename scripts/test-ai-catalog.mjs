@@ -30,7 +30,21 @@ try {
   for (const entry of AI_CATALOG) {
     assert.ok(entry.capabilities.length > 0, `${entry.id} precisa de ao menos um badge`);
     assert.ok(/^https:\/\//u.test(entry.keyUrl), `${entry.id} precisa de link https para criar a chave`);
-    assert.ok(entry.credentials.some((field) => field.secret), `${entry.id} precisa de um campo secreto`);
+    // Toda conexão precisa de UM caminho de entrada: chave secreta ou login
+    // OAuth. Nenhum dos dois significa um card que o aluno não consegue
+    // conectar de jeito nenhum. Os dois ao mesmo tempo significa duas verdades
+    // sobre o mesmo estado de conexão — foi assim que o seletor de imagem
+    // acabou com uma escolha que voltava sozinha.
+    const porChave = entry.credentials.some((field) => field.secret);
+    assert.ok(porChave || entry.oauthHub, `${entry.id} não tem como ser conectado`);
+    assert.ok(!(porChave && entry.oauthHub), `${entry.id} tem dois caminhos de conexão`);
+    if (entry.oauthHub) {
+      assert.deepEqual(entry.credentials, [], `${entry.id} entra por login e não guarda credencial`);
+      assert.deepEqual(entry.auth, ['login'], `${entry.id} só oferece login`);
+      // Modelo fixo aqui apodrece: são 30+ e mudam todo mês. O nível escolhido
+      // pelo aluno é resolvido contra o catálogo VIVO do hub.
+      assert.deepEqual(entry.models, [], `${entry.id} não fixa lista de modelos`);
+    }
     for (const model of entry.models) {
       assert.ok(entry.capabilities.includes(model.capability),
         `${entry.id}: modelo ${model.id} declara capacidade fora dos badges`);
@@ -46,7 +60,16 @@ try {
   // no account/read — o Edvid dizia que o ChatGPT não estava conectado com o
   // login feito e o token no disco. Medido na máquina do aluno: mesmo
   // auth.json, com o provedor customizado dá null e sem ele dá a conta.
-  assert.deepEqual(ids.sort(), ['chatgpt', 'claude', 'gemini', 'treblo']);
+  assert.deepEqual(ids.sort(), ['chatgpt', 'claude', 'gemini', 'higgsfield', 'treblo']);
+
+  // --- O hub de geração (0.24.0) --------------------------------------------
+  const higgsfield = catalogEntry('higgsfield');
+  assert.deepEqual(higgsfield.capabilities, ['imagem', 'video']);
+  assert.equal(higgsfield.oauthHub, 'higgsfield');
+  // Vídeo só existe pelo hub: nenhuma das três contas fixas gera vídeo. Se um
+  // dia isso mudar, o seletor de vídeo precisa mudar junto.
+  const geramVideo = AI_CATALOG.filter((entry) => entry.capabilities.includes('video')).map((entry) => entry.id);
+  assert.deepEqual(geramVideo, ['higgsfield']);
   assert.equal(catalogEntry('ollama'), null, 'Ollama saiu do catálogo');
   assert.equal(catalogEntry('cloudflare'), null);
   assert.equal(catalogEntry('openrouter'), null);

@@ -9,6 +9,13 @@ import type { ProjectMedia } from './shared';
 // projetos criados antes da unificacao tem os renders la.
 export const editDirectories = new Set(['edit', 'edicao', 'edição']);
 
+// Pastas de INSUMO: o que esta la dentro entra na edicao, nao sai dela. Um
+// clipe de b-roll gerado no hub e um .mp4 dentro de edit/ como qualquer outro,
+// e sem esta lista ele pegaria o tier mais alto e, sendo o arquivo mais
+// recente, ROUBARIA o preview do render — o aluno pediria um b-roll e veria o
+// player trocar o video editado por quatro segundos de paisagem.
+export const inputDirectories = new Set(['assets', 'clipes', 'imagens', 'musica', 'música', 'derivados']);
+
 // Arquivo que pode ser midia do projeto.
 //
 // O macOS grava um par "._nome" para cada arquivo em volume que nao seja APFS
@@ -47,7 +54,7 @@ export function mediaTier(relativePath: string): number {
   const normalized = normalize(relativePath);
   const directories = normalized.split('/').slice(0, -1);
   const base = basenameOf(normalized);
-  if (directories.includes('assets')) return 0;
+  if (directories.some((directory) => inputDirectories.has(directory))) return 0;
   if (!directories.some((directory) => editDirectories.has(directory))) {
     // Fora da pasta de edicao so um nome explicito de saida conta como render.
     // O video final do projeto vive na raiz como "<projeto>_final.mp4", entao
@@ -60,6 +67,12 @@ export function mediaTier(relativePath: string): number {
 export function mediaKind(relativePath: string, tier: number): ProjectMedia['kind'] {
   const normalized = normalize(relativePath);
   const base = basenameOf(normalized);
+  // Material de entrada nao e gravacao do aluno. Antes de existir esta linha,
+  // um b-roll em assets/ caia em tier 0, virava "source" pela regra de baixo e
+  // entrava na timeline do corte limpo junto com o video que o aluno gravou.
+  if (normalized.split('/').slice(0, -1).some((directory) => inputDirectories.has(directory))) {
+    return 'insumo';
+  }
   if (tier <= 1) return 'source';
   if (finalName.test(base) || /(^|\/)fase[_-]?2(\/|$)/u.test(normalized)) {
     return 'final';

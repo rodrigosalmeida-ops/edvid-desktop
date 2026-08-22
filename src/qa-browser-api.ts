@@ -15,6 +15,7 @@ import type {
   RuntimeName,
 } from './shared';
 import { PREVIEW_SOURCE_ID, deriveSegments, modelFromSegments, modelFromSourceFiles } from './timeline-model';
+import { DEFAULT_TIER } from './generation-tier';
 
 const qaProject: ProjectSummary = {
   directory: '/tmp/edvid-interface-qa',
@@ -130,7 +131,11 @@ let approvalPreviewScheduled = false;
 // onboarding); ?ia=manual força o fluxo de colar o código do Claude.
 const qaSearch = () => new URLSearchParams(window.location.search);
 let qaChatGptConnected = !qaSearch().has('ia') && !qaSearch().has('semchatgpt');
-let qaRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false };
+// Com ?hub o Higgsfield ja atende imagem e video, que e o estado interessante
+// de testar: o seletor com um hub escolhido em vez de vazio.
+const qaHubRole = new URLSearchParams(window.location.search).has('hub') ? 'higgsfield' : null;
+let qaRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: qaHubRole, chatPinned: false, imagePinned: false,
+  videoCatalog: qaHubRole, tiers: { imagem: DEFAULT_TIER.imagem, video: DEFAULT_TIER.video } };
 const rolesListeners = new Set<(state: AiRolesState) => void>();
 
 function emitRoles(): void {
@@ -141,25 +146,24 @@ const claudeListeners = new Set<(state: ClaudeAccountState) => void>();
 // Catálogo de IAs no QA: "?catalogo" abre com o gratuito já conectado.
 const qaCatalogConnected = new URLSearchParams(window.location.search).has('catalogo');
 const qaSemChatGpt = new URLSearchParams(window.location.search).has('semchatgpt');
+// ?hub liga o Higgsfield conectado, para exercitar os seletores de nivel e o
+// papel de video sem precisar de conta nenhuma.
+const qaHub = new URLSearchParams(window.location.search).has('hub');
 let qaCatalog: CatalogState = {
-  freeOnly: qaCatalogConnected,
-  chatProviderId: qaSemChatGpt ? 'ollama' : null,
+  freeOnly: false,
+  chatProviderId: null,
   connections: [
-    {
-      id: 'cloudflare',
-      connected: qaCatalogConnected,
-      maskedKey: qaCatalogConnected ? '••••7f2a' : null,
-      fields: qaCatalogConnected ? { accountId: 'a1b2c3d4e5' } : {},
-      cooldownUntil: null,
-    },
-    { id: 'openrouter', connected: false, maskedKey: null, fields: {}, cooldownUntil: null },
+    // A lista acompanha o AI_CATALOG de verdade. Ela ficou com cloudflare,
+    // openrouter e ollama depois que essas IAs sairam (0.22.0): nao quebrava
+    // nada porque a interface filtra pelo catalogo, mas descrevia um app que
+    // nao existe mais — e um teste que descreve outro app nao testa este.
+    { id: 'higgsfield', connected: qaHub, maskedKey: null, fields: {}, cooldownUntil: null },
     { id: 'treblo', connected: qaCatalogConnected, maskedKey: qaCatalogConnected ? '••••9b4e' : null, fields: {}, cooldownUntil: null },
-    { id: 'ollama', connected: qaSemChatGpt, maskedKey: qaSemChatGpt ? '••••3c1d' : null, fields: {}, cooldownUntil: null },
   ],
 };
 const catalogListeners = new Set<(state: CatalogState) => void>();
-const qaActiveModel: ActiveModelState = qaCatalogConnected
-  ? { role: 'image', providerId: 'cloudflare', providerName: 'Cloudflare Workers AI', modelLabel: 'FLUX.1 Schnell', free: true }
+const qaActiveModel: ActiveModelState = qaHub
+  ? { role: 'image', providerId: 'higgsfield', providerName: 'Higgsfield', modelLabel: 'Nano Banana 2', free: false }
   : null;
 const activeModelListeners = new Set<(state: ActiveModelState) => void>();
 
@@ -281,13 +285,17 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       return () => rolesListeners.delete(listener);
     },
     fulfillImageRequests: async () => ({ status: 'idle' }),
+    fulfillVideoRequests: async () => ({ status: 'idle' }),
     fulfillMusicRequests: async () => ({ done: 0 }),
     applyJcut: async () => ({ applied: true, cuts: 2, error: null }),
     syncJcut: async () => ({ changed: false }),
     pendingCustomAnimations: async () => [],
     onImageGenState: (listener) => {
       // QA da geracao de imagens: ?imagens simula uma fila de tres pedidos.
+      // Com ?hub junto, vem a NOTA do hub — qual hub, que nivel e quanto
+      // custa. O credito e do aluno e precisa aparecer antes de ser gasto.
       if (qaSearch().has('imagens')) {
+        const note = qaSearch().has('hub') ? 'Gerando 3 clipes no Higgsfield · nível Médio · ~36 créditos' : undefined;
         let done = 0;
         const timer = window.setInterval(() => {
           done += 1;
@@ -295,7 +303,7 @@ export function createQaBrowserApi(): EdvidDesktopApi {
             window.clearInterval(timer);
             listener({ status: 'ready', total: 3, done: 3 });
           } else {
-            listener({ status: 'generating', total: 3, done });
+            listener({ status: 'generating', total: 3, done, note });
           }
         }, 900);
       }
@@ -541,6 +549,42 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       qaRoles = { ...qaRoles, imageCatalog: id, image: id ? null : qaRoles.image };
       emitRoles();
       return qaRoles;
+    },
+    setVideoCatalogProvider: async (id) => {
+      qaRoles = { ...qaRoles, videoCatalog: id };
+      emitRoles();
+      return qaRoles;
+    },
+    setGenerationTier: async (kind, tier) => {
+      qaRoles = { ...qaRoles, tiers: { ...qaRoles.tiers, [kind]: tier } };
+      emitRoles();
+      return qaRoles;
+    },
+    loginHub: async (hub) => {
+      emitCatalog({
+        ...qaCatalog,
+        connections: qaCatalog.connections.map((item) => (
+          item.id === hub ? { ...item, connected: true } : item
+        )),
+      });
+      return qaCatalog;
+    },
+    disconnectHub: async (hub) => {
+      emitCatalog({
+        ...qaCatalog,
+        connections: qaCatalog.connections.map((item) => (
+          item.id === hub ? { ...item, connected: false } : item
+        )),
+      });
+      if (qaRoles.imageCatalog === hub || qaRoles.videoCatalog === hub) {
+        qaRoles = {
+          ...qaRoles,
+          imageCatalog: qaRoles.imageCatalog === hub ? null : qaRoles.imageCatalog,
+          videoCatalog: qaRoles.videoCatalog === hub ? null : qaRoles.videoCatalog,
+        };
+        emitRoles();
+      }
+      return qaCatalog;
     },
     applyTimelineRanges: async (_directory, ranges) => {
       window.setTimeout(() => emitCleanCut({ status: 'cortando' }), 200);

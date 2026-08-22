@@ -39,6 +39,15 @@ import {
   type ImageUse,
 } from './image-format';
 import {
+  DEFAULT_TIER,
+  TIER_LABEL,
+  type GenerationHub,
+  type GenerationTier,
+  tierFrom,
+} from './generation-tier';
+import { HubGeneration, type GenerationItem } from './hub-generation';
+import { HUB_NAME, HubNeedsLogin, McpHub } from './mcp-hub';
+import {
   LANGUAGE_FALLBACK,
   PT_BR_TURN_REMINDER,
   rewritePrompt,
@@ -3156,7 +3165,8 @@ function getCodexAppServer(): CodexAppServer {
 // canal (codex:event) e o chat nao sabe a diferenca.
 
 const AI_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini']);
-let aiRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false };
+let aiRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: null, chatPinned: false, imagePinned: false,
+  videoCatalog: null, tiers: { imagem: DEFAULT_TIER.imagem, video: DEFAULT_TIER.video } };
 let claudeAgent: ClaudeAgent | null = null;
 
 function appSettingsFile(): string {
@@ -3172,6 +3182,13 @@ async function loadAppSettings(): Promise<void> {
     if (typeof parsed.imageProvider === 'string' && AI_PROVIDERS.has(parsed.imageProvider)) {
       aiRoles.image = parsed.imageProvider as AiProvider;
     }
+    if (typeof parsed.videoCatalog === 'string' && parsed.videoCatalog) {
+      aiRoles.videoCatalog = parsed.videoCatalog;
+    }
+    aiRoles.tiers = {
+      imagem: tierFrom((parsed.tiers as Record<string, unknown> | undefined)?.imagem, 'imagem'),
+      video: tierFrom((parsed.tiers as Record<string, unknown> | undefined)?.video, 'video'),
+    };
     if (typeof parsed.imageCatalog === 'string' && parsed.imageCatalog) {
       aiRoles.imageCatalog = parsed.imageCatalog;
     }
@@ -3190,6 +3207,23 @@ function broadcastAiRoles(): void {
 
 async function setImageCatalogProvider(id: string | null): Promise<AiRolesState> {
   aiRoles = { ...aiRoles, imageCatalog: id, image: id ? null : aiRoles.image, imagePinned: false };
+  await persistAiRoles();
+  broadcastAiRoles();
+  return aiRoles;
+}
+
+async function setVideoCatalogProvider(id: string | null): Promise<AiRolesState> {
+  aiRoles = { ...aiRoles, videoCatalog: id };
+  await persistAiRoles();
+  broadcastAiRoles();
+  return aiRoles;
+}
+
+// Nivel de geracao (Regular / Medio / Alto / Extremo). Mora na conta e nao no
+// projeto: e preferencia do aluno sobre quanto credito vale gastar, e vale
+// para todos os projetos ate ele mudar nas Configuracoes.
+async function setGenerationTier(kind: 'imagem' | 'video', tier: string): Promise<AiRolesState> {
+  aiRoles = { ...aiRoles, tiers: { ...aiRoles.tiers, [kind]: tierFrom(tier, kind) } };
   await persistAiRoles();
   broadcastAiRoles();
   return aiRoles;
@@ -3225,6 +3259,8 @@ async function persistAiRoles(): Promise<void> {
         chatPinned: aiRoles.chatPinned,
         imagePinned: aiRoles.imagePinned,
         imageCatalog: aiRoles.imageCatalog,
+        videoCatalog: aiRoles.videoCatalog,
+        tiers: aiRoles.tiers,
       },
       null,
       2,
@@ -3591,6 +3627,60 @@ type StoredCatalog = {
   chatProviderId?: string | null;
 };
 
+// --- HUBS DE GERACAO (MCP) --------------------------------------------------
+// Uma instancia por hub, viva enquanto o app estiver aberto. O token OAuth
+// mora em userData/mcp/<hub>.json com 0600 e nunca sai dali — nao vai para
+// log, nem para o chat, nem para o config de nenhum agente.
+const hubs = new Map<GenerationHub, McpHub>();
+// Espelho do que esta conectado, para o card das Configuracoes. E cache: a
+// verdade e o arquivo de token, lido de forma assincrona no arranque e depois
+// de cada login ou desconexao.
+const hubConnected = new Map<GenerationHub, boolean>();
+
+function hubFor(id: GenerationHub): McpHub {
+  let hub = hubs.get(id);
+  if (!hub) {
+    hub = new McpHub(id, path.join(app.getPath('userData'), 'mcp'), (url) => {
+      void shell.openExternal(url);
+    });
+    hubs.set(id, hub);
+  }
+  return hub;
+}
+
+const hubGenerators = new Map<GenerationHub, HubGeneration>();
+
+function hubGeneration(id: GenerationHub): HubGeneration {
+  let generator = hubGenerators.get(id);
+  if (!generator) {
+    generator = new HubGeneration(hubFor(id));
+    hubGenerators.set(id, generator);
+  }
+  return generator;
+}
+
+async function refreshHubConnections(): Promise<void> {
+  for (const entry of AI_CATALOG) {
+    if (!entry.oauthHub) continue;
+    hubConnected.set(entry.oauthHub, await hubFor(entry.oauthHub).connected().catch(() => false));
+  }
+}
+
+// O hub escolhido para um papel. O catalogo tem precedencia porque e a escolha
+// explicita do aluno no seletor — mesma regra do chatRoute.
+function hubForRole(role: 'image' | 'video'): GenerationHub | null {
+  const chosen = role === 'image' ? aiRoles.imageCatalog : aiRoles.videoCatalog;
+  const entry = chosen ? catalogEntry(chosen) : null;
+  if (entry?.oauthHub && hubConnected.get(entry.oauthHub)) return entry.oauthHub;
+  // Sem escolha explicita, o unico hub conectado atende sozinho: obrigar o
+  // aluno a escolher entre uma opcao so e atrito a toa.
+  const disponiveis = AI_CATALOG
+    .filter((item) => item.oauthHub && hubConnected.get(item.oauthHub)
+      && item.capabilities.includes(role === 'image' ? 'imagem' : 'video'))
+    .map((item) => item.oauthHub as GenerationHub);
+  return disponiveis.length === 1 ? disponiveis[0] : null;
+}
+
 function catalogFile(): string {
   return path.join(app.getPath('userData'), 'ai-catalog.json');
 }
@@ -3647,7 +3737,12 @@ function catalogStateFrom(stored: StoredCatalog): CatalogState {
     }
     return {
       id: entry.id,
-      connected: Boolean(saved && entry.credentials.every((f) => asText(saved.fields?.[f.key]))),
+      // Hub por MCP nao guarda credencial aqui: quem diz se esta conectado e o
+      // cofre de token do proprio hub. Sem esta linha, `credentials: []` fazia
+      // o `every` devolver true e o card mentia "conectado".
+      connected: entry.oauthHub
+        ? (hubConnected.get(entry.oauthHub) ?? false)
+        : Boolean(saved && entry.credentials.length > 0 && entry.credentials.every((f) => asText(saved.fields?.[f.key]))),
       maskedKey,
       fields,
       cooldownUntil: saved?.cooldownUntil ?? null,
@@ -3887,6 +3982,9 @@ async function fulfillMusicRequests(projectDirectory: string): Promise<{ done: n
 // src/image-format.ts, junto com o tamanho que cada provedor aceita. O agente
 // nomeia o uso; quem escolhe pixel e o Edvid.
 let imageGenJob: { directory: string; promise: Promise<ImageGenState> } | null = null;
+// Fila propria para video: um clipe leva minutos e nao pode segurar a fila das
+// imagens, que levam segundos.
+let videoGenJob: { directory: string; promise: Promise<ImageGenState> } | null = null;
 let imageGenState: ImageGenState = { status: 'idle' };
 
 function broadcastImageGenState(state: ImageGenState): void {
@@ -3944,6 +4042,194 @@ async function generateOpenAiImage(
   return Buffer.from(data, 'base64');
 }
 
+// --- Baixar o que o hub gerou ----------------------------------------------
+// O hub devolve um endereco temporario; quem guarda o arquivo e o Edvid.
+async function downloadTo(url: string, target: string): Promise<void> {
+  const response = await net.fetch(url);
+  if (!response.ok) throw new Error(`o download do arquivo falhou (HTTP ${response.status})`);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, Buffer.from(await response.arrayBuffer()));
+}
+
+// Clipe do hub -> clipe utilizavel na edicao. Duas coisas acontecem aqui, e as
+// duas importam:
+//
+//   1. A FAIXA DE AUDIO SAI. Quase todo modelo gera som proprio — fala,
+//      trilha, ambiencia — e o b-roll entra POR BAIXO da voz do aluno. Pedimos
+//      silencio no proprio pedido onde da, mas o Veo 3.1 nem oferece a chave;
+//      entao a garantia real e esta, no -an.
+//   2. O maior lado cai para 1920. Um clipe 4k custa menos credito que o
+//      equivalente em 1080p (medido: kling3_0 em 4k sai por 30, o seedance_2_0
+//      em 1080p por 36), mas renderizar a partir dele e lento a toa. Reduzir
+//      aqui e de graca: a passada de re-encode ja esta acontecendo por causa
+//      do audio.
+async function ingestClip(source: string, target: string): Promise<void> {
+  const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
+  if (!ffmpeg.command) throw new Error('o FFmpeg do Edvid não está pronto');
+  await mkdir(path.dirname(target), { recursive: true });
+  await runFfmpeg(ffmpeg.command, ffmpeg.argsPrefix, [
+    '-y', '-i', source,
+    '-an',
+    '-vf', "scale=w='if(gt(iw,ih),min(iw,1920),-2)':h='if(gt(iw,ih),-2,min(ih,1920))'",
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    target,
+  ], 600_000);
+  await rm(source, { force: true });
+}
+
+// --- Geracao de VIDEO pedida pelo agente ------------------------------------
+// Mesmo contrato das imagens: o agente escreve edit/clipes/pedidos.json com o
+// QUE quer, e o Edvid resolve o COMO — modelo, proporcao, duracao, silencio e
+// arquivo no lugar. Ver mcp-hub.ts para por que isto nao mora no agente.
+type VideoRequestEntry = { arquivo: string; prompt: string; uso: ImageUse | null; segundos: number };
+
+async function readVideoRequests(projectDirectory: string): Promise<VideoRequestEntry[]> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(path.join(projectDirectory, 'edit', 'clipes', 'pedidos.json'), 'utf8'),
+    ) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      const item = entry as { arquivo?: unknown; prompt?: unknown; uso?: unknown; segundos?: unknown; duracao?: unknown };
+      const prompt = asText(item.prompt).trim();
+      let arquivo = path.basename(asText(item.arquivo).trim());
+      if (!prompt || !arquivo || arquivo.startsWith('.')) return [];
+      if (!/\.(mp4|mov|webm)$/iu.test(arquivo)) arquivo = `${arquivo}.mp4`;
+      const segundos = Number(item.segundos ?? item.duracao);
+      return [{
+        arquivo,
+        prompt,
+        uso: imageUse(asText(item.uso)),
+        // Sem duracao declarada, o padrao e o que a maioria dos b-rolls do
+        // Edvid ocupa: um trecho curto atras da legenda.
+        segundos: Number.isFinite(segundos) && segundos > 0 ? segundos : 4,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> {
+  if (videoGenJob?.directory === projectDirectory) return videoGenJob.promise;
+  const job = (async (): Promise<ImageGenState> => {
+    const clipsDirectory = path.join(projectDirectory, 'edit', 'clipes');
+    const requestsFile = path.join(clipsDirectory, 'pedidos.json');
+    const requests = await readVideoRequests(projectDirectory);
+    if (!requests.length) return { status: 'idle' };
+
+    const pending: VideoRequestEntry[] = [];
+    for (const request of requests) {
+      try {
+        await stat(path.join(clipsDirectory, request.arquivo));
+      } catch {
+        pending.push(request);
+      }
+    }
+    if (!pending.length) {
+      await rm(requestsFile, { force: true });
+      return { status: 'idle' };
+    }
+
+    const hubId = hubForRole('video');
+    if (!hubId) {
+      broadcastCodexEvent({
+        type: 'error',
+        message: `A edição pediu ${pending.length === 1 ? 'um clipe' : `${pending.length} clipes`}, mas nenhuma IA de vídeo está conectada. Entre com a sua conta Higgsfield em Configurações → Conexões de IA.`,
+      });
+      return { status: 'error', error: 'Nenhuma IA de vídeo conectada.' };
+    }
+
+    const tier = tierFrom(aiRoles.tiers.video, 'video');
+    const generator = hubGeneration(hubId);
+    const items: GenerationItem[] = pending.map((request, index) => ({
+      index,
+      prompt: request.prompt,
+      use: request.uso,
+      seconds: request.segundos,
+    }));
+
+    broadcastImageGenState({ status: 'generating', total: pending.length, done: 0 });
+    const failures: string[] = [];
+    let done = 0;
+    try {
+      const planned = await generator.plan(items, 'video', tier);
+      const custo = planned.reduce((total, item) => total + (item.resolved.credits ?? 0), 0);
+      const cortados = planned.filter((item) => item.resolved.truncated);
+      const note = [
+        `Gerando ${pending.length === 1 ? 'o clipe' : `${pending.length} clipes`} no ${HUB_NAME[hubId]}`,
+        `· nível ${TIER_LABEL[planned[0].resolved.tier]}`,
+        custo > 0 ? `· ~${Math.round(custo)} créditos` : '',
+      ].filter(Boolean).join(' ');
+      broadcastImageGenState({ status: 'generating', total: pending.length, done: 0, note });
+      // Clipe mais curto que a janela e coisa que o aluno PRECISA saber: sem
+      // aviso, ele veria um buraco no video e acharia que o render falhou.
+      if (cortados.length) {
+        broadcastCodexEvent({
+          type: 'error',
+          message: `${cortados.length === 1 ? 'Um clipe vai sair' : `${cortados.length} clipes vão sair`} mais curto que o trecho pedido: nenhum modelo do nível ${TIER_LABEL[tier]} alcança essa duração. Escolha um nível diferente ou encurte o trecho.`,
+        });
+      }
+
+      const jobs = await generator.submit(planned, 'video');
+      const results = await generator.wait(jobs, (feitos) => {
+        broadcastImageGenState({ status: 'generating', total: pending.length, done: feitos, note });
+      });
+
+      for (const result of results) {
+        const request = pending[result.index];
+        if (!request) continue;
+        if ('error' in result) {
+          failures.push(`${request.arquivo}: ${result.error}`);
+          continue;
+        }
+        const temporary = path.join(clipsDirectory, `.baixando_${request.arquivo}`);
+        try {
+          await downloadTo(result.url, temporary);
+          await ingestClip(temporary, path.join(clipsDirectory, request.arquivo));
+          done += 1;
+        } catch (error) {
+          await rm(temporary, { force: true });
+          failures.push(`${request.arquivo}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        broadcastImageGenState({ status: 'generating', total: pending.length, done, note });
+      }
+    } catch (error) {
+      const message = error instanceof HubNeedsLogin
+        ? error.message
+        : `Não consegui gerar ${pending.length === 1 ? 'o clipe' : 'os clipes'}. ${error instanceof Error ? error.message : String(error)}`;
+      broadcastCodexEvent({ type: 'error', message });
+      return { status: 'error', total: pending.length, done, error: message };
+    }
+
+    const remaining = requests.filter((request) => failures.some((failure) => failure.startsWith(`${request.arquivo}:`)));
+    if (remaining.length) {
+      await writeFile(requestsFile, `${JSON.stringify(remaining, null, 2)}\n`).catch(() => {});
+    } else {
+      await rm(requestsFile, { force: true });
+    }
+
+    if (failures.length) {
+      const [arquivo, ...resto] = failures[0].split(':');
+      broadcastCodexEvent({
+        type: 'error',
+        message: `${failures.length === 1 ? 'Não consegui gerar um clipe' : `Não consegui gerar ${failures.length} clipes`}. ${providerErrorMessage(resto.join(':') || arquivo, HUB_NAME[hubId])}`,
+      });
+      return { status: 'error', total: pending.length, done, error: failures[0] };
+    }
+    return { status: 'ready', total: pending.length, done };
+  })();
+  const tracked = job.then((state) => {
+    broadcastImageGenState(state);
+    return state;
+  }).finally(() => {
+    if (videoGenJob?.promise === tracked) videoGenJob = null;
+  });
+  videoGenJob = { directory: projectDirectory, promise: tracked };
+  return tracked;
+}
+
 async function readImageRequests(projectDirectory: string): Promise<ImageRequestEntry[]> {
   try {
     const parsed = JSON.parse(
@@ -3967,6 +4253,93 @@ async function readImageRequests(projectDirectory: string): Promise<ImageRequest
   }
 }
 
+// Imagens pelo hub de geracao. Mesmo caminho do video: o nivel escolhido nas
+// Configuracoes vira modelo e parametros, e o arquivo cai em edit/imagens/.
+async function fulfillImagesFromHub(
+  hubId: GenerationHub,
+  imagesDirectory: string,
+  requestsFile: string,
+  requests: readonly ImageRequestEntry[],
+  pending: readonly ImageRequestEntry[],
+): Promise<ImageGenState> {
+  const tier = tierFrom(aiRoles.tiers.imagem, 'imagem');
+  const generator = hubGeneration(hubId);
+  const failures: string[] = [];
+  let done = 0;
+  try {
+    const planned = await generator.plan(
+      pending.map((request, index) => ({
+        index,
+        // O enquadramento em TEXTO continua indo junto: modelo de imagem
+        // obedece muito mais a instrucao escrita do que ao tamanho pedido.
+        prompt: promptWithFraming(request.prompt, request.uso),
+        use: request.uso,
+        portrait: looksLikePortrait(request.prompt),
+      })),
+      'imagem',
+      tier,
+    );
+    const custo = planned.reduce((total, item) => total + (item.resolved.credits ?? 0), 0);
+    const note = [
+      `Gerando ${pending.length === 1 ? 'a imagem' : `${pending.length} imagens`} no ${HUB_NAME[hubId]}`,
+      `· nível ${TIER_LABEL[planned[0].resolved.tier]}`,
+      custo >= 1 ? `· ~${Math.round(custo)} créditos` : '',
+    ].filter(Boolean).join(' ');
+    broadcastImageGenState({ status: 'generating', total: pending.length, done: 0, note });
+
+    const jobs = await generator.submit(planned, 'imagem');
+    const results = await generator.wait(jobs, (feitos) => {
+      broadcastImageGenState({ status: 'generating', total: pending.length, done: feitos, note });
+    });
+    for (const result of results) {
+      const request = pending[result.index];
+      if (!request) continue;
+      if ('error' in result) {
+        failures.push(`${request.arquivo}: ${result.error}`);
+        continue;
+      }
+      try {
+        await downloadTo(result.url, path.join(imagesDirectory, request.arquivo));
+        done += 1;
+      } catch (error) {
+        failures.push(`${request.arquivo}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      broadcastImageGenState({ status: 'generating', total: pending.length, done, note });
+    }
+  } catch (error) {
+    const message = error instanceof HubNeedsLogin
+      ? error.message
+      : `Não consegui gerar ${pending.length === 1 ? 'a imagem' : 'as imagens'}. ${error instanceof Error ? error.message : String(error)}`;
+    broadcastCodexEvent({ type: 'error', message });
+    return { status: 'error', total: pending.length, done, error: message };
+  }
+
+  const remaining = requests.filter((request) => failures.some((failure) => failure.startsWith(`${request.arquivo}:`)));
+  if (remaining.length) {
+    await writeFile(requestsFile, `${JSON.stringify(remaining, null, 2)}\n`).catch(() => {});
+  } else {
+    await rm(requestsFile, { force: true });
+  }
+  if (failures.length) {
+    const [arquivo, ...resto] = failures[0].split(':');
+    broadcastCodexEvent({
+      type: 'error',
+      message: `${failures.length === 1 ? 'Não consegui gerar uma imagem' : `Não consegui gerar ${failures.length} imagens`}. ${providerErrorMessage(resto.join(':') || arquivo, HUB_NAME[hubId])}`,
+    });
+    return { status: 'error', total: pending.length, done, error: failures[0] };
+  }
+  return { status: 'ready', total: pending.length, done };
+}
+
+// Rosto em cena troca o modelo: o Soul 2.0 e treinado em retrato e, medido,
+// custa 0,12 credito — menos que o mais barato do catalogo. Nao ha o que
+// ponderar, so ha o que reconhecer.
+const PORTRAIT_WORDS = /\b(person|people|man|woman|men|women|girl|boy|face|portrait|selfie|model|influencer|presenter|human|couple|crowd|hands?)\b/iu;
+
+export function looksLikePortrait(prompt: string): boolean {
+  return PORTRAIT_WORDS.test(prompt);
+}
+
 function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> {
   if (imageGenJob?.directory === projectDirectory) return imageGenJob.promise;
   const job = (async (): Promise<ImageGenState> => {
@@ -3988,13 +4361,21 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
       return { status: 'idle' };
     }
 
+    // HUB primeiro. Este ramo NAO EXISTIA: `aiRoles.imageCatalog` era gravado,
+    // persistido e mostrado no seletor, mas a geracao lia so `aiRoles.image` —
+    // e escolher um provedor do catalogo zera esse campo. Resultado: o aluno
+    // escolhia o provedor e recebia "nenhuma IA de imagem conectada". Estava
+    // dormente desde que as IAs gratuitas sairam, porque nao havia mais
+    // provedor de imagem no catalogo; com o Higgsfield entrando, seria o
+    // caminho principal quebrado no primeiro uso.
+    const hubId = hubForRole('image');
+    if (hubId) return await fulfillImagesFromHub(hubId, imagesDirectory, requestsFile, requests, pending);
+
     const provider = aiRoles.image;
-    // O catalogo tem prioridade sobre as contas fixas: e onde estao as opcoes
-    // de camada gratuita, e a cadeia dele ja troca de provedor sozinha.
     if (!provider) {
       broadcastCodexEvent({
         type: 'error',
-        message: `A edição pediu ${pending.length === 1 ? 'uma imagem' : `${pending.length} imagens`}, mas nenhuma IA de imagem está conectada. Conecte o ChatGPT ou o Gemini em Configurações → Conexões.`,
+        message: `A edição pediu ${pending.length === 1 ? 'uma imagem' : `${pending.length} imagens`}, mas nenhuma IA de imagem está conectada. Entre com a conta Higgsfield, ou conecte o ChatGPT ou o Gemini, em Configurações → Conexões de IA.`,
       });
       return { status: 'error', error: 'Nenhuma IA de imagem conectada.' };
     }
@@ -4450,6 +4831,39 @@ function registerIpcHandlers(): void {
   ipcMain.handle('ai:image-catalog', (_event, input: { id?: string | null }) =>
     setImageCatalogProvider(input.id ? asText(input.id) : null));
 
+  ipcMain.handle('ai:video-catalog', (_event, input: { id?: string | null }) =>
+    setVideoCatalogProvider(input.id ? asText(input.id) : null));
+
+  ipcMain.handle('ai:tier-set', (_event, input: { kind?: unknown; tier?: unknown }) =>
+    setGenerationTier(input.kind === 'video' ? 'video' : 'imagem', asText(input.tier)));
+
+  // --- Hubs de geracao por MCP ----------------------------------------------
+  // O login abre o navegador e espera o retorno em 127.0.0.1. Nada de chave
+  // para o aluno colar: o token fica no cofre do hub e nunca passa por aqui.
+  ipcMain.handle('hub:login', async (_event, input: { hub?: unknown }) => {
+    const entry = catalogEntry(asText(input.hub));
+    if (!entry?.oauthHub) throw new Error('Essa conexão não entra por login.');
+    await hubFor(entry.oauthHub).login();
+    await refreshHubConnections();
+    const state = catalogStateFrom(await readStoredCatalog());
+    broadcastCatalog(state);
+    return state;
+  });
+
+  ipcMain.handle('hub:disconnect', async (_event, input: { hub?: unknown }) => {
+    const entry = catalogEntry(asText(input.hub));
+    if (!entry?.oauthHub) throw new Error('Essa conexão não entra por login.');
+    await hubFor(entry.oauthHub).forget();
+    await refreshHubConnections();
+    // Papel apontado para um hub desconectado vira papel vazio: deixar a
+    // escolha de pe faria a proxima geracao falhar sem o aluno entender.
+    if (aiRoles.imageCatalog === entry.id) await setImageCatalogProvider(null);
+    if (aiRoles.videoCatalog === entry.id) await setVideoCatalogProvider(null);
+    const state = catalogStateFrom(await readStoredCatalog());
+    broadcastCatalog(state);
+    return state;
+  });
+
   ipcMain.handle(
     'ai:role-set',
     (_event, input: { role?: unknown; provider?: unknown; pinned?: unknown }) => {
@@ -4468,6 +4882,14 @@ function registerIpcHandlers(): void {
       throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
     }
     return fulfillMusicRequests(directory);
+  });
+
+  ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+    }
+    return fulfillVideoRequests(directory);
   });
 
   ipcMain.handle('image:fulfill', (_event, input: { directory?: string }) => {
@@ -4539,7 +4961,13 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('gemini:disconnect', () => getGeminiAgent().disconnect());
 
-  ipcMain.handle('ai-catalog:read', async () => catalogStateFrom(await readStoredCatalog()));
+  ipcMain.handle('ai-catalog:read', async () => {
+    // Confere o cofre de token ANTES de responder. A leitura do arranque pode
+    // nao ter terminado quando a tela monta, e o card abriria dizendo "nao
+    // conectado" para uma conta que esta conectada.
+    await refreshHubConnections().catch(() => {});
+    return catalogStateFrom(await readStoredCatalog());
+  });
 
   ipcMain.handle(
     'ai-catalog:connect',
@@ -5124,6 +5552,12 @@ void app.whenReady().then(async () => {
   });
   setupAutoUpdate();
   void memberBoot();
+  // Quem esta conectado por MCP so se descobre lendo o cofre de token. Sem
+  // isto o card das Configuracoes abriria dizendo "nao conectado" mesmo com o
+  // login feito, ate o primeiro login da sessao.
+  void refreshHubConnections()
+    .then(async () => broadcastCatalog(catalogStateFrom(await readStoredCatalog())))
+    .catch(() => {});
   // O download do pacote de ferramentas comeca imediatamente, antes mesmo do
   // login: no primeiro boot ele e o caminho critico de tudo.
   void ensureRuntimePack();

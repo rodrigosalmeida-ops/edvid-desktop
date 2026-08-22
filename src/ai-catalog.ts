@@ -33,6 +33,12 @@ export type AiCredentialField = {
 // paga; "apikey" e a chave colada. Hoje so ChatGPT e Claude tem login.
 export type AiAuthMode = 'login' | 'apikey';
 
+// Hub de geracao acessado por MCP (Higgsfield, Magnific). A conexao nao e
+// chave nenhuma: e login OAuth pelo navegador, e o gasto sai do credito do
+// plano do aluno. Ver mcp-hub.ts para o porque de o cliente ser o APP e nao o
+// agente.
+export type AiOauthHub = 'higgsfield' | 'magnific';
+
 export type AiCatalogEntry = {
   id: string;
   name: string;
@@ -44,6 +50,9 @@ export type AiCatalogEntry = {
   // e Gemini): a conexao deles tem fluxo proprio no main, mas o CARD e o modal
   // sao os mesmos dos demais — era isso que fazia a tela ter duas listas.
   builtIn?: 'chatgpt' | 'claude' | 'gemini';
+  // Conecta por MCP com login OAuth em vez de chave. Quem tem isto nao guarda
+  // credencial no catalogo: o token vive no cofre do proprio hub (mcp-hub.ts).
+  oauthHub?: AiOauthHub;
   // Pagina onde o aluno cria a chave. O catalogo leva ele ate la.
   keyUrl: string;
   credentials: AiCredentialField[];
@@ -97,6 +106,21 @@ export const AI_CATALOG: AiCatalogEntry[] = [
     credentials: [{ key: 'apiKey', label: 'Chave de API', secret: true }],
     models: [],
     note: 'Chave do Google AI Studio. MEDIDO em conta real: a chave NÃO gera imagem na camada gratuita — o Google responde que a cota acabou. Serve para texto; para imagem grátis, use a Cloudflare.',
+  },
+  {
+    id: 'higgsfield',
+    name: 'Higgsfield',
+    capabilities: ['imagem', 'video'],
+    pricing: 'paid',
+    auth: ['login'],
+    oauthHub: 'higgsfield',
+    keyUrl: 'https://higgsfield.ai',
+    credentials: [],
+    // A lista de modelos NAO fica aqui: sao 30+ e mudam todo mes. O Edvid le o
+    // catalogo vivo do hub e traduz o nivel escolhido pelo aluno (Regular,
+    // Medio, Alto, Extremo) para modelo e parametros — ver generation-tier.ts.
+    models: [],
+    note: 'Imagens e vídeos pelo seu plano Higgsfield. Entra com a conta, sem chave — o gasto sai do crédito do plano.',
   },
   {
     id: 'treblo',

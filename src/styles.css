@@ -737,6 +737,18 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .connect-section { display: flex; flex-direction: column; gap: 8px; }
 .connect-section h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
 .connect-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Nível de geração: fica no card da conexão, depois do login, porque é
+   decisão de conta — quanto crédito vale gastar — e não de projeto. */
+.tier-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 4px; }
+.tier-select { display: flex; flex-direction: column; gap: 5px; }
+.tier-select > span { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--dim); }
+.tier-select > span svg { width: 14px; height: 14px; opacity: .75; }
+.tier-select select { padding: 7px 9px; border: 1px solid var(--stroke); border-radius: 9px; outline: none; color: var(--text); background: rgba(255,255,255,.03); font-size: 13px; font-weight: 600; cursor: pointer; }
+.tier-select select:focus { border-color: rgba(255,119,19,.45); }
+.tier-select option { color: #1c222b; }
+/* A frase embaixo diz o que muda em dinheiro e em uso, não em nome de modelo:
+   nome de modelo muda todo mês e não significa nada para o aluno. */
+.tier-select small { color: var(--dim); font-size: 11px; line-height: 1.35; min-height: 2.7em; }
 .account-action.primary { border-color: rgba(255,119,19,.45); color: #ffd2b0; }
 .settings-note.ok { color: #4fd08b; }
 /* Seletor por papel: ícone no lugar do rótulo escrito. */
