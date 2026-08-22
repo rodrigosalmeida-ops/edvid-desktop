@@ -205,6 +205,9 @@ export type Phase2RenderState = {
   totalFrames?: number;
   output?: string;
   error?: string;
+  // Só o TRECHO que mudou, renderizado antes do vídeo inteiro. O render
+  // completo continua acontecendo do zero — isto é antecipação, não atalho.
+  preview?: { url: string; start: number; end: number };
 };
 
 // O corte limpo e feito pelo APLICATIVO, nao pelo agente: transcrever, medir

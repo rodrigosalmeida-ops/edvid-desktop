@@ -634,6 +634,12 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 }
 .active-model svg { width: 11px; height: 11px; flex: none; }
 .active-model .badge { font-size: 7px; padding: 2px 5px; border-radius: 999px; }
+/* Prévia do trecho alterado: pequena, ao lado do progresso, sem disputar
+   com o player principal. */
+.render-preview { display: flex; align-items: center; gap: 9px; margin: 8px 0 0; padding: 7px; border: 1px solid rgba(255,119,19,.22); border-radius: 10px; background: rgba(255,119,19,.05); }
+.render-preview video { width: 62px; border-radius: 6px; background: #000; flex: none; }
+.render-preview span { font-size: 8.5px; line-height: 1.5; color: #97a1ad; }
+
 .active-model-dot {
   width: 5px;
   height: 5px;

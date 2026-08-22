@@ -477,7 +477,20 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       }),
     }),
     renderPhase2: async () => ({ status: 'idle' }),
-    onPhase2RenderState: () => () => {},
+    // ?render simula o render em andamento com a previa do trecho: e a unica
+    // forma de conferir esse bloco sem esperar cinco minutos de render real.
+    onPhase2RenderState: (listener) => {
+      if (new URLSearchParams(window.location.search).has('render')) {
+        window.setTimeout(() => listener({
+          status: 'rendering', progress: 0.18, renderedFrames: 500, totalFrames: 2732,
+        }), 400);
+        window.setTimeout(() => listener({
+          status: 'rendering', progress: 0.31, renderedFrames: 850, totalFrames: 2732,
+          preview: { url: '', start: 39.5, end: 43.5 },
+        }), 1_200);
+      }
+      return () => {};
+    },
     installAppUpdate: async () => {},
     onAppUpdateState: (listener) => {
       if (new URLSearchParams(window.location.search).has('update')) {

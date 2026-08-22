@@ -54,6 +54,7 @@ import {
 } from './member-auth-policy';
 import { EDIT_DIR, RENDER_DIR, nextRenderVersion } from './project-layout';
 import { SOUNDTRACK_VOLUME, musicBrief } from './music-brief';
+import { previewFrames, previewPlan } from './phase2-preview';
 import {
   cleanCutArgs,
   cleanCutSummary,
@@ -2095,6 +2096,80 @@ async function normalizeAnimations(publicDirectory: string): Promise<number> {
   return fixed;
 }
 
+// Renderiza SO o trecho que mudou e manda para o preview.
+//
+// Nunca substitui o render completo: e uma antecipacao. Se qualquer coisa
+// aqui falhar, o aluno so espera o video inteiro, como antes.
+async function renderChangedWindow(
+  projectDirectory: string,
+  remotionDirectory: string,
+  node: { command: string | null; argsPrefix: string[] },
+  publicDirectory: string,
+): Promise<void> {
+  if (!node.command) return;
+  const dataFile = path.join(publicDirectory, 'edit-data.json');
+  const snapshotFile = path.join(remotionDirectory, 'out', 'edit-data-anterior.json');
+  let current: Record<string, unknown>;
+  try {
+    current = JSON.parse(await readFile(dataFile, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  let previous: Record<string, unknown> | null = null;
+  try {
+    previous = JSON.parse(await readFile(snapshotFile, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // Primeiro render deste projeto: nao ha o que comparar.
+  }
+  // O retrato e gravado ANTES de renderizar: se o render falhar, a proxima
+  // comparacao ainda parte do que esta no disco agora.
+  await writeFile(snapshotFile, `${JSON.stringify(current, null, 2)}\n`).catch(() => {});
+
+  const plan = previewPlan(previous, current);
+  if (plan.kind !== 'window') return;
+  const fps = Number(current.fps) || 30;
+  const total = Math.max(1, Math.round((Number(current.durationSec) || 0) * fps));
+  const { from, to } = previewFrames(plan, fps, total);
+
+  // "tmp" no nome mantem o trecho FORA da escolha automatica do preview: sem
+  // isso o arquivo mais recente venceria e o aluno veria tres segundos no
+  // lugar do video.
+  const output = path.join(remotionDirectory, 'out', 'previa_trecho_tmp.mp4');
+  const ok = await new Promise<boolean>((resolve) => {
+    const child = spawn(node.command as string, [
+      ...node.argsPrefix,
+      path.join(remotionDirectory, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'),
+      'render', 'Reels', output,
+      `--frames=${from}-${to}`,
+      '--timeout=120000',
+    ], {
+      cwd: remotionDirectory,
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'ignore'],
+      env: {
+        ...process.env,
+        PATH: [path.dirname(node.command as string), process.env.PATH]
+          .filter(Boolean).join(path.delimiter),
+      },
+    });
+    const timer = setTimeout(() => child.kill(), 5 * 60_000);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
+  if (!ok) return;
+  const info = await statOf(output);
+  if (!info) return;
+  broadcastPhase2State({
+    ...phase2State,
+    status: 'rendering',
+    preview: {
+      url: `edvid-media://local/${authorizeMediaToken(output, String(info.mtimeMs))}`,
+      start: plan.start,
+      end: plan.end,
+    },
+  });
+}
+
 // A ultima linha do stderr costuma ser stack trace ("at process.
 // processTicksAndRejections ..."), que nao diz NADA ao aluno — foi o que ele
 // viu quando o render falhou. Aqui a escolha e pela linha que informa:
@@ -2176,6 +2251,17 @@ function renderPhase2(projectDirectory: string): Promise<Phase2RenderState> {
     // "tmp" no nome mantem o arquivo parcial fora do preview se algo falhar.
     const temporaryOutput = path.join(remotionDirectory, 'out', 'render_tmp_fase2.mp4');
     broadcastPhase2State({ status: 'rendering', progress: 0 });
+
+    // PREVIA DO TRECHO ALTERADO, antes do render inteiro.
+    //
+    // Medido neste projeto: 8,4 quadros/s mais 9,4s fixos. O video inteiro
+    // leva ~5,6 min; tres segundos levam ~20s. Quando o aluno pede uma
+    // animacao num ponto, esperar cinco minutos para ver tres segundos e o
+    // que doi. O render completo continua acontecendo INTEIRO logo em
+    // seguida — isto so antecipa o que da para mostrar, entao nao ha risco de
+    // emendar pedaco velho com pedaco novo.
+    void renderChangedWindow(projectDirectory, remotionDirectory, node, publicDirectory)
+      .catch(() => {});
     await new Promise<void>((resolveRender, rejectRender) => {
       const child = spawn(
         node.command as string,
@@ -2208,6 +2294,10 @@ function renderPhase2(projectDirectory: string): Promise<Phase2RenderState> {
         const totalFrames = Number(latest[2]);
         if (totalFrames > 0 && renderedFrames <= totalFrames) {
           broadcastPhase2State({
+            // A previa do trecho sobrevive ao progresso: sem preservar aqui,
+            // o primeiro tique de porcentagem apagaria o que o aluno acabou
+            // de receber para assistir.
+            preview: phase2State.preview,
             status: 'rendering',
             progress: renderedFrames / totalFrames,
             renderedFrames,

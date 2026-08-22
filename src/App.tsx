@@ -3554,6 +3554,26 @@ export function App() {
                   <span style={{ width: `${Math.min(100, Math.round((phase2Render.progress ?? 0) * 100))}%` }} />
                 </div>
               ) : null}
+              {/* O trecho alterado, pronto antes do vídeo inteiro. Fica AQUI e
+                  não no player principal de propósito: trocar o vídeo que o
+                  aluno está assistindo por um clipe de três segundos assusta
+                  mais do que ajuda. O render completo segue em segundo plano. */}
+              {phase2Render.status === 'rendering' && phase2Render.preview && (
+                <div className="render-preview">
+                  <video
+                    key={phase2Render.preview.url}
+                    src={phase2Render.preview.url}
+                    autoPlay
+                    loop
+                    controls
+                    playsInline
+                  />
+                  <span>
+                    Prévia do trecho alterado ({formatTime(phase2Render.preview.start)} – {formatTime(phase2Render.preview.end)}).
+                    O vídeo completo está sendo renderizado.
+                  </span>
+                </div>
+              )}
               {imageGen.status === 'generating' && imageGen.total ? (
                 <div className="phase2-render-track" role="status" aria-label="Progresso das imagens">
                   <span style={{ width: `${Math.round(((imageGen.done ?? 0) / imageGen.total) * 100)}%` }} />

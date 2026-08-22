@@ -1213,6 +1213,28 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.23.0: PRÉVIA DO TRECHO ALTERADO antes do render inteiro. Medido no
+  projeto real do aluno (91s, 1080x1920, dois renders de tamanhos diferentes
+  para separar custo fixo de custo por quadro): 8,4 quadros/s mais 9,4s de
+  empacotamento. Vídeo inteiro ~5,6 min; três segundos ~20s. Pedir uma
+  animação num ponto e esperar cinco minutos para ver três segundos era o que
+  doía.
+  O QUE NÃO FOI FEITO, de propósito: emendar o trecho novo no render antigo. O
+  ganho seria quase o mesmo e o risco é grande — classificar mal uma mudança
+  entrega um vídeo em que só um pedaço mudou e o resto ficou velho, parecendo
+  pronto. O render completo continua acontecendo INTEIRO, do zero; a prévia só
+  antecipa o que dá para mostrar.
+  A classificação é LISTA BRANCA (`src/phase2-preview.ts`): campo global
+  conhecido (legenda, câmera, hook, trilha, duração, resolução, fps, tipo de
+  edição) força inteiro; campo DESCONHECIDO também — o agente inventa campo de
+  vez em quando. Só as listas com janela de tempo (splits, inserts, behind,
+  animations) viram prévia, cobrindo de onde o item saiu até onde foi. Janela
+  acima de 40% do vídeo não paga o custo fixo.
+  DUAS DECISÕES DE INTERFACE: o clipe fica num bloco ao lado do progresso, e
+  NÃO no player principal — trocar o vídeo que o aluno assiste por três
+  segundos assusta mais do que ajuda. E o arquivo tem "tmp" no nome, senão
+  venceria a escolha automática do preview por ser o mais recente e o aluno
+  veria três segundos no lugar do vídeo.
 - 0.22.1: a raiz do projeto volta a ser do aluno. A raiz de um projeto real
   tinha: `trilha_trimmed.mp3` (ZERO bytes — tentativa falha do agente de
   cortar a trilha), `new_trilha_silente.mp3` (91s de áudio), 
