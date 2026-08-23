@@ -1222,6 +1222,31 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.26.0: CAMADAS DE GRÁFICO — o CustomGraphics sob medida pré-renderizado
+  com alpha (passo 2 do editor de camadas; o passo 3, a prévia ao vivo que
+  CONSOME isto, vem a seguir — nesta versão nada muda na tela ainda).
+  O CustomGraphics.tsx é o único arquivo que o agente escreve por projeto e
+  não roda no app empacotado. A saída: o Root do template ganhou a composição
+  "Grafico" (só o CustomGraphics, fundo transparente) e o app a renderiza por
+  JANELA DE ANIMAÇÃO (`--frames`), produzindo o par ProRes 4444 (.mov,
+  qualidade cheia) + WebM VP9 com alpha (.webm, o que o Chromium toca) em
+  edit/graficos/, com manifest.json. MEDIDO no fluxo exato de produção: janela
+  de 4s = 5,8s no total (4,6 render + 1,2 conversão), .mov 16 MB → .webm 0,1 MB.
+  AS JANELAS SAEM DO REGISTRO em edit-data.animations — o mesmo contrato do
+  render ("registrar é o que faz aparecer"). Folga de 0,5s por borda (mesma da
+  prévia 0.23.0), janelas a menos de 1s de distância viram uma. Template
+  INTOCADO não gera camada: as animações declarativas a prévia desenhará
+  sozinha, e camada seria duplicata.
+  CONTRA A CAMADA VELHA (pior que faltar, porque parece atual): impressão
+  digital sha256(código + janelas + fps) em src/graphic-layers.ts; manifesto
+  gravado POR ÚLTIMO, então falha no meio deixa a impressão antiga e a próxima
+  passada refaz; arquivos de janelas removidas são apagados; e o template
+  voltando ao intocado APAGA a pasta inteira (decisão 'clean').
+  edit/graficos entrou em inputDirectories: sem isso o .mov de 16 MB seria
+  sempre o arquivo mais novo depois de uma edição e ROUBARIA o preview do
+  render — o mesmo defeito do b-roll na 0.24.0, evitado antes de nascer.
+  O scaffold propaga o Root novo a projetos existentes sozinho (src/ é copiado
+  com force:true preservando só o CustomGraphics.tsx).
 - 0.25.0: LIBVPX NO FFMPEG (VP9 com alpha) — infraestrutura da prévia ao vivo.
   O Chromium não decodifica ProRes 4444 nem qtrle, os dois únicos jeitos que o
   build tinha de carregar alpha; sem VP9, um gráfico transparente
@@ -2327,6 +2352,7 @@ npm run test:clean-cut-pipeline
 npm run test:generation-tier
 npm run test:hub-generation
 npm run test:ffmpeg-alpha
+npm run test:graphic-layers
 EDVID_TEST_VIDEO=<um vídeo falado> npm run test:clean-cut-live
 git diff --check
 ```

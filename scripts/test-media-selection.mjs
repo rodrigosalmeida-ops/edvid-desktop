@@ -76,6 +76,11 @@ try {
   assert.equal(mediaTier('edit/imagens/fundo.mp4'), 0);
   assert.equal(mediaTier('edit/derivados/sem_audio.mp4'), 0);
   assert.equal(mediaTier('edit/remotion/public/clipes/cidade_noite.mp4'), 0);
+  // Camada de gráfico pré-renderizada (0.26.0): um .mov ProRes de 16 MB em
+  // edit/graficos seria sempre o arquivo mais novo depois de uma edição — e
+  // roubaria o preview do render, como o b-roll quase roubou.
+  assert.equal(mediaTier('edit/graficos/grafico_19500_24500.mov'), 0);
+  assert.equal(kindOf('edit/graficos/grafico_19500_24500.mov'), 'insumo');
   const comBroll = pickPreviewMedia([
     { relativePath: 'edit/fase_2/fase_2_v3.mp4', modifiedAt: 1000 },
     { relativePath: 'edit/clipes/cidade_noite.mp4', modifiedAt: 9999 },

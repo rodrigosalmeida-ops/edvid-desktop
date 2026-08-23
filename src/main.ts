@@ -46,6 +46,14 @@ import {
   tierFrom,
 } from './generation-tier';
 import { HubGeneration, type GenerationItem } from './hub-generation';
+import {
+  type LayerManifest,
+  layerConvertArgs,
+  layerFrames,
+  layerManifest,
+  layerRenderArgs,
+  layersNeeded,
+} from './graphic-layers';
 import { HUB_NAME, HubNeedsLogin, McpHub } from './mcp-hub';
 import {
   LANGUAGE_FALLBACK,
@@ -2179,6 +2187,111 @@ async function renderChangedWindow(
   });
 }
 
+// --- CAMADAS DE GRAFICO (CustomGraphics sob medida, pre-renderizado) --------
+// Ver graphic-layers.ts para o desenho. Aqui e so execucao: renderiza a
+// composicao "Grafico" por janela, converte para WebM com alpha e guarda o
+// manifesto. Fora do caminho do render principal — falha aqui nao pode
+// atrapalhar o video, entao tudo e fire-and-forget com log.
+let graphicLayersJob: { directory: string; promise: Promise<void> } | null = null;
+
+async function updateGraphicLayers(projectDirectory: string): Promise<void> {
+  if (graphicLayersJob?.directory === projectDirectory) return graphicLayersJob.promise;
+  const job = (async () => {
+    const remotionDirectory = path.join(projectDirectory, 'edit', 'remotion');
+    const publicDirectory = path.join(remotionDirectory, 'public');
+    const layersDirectory = path.join(projectDirectory, 'edit', 'graficos');
+    const manifestFile = path.join(layersDirectory, 'manifest.json');
+
+    let data: { animations?: unknown; durationSec?: unknown; fps?: unknown };
+    let source: string;
+    try {
+      data = JSON.parse(await readFile(path.join(publicDirectory, 'edit-data.json'), 'utf8'));
+      source = await readFile(path.join(remotionDirectory, 'src', 'CustomGraphics.tsx'), 'utf8');
+    } catch {
+      return; // Projeto sem Fase 2 montada: nada a fazer.
+    }
+    const fps = Number(data.fps) || 30;
+    const durationSec = Number(data.durationSec) || 0;
+    const manifest = layerManifest(source, data.animations, durationSec, fps);
+
+    let stored: LayerManifest | null = null;
+    try {
+      stored = JSON.parse(await readFile(manifestFile, 'utf8')) as LayerManifest;
+    } catch {
+      stored = null;
+    }
+
+    const untouched = await customGraphicsUntouched(publicDirectory);
+    const decision = layersNeeded(untouched, manifest, stored);
+    if (decision === 'skip') return;
+    if (decision === 'clean') {
+      // Template intocado ou sem animacao: camadas antigas viraram lixo, e uma
+      // camada VELHA tocando na previa e pior que nenhuma — parece atual.
+      await rm(layersDirectory, { recursive: true, force: true });
+      return;
+    }
+
+    const node = resolveRuntime('node', appRuntimeContext());
+    const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
+    if (!node.command || !ffmpeg.command) return;
+    // O scaffold precisa ter passado para o Root do projeto ter a composicao
+    // "Grafico" (projetos antigos ganham o Root novo na copia do src).
+    await scaffoldRemotionProject(projectDirectory).catch(() => {});
+
+    const totalFrames = Math.max(1, Math.round(durationSec * fps));
+    await mkdir(layersDirectory, { recursive: true });
+    const wanted = new Set(manifest.layers.flatMap((layer) => [`${layer.name}.mov`, `${layer.name}.webm`]));
+
+    for (const layer of manifest.layers) {
+      const { from, to } = layerFrames(layer, fps, totalFrames);
+      const mov = path.join(layersDirectory, `${layer.name}.mov`);
+      const webm = path.join(layersDirectory, `${layer.name}.webm`);
+      const ok = await new Promise<boolean>((resolve) => {
+        const child = spawn(node.command as string, [
+          ...node.argsPrefix,
+          path.join(remotionDirectory, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'),
+          ...layerRenderArgs(mov, from, to),
+        ], {
+          cwd: remotionDirectory,
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'ignore'],
+          env: {
+            ...process.env,
+            PATH: [path.dirname(node.command as string), process.env.PATH]
+              .filter(Boolean).join(path.delimiter),
+          },
+        });
+        const timer = setTimeout(() => child.kill(), 5 * 60_000);
+        child.on('error', () => { clearTimeout(timer); resolve(false); });
+        child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+      });
+      if (!ok) {
+        await rm(mov, { force: true });
+        return; // Sem manifesto novo: a proxima passada tenta de novo.
+      }
+      await runFfmpeg(ffmpeg.command, ffmpeg.argsPrefix, layerConvertArgs(mov, webm), 300_000);
+    }
+
+    // Camadas de janelas que sairam do edit-data nao podem sobrar: a previa
+    // varreria a pasta e tocaria um grafico que o aluno ja removeu.
+    for (const name of await readdir(layersDirectory).catch(() => [] as string[])) {
+      if (name !== 'manifest.json' && !wanted.has(name)) {
+        await rm(path.join(layersDirectory, name), { force: true });
+      }
+    }
+    // O manifesto e gravado POR ULTIMO: se qualquer passo acima falhar, a
+    // impressao antiga nao casa e a proxima passada refaz tudo.
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  })().catch((error: unknown) => {
+    console.warn('Camadas de grafico falharam:', error instanceof Error ? error.message : error);
+  }).finally(() => {
+    if (graphicLayersJob?.promise === tracked) graphicLayersJob = null;
+  });
+  const tracked = job;
+  graphicLayersJob = { directory: projectDirectory, promise: tracked };
+  return tracked;
+}
+
 // A ultima linha do stderr costuma ser stack trace ("at process.
 // processTicksAndRejections ..."), que nao diz NADA ao aluno — foi o que ele
 // viu quando o render falhou. Aqui a escolha e pela linha que informa:
@@ -2271,6 +2384,9 @@ function renderPhase2(projectDirectory: string): Promise<Phase2RenderState> {
     // emendar pedaco velho com pedaco novo.
     void renderChangedWindow(projectDirectory, remotionDirectory, node, publicDirectory)
       .catch(() => {});
+    // Camadas de grafico em paralelo, fora do caminho critico: um clipe de
+    // segundos com alpha para a previa. Falha aqui nao toca o render.
+    void updateGraphicLayers(projectDirectory).catch(() => {});
     await new Promise<void>((resolveRender, rejectRender) => {
       const child = spawn(
         node.command as string,

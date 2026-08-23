@@ -14,7 +14,7 @@ export const editDirectories = new Set(['edit', 'edicao', 'edição']);
 // e sem esta lista ele pegaria o tier mais alto e, sendo o arquivo mais
 // recente, ROUBARIA o preview do render — o aluno pediria um b-roll e veria o
 // player trocar o video editado por quatro segundos de paisagem.
-export const inputDirectories = new Set(['assets', 'clipes', 'imagens', 'musica', 'música', 'derivados']);
+export const inputDirectories = new Set(['assets', 'clipes', 'imagens', 'musica', 'música', 'derivados', 'graficos']);
 
 // Arquivo que pode ser midia do projeto.
 //
