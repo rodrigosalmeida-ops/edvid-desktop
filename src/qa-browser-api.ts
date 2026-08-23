@@ -136,6 +136,7 @@ let qaChatGptConnected = !qaSearch().has('ia') && !qaSearch().has('semchatgpt');
 const qaHubRole = new URLSearchParams(window.location.search).has('hub') ? 'higgsfield' : null;
 // edit-data vivo da bancada ?aovivo: os arrastos mutam ESTA cópia.
 let qaLiveEditData: Record<string, unknown> | null = null;
+let qaLiveEditado = false;
 let qaRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: qaHubRole, chatPinned: false, imagePinned: false,
   videoCatalog: qaHubRole, tiers: { imagem: DEFAULT_TIER.imagem, video: DEFAULT_TIER.video } };
 const rolesListeners = new Set<(state: AiRolesState) => void>();
@@ -301,6 +302,7 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       const result = applyEditOperations(atual, operations);
       if (!result.ok) throw new Error(result.reason);
       qaLiveEditData = result.data;
+      qaLiveEditado = true;
       return result.data;
     },
     getLivePreview: async () => {
@@ -323,6 +325,7 @@ export function createQaBrowserApi(): EdvidDesktopApi {
         ]);
         return {
           editData, captions, segments, track, cues,
+          renderPending: qaLiveEditado,
           staticBase: base,
           graphicLayers: null,
           bespokeGraphics: false,

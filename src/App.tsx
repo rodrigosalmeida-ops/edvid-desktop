@@ -487,6 +487,8 @@ function EditorWorkspace({
   applyingCorrections,
   onTimelineModelChange,
   onApplyTimelineEdits,
+  renderStamp,
+  onRenderPendingChange,
 }: {
   workspace: ProjectWorkspace | null;
   style: StyleSetup;
@@ -497,26 +499,35 @@ function EditorWorkspace({
   applyingCorrections: boolean;
   onTimelineModelChange: (model: TimelineModel, commit: boolean) => void;
   onApplyTimelineEdits: () => Promise<boolean>;
+  // Muda quando um render da Fase 2 termina: pede dados novos da previa (e o
+  // renderPending atualizado que esconde o botao Renderizar).
+  renderStamp: string;
+  onRenderPendingChange: (pending: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const currentTimeRef = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
-  // PREVIA AO VIVO (0.27.0): a composicao do render tocando no Player, sem
-  // arquivo. Comeca desligada de proposito — o player de render continua
-  // sendo o padrao ate a previa provar estabilidade no material de todo dia.
-  const [liveMode, setLiveMode] = useState(false);
+  // PREVIA AO VIVO: nao e mais um modo — e O preview, sempre que o projeto
+  // tem a Fase 2 montada. O aluno nao escolhe entre "render" e "ao vivo"
+  // (pedido de uso real da 0.28.0): ele ve a edicao acontecer, e o render
+  // virou uma acao de exportar na barra de abas, que so aparece quando ha o
+  // que renderizar. Sem edit-data (Fase 1) ou com cortes pendentes (mapped),
+  // o player de video continua sendo o preview.
   const [liveData, setLiveData] = useState<import('./shared').LivePreviewData>(null);
   const liveDirectory = workspace?.project.directory ?? null;
   useEffect(() => {
-    if (!liveMode || !liveDirectory) return;
+    if (!liveDirectory) {
+      setLiveData(null);
+      return;
+    }
     let alive = true;
     void window.edvidDesktop.getLivePreview(liveDirectory)
       .then((data) => { if (alive) setLiveData(data); })
       .catch(() => { if (alive) setLiveData(null); });
     return () => { alive = false; };
-    // timelineLoadStamp muda a cada turno/render aplicado: e o sinal de que o
-    // edit-data pode ter mudado e a previa precisa de dados novos.
-  }, [liveMode, liveDirectory, workspace?.timelineLoadStamp]);
+    // timelineLoadStamp muda a cada turno/render aplicado; renderStamp vem do
+    // App quando um render termina — os dois pedem dados novos.
+  }, [liveDirectory, workspace?.timelineLoadStamp, renderStamp]);
   // QUEM COMANDA A PREVIA E A TIMELINE. O Player fica sem controles proprios
   // (controls=false) e o play/agulha/mudo de baixo valem para os dois modos —
   // dois transportes na mesma tela foi o primeiro relato de confusao da
@@ -524,9 +535,7 @@ function EditorWorkspace({
   // dinamico da composicao, e os ouvintes precisam esperar por ele.
   const livePlayerRef = useRef<PlayerRef | null>(null);
   const [liveReady, setLiveReady] = useState(0);
-  const liveActive = liveMode && Boolean(liveData);
   const liveActiveRef = useRef(false);
-  liveActiveRef.current = liveActive;
   const liveFps = liveData ? Number(liveData.editData.fps) || 30 : 0;
   const liveFpsRef = useRef(30);
   liveFpsRef.current = liveFps || 30;
@@ -538,10 +547,53 @@ function EditorWorkspace({
   const [liveDirty, setLiveDirty] = useState(false);
   const liveDataRef = useRef<typeof liveData>(null);
   liveDataRef.current = liveData;
+  useEffect(() => {
+    onRenderPendingChange(Boolean(liveData?.renderPending));
+    // A referencia da callback muda por render do App; o que importa e o dado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveData?.renderPending]);
   const overlayDragRef = useRef<{
     kind: OverlayKind; index: number; mode: 'move' | 'start' | 'end';
     grabOffset: number; moved: boolean;
   } | null>(null);
+  // SELECAO UNIVERSAL: tudo na timeline e selecionavel. Elementos com corpo
+  // no quadro (splits, inserts) ganham o gizmo no palco — mover, tamanho e
+  // giro. Legendas, headline e trilha selecionam; os controles espaciais
+  // deles entram por elemento (cada um tem um motor de layout proprio).
+  type SelectedElement =
+    | { kind: OverlayKind; index: number }
+    | { kind: 'captions' | 'headline' | 'soundtrack' };
+  const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
+  const gizmoDragRef = useRef<{
+    mode: 'move' | 'scale' | 'rotate';
+    kind: 'splits' | 'inserts';
+    index: number;
+    startX: number; startY: number;
+    baseTransform: { x: number; y: number; scale: number; rotation: number };
+    centerX: number; centerY: number;
+    startDist: number; startAngle: number;
+    moved: boolean;
+  } | null>(null);
+
+  // Geometria do elemento no quadro, em FRACOES da composicao. Espelha o
+  // template: a faixa do split sai da mesma conta do splitGeometry e o cartao
+  // do insert e 780x500 a 90px do topo num quadro 1080x1920 (CARD_W/H/TOP,
+  // exportados la — nao importamos o modulo aqui porque carregar o Main fora
+  // de hora dispararia o carregamento de fontes sem a base configurada).
+  const elementRegion = (kind: 'splits' | 'inserts', item: Record<string, unknown>) => {
+    if (kind === 'splits') {
+      const divider = Math.min(0.85, Math.max(0.15, Number(item.divider ?? SPLIT_DIVIDER)));
+      const onTop = (item.position ?? 'top') === 'top';
+      return onTop
+        ? { x: 0, y: 0, w: 1, h: divider }
+        : { x: 0, y: divider, w: 1, h: 1 - divider };
+    }
+    const w = 780 / 1080;
+    const h = 500 / 1920;
+    return { x: (1 - w) / 2, y: 90 / 1920, w, h };
+  };
+
+
   const dividerDragRef = useRef<{ index: number; moved: boolean } | null>(null);
 
   const applyLiveOperation = (operation: EditOperation, persist: boolean) => {
@@ -558,8 +610,9 @@ function EditorWorkspace({
       if (persist && liveDirectory) {
         window.edvidDesktop.applyPreviewEdits(liveDirectory, [operation])
           .then((persisted) => {
-            if (liveDataRef.current) setLiveData({ ...liveDataRef.current, editData: persisted });
-            setLiveDirty(true);
+            if (liveDataRef.current) {
+              setLiveData({ ...liveDataRef.current, editData: persisted, renderPending: true });
+            }
           })
           .catch(() => {
             // A escrita falhou: recarrega a verdade do disco em vez de deixar
@@ -656,6 +709,30 @@ function EditorWorkspace({
     programme.some((segment) => segment.sourceId !== PREVIEW_SOURCE_ID);
   const mapped = (dirty || sourceMirror) && programme.length > 0;
   mappedRef.current = mapped;
+  // A previa ao vivo assume sempre que ha Fase 2 montada E nao ha corte
+  // pendente: cortes em edicao precisam do preview mapeado por fontes, que a
+  // composicao (que le o cut.mp4 antigo) nao sabe mostrar.
+  const liveActive = Boolean(liveData) && !mapped;
+  liveActiveRef.current = liveActive;
+  const selectedGizmo = useMemo(() => {
+    if (!liveActive || !liveData || !selectedElement) return null;
+    if (selectedElement.kind !== 'splits' && selectedElement.kind !== 'inserts') return null;
+    const list = liveData.editData[selectedElement.kind];
+    const item = Array.isArray(list)
+      ? (list as Array<Record<string, unknown>>)[selectedElement.index]
+      : undefined;
+    if (!item) return null;
+    const start = Number(item.start);
+    const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+    if (!(currentTime >= start && currentTime < end)) return null;
+    const t = (item.transform ?? {}) as { x?: number; y?: number; scale?: number; rotation?: number };
+    return {
+      kind: selectedElement.kind,
+      index: selectedElement.index,
+      region: elementRegion(selectedElement.kind, item),
+      transform: { x: t.x ?? 0, y: t.y ?? 0, scale: t.scale ?? 1, rotation: t.rotation ?? 0 },
+    };
+  }, [liveActive, liveData, selectedElement, currentTime]);
   programmeRef.current = programme;
   const effectiveDuration = liveActive && liveDuration > 0
     ? liveDuration
@@ -721,7 +798,7 @@ function EditorWorkspace({
     return (
       <div
         key={`${chip.kind}:${chip.index}`}
-        className={`timeline-chip ${className} editable`}
+        className={`timeline-chip ${className} editable${selectedElement && 'index' in selectedElement && selectedElement.kind === chip.kind && selectedElement.index === chip.index ? ' selected' : ''}`}
         style={{
           left: `${effectiveDuration > 0 ? (chip.start / effectiveDuration) * 100 : 0}%`,
           width: `${effectiveDuration > 0 ? Math.max(1.5, ((chip.end - chip.start) / effectiveDuration) * 100) : 0}%`,
@@ -752,7 +829,16 @@ function EditorWorkspace({
         onPointerUp={(event) => {
           const drag = overlayDragRef.current;
           overlayDragRef.current = null;
-          if (!drag || !drag.moved) return;
+          if (!drag) return;
+          if (!drag.moved) {
+            // Clique sem arrasto SELECIONA — e leva a agulha ate o elemento,
+            // senao o gizmo apareceria vazio com o item fora do instante.
+            setSelectedElement({ kind: chip.kind, index: chip.index });
+            if (currentTimeRef.current < chip.start || currentTimeRef.current >= chip.end) {
+              seekRef.current(chip.start + 0.05);
+            }
+            return;
+          }
           applyLiveOperation(overlayOperationFor(drag, timeAtPointer(event, event.currentTarget.parentElement)), true);
         }}
         onPointerCancel={() => { overlayDragRef.current = null; }}
@@ -1111,15 +1197,15 @@ function EditorWorkspace({
     // liveReady re-executa quando o Player monta de verdade (import dinamico).
   }, [liveActive, liveReady]);
 
-  // Trocar de modo nao pode deixar os DOIS tocando: o que sai, pausa.
+  // Trocar de preview nao pode deixar os DOIS tocando: o que sai, pausa.
   useEffect(() => {
-    if (liveMode) {
+    if (liveActive) {
       videoRef.current?.pause();
       setPlaying(false);
     } else {
       livePlayerRef.current?.pause();
     }
-  }, [liveMode]);
+  }, [liveActive]);
 
   // Motor de reprodução: no modo normal a agulha segue o vídeo; no modo
   // mapeado o vídeo pula entre segmentos e um relógio próprio cobre os vazios.
@@ -1706,32 +1792,7 @@ function EditorWorkspace({
     <div className={`editor-workspace ${orientation}`}>
       <section className="preview-section">
         <div className={`video-stage ${orientation}`}>
-          {media && liveMode && liveDirty && (
-            <button
-              type="button"
-              className="live-render"
-              title="Os ajustes já valem na prévia. Renderizar gera o vídeo final com eles."
-              onClick={() => {
-                if (!liveDirectory) return;
-                setLiveDirty(false);
-                void window.edvidDesktop.renderPhase2(liveDirectory).catch(() => setLiveDirty(true));
-              }}
-            >
-              Renderizar edição
-            </button>
-          )}
-          {media && (
-            <button
-              type="button"
-              className={`live-toggle${liveMode ? ' on' : ''}`}
-              title={liveMode ? 'Voltar ao vídeo renderizado' : 'Ver a edição ao vivo, sem esperar o render'}
-              onClick={() => setLiveMode((current) => !current)}
-            >
-              <span className="live-dot" aria-hidden="true" />
-              {liveMode ? 'Ao vivo' : 'Render'}
-            </button>
-          )}
-          {media && liveMode ? (
+          {media && liveActive ? (
             <div className="live-stage" style={{ aspectRatio: `${media.width} / ${media.height}` }}>
               {liveData
                 ? (
@@ -1785,6 +1846,108 @@ function EditorWorkspace({
                       </div>
                     );
                   })()}
+                  {/* O GIZMO: mover (corpo), tamanho (cantos) e giro (haste).
+                      Nos splits a caixa e a FAIXA e os controles reenquadram a
+                      midia dentro dela (o recorte da faixa e do layout); no
+                      insert a caixa acompanha o cartao. Cada arrasto e a
+                      mutacao set-transform — otimista no movimento, disco no
+                      soltar, mesma disciplina do resto. */}
+                  {selectedGizmo && (() => {
+                    const { region, transform: t } = selectedGizmo;
+                    const cx = region.x + region.w / 2 + (selectedGizmo.kind === 'inserts' ? t.x : 0);
+                    const cy = region.y + region.h / 2 + (selectedGizmo.kind === 'inserts' ? t.y : 0);
+                    const scale = selectedGizmo.kind === 'inserts' ? t.scale : 1;
+                    const w = region.w * scale;
+                    const h = region.h * scale;
+                    const beginGizmo = (mode: 'move' | 'scale' | 'rotate') => (event: React.PointerEvent<HTMLElement>) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const palco = (event.currentTarget.closest('.live-stage') as HTMLElement | null);
+                      if (!palco) return;
+                      const rect = palco.getBoundingClientRect();
+                      const centerX = rect.left + cx * rect.width;
+                      const centerY = rect.top + cy * rect.height;
+                      gizmoDragRef.current = {
+                        mode,
+                        kind: selectedGizmo.kind,
+                        index: selectedGizmo.index,
+                        startX: event.clientX,
+                        startY: event.clientY,
+                        baseTransform: t,
+                        centerX,
+                        centerY,
+                        startDist: Math.max(8, Math.hypot(event.clientX - centerX, event.clientY - centerY)),
+                        startAngle: Math.atan2(event.clientY - centerY, event.clientX - centerX),
+                        moved: false,
+                      };
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    };
+                    // O drag vem por PARAMETRO, nunca do ref: o soltar zera o
+                    // ref antes de persistir, e ler o ref aqui devolveria null
+                    // — foi exatamente o defeito que engoliu o primeiro
+                    // arrasto de escala sem nenhum erro visivel.
+                    const gizmoOperation = (drag: NonNullable<typeof gizmoDragRef.current>, event: { clientX: number; clientY: number }, palco: HTMLElement): EditOperation | null => {
+                      const rect = palco.getBoundingClientRect();
+                      if (drag.mode === 'move') {
+                        return {
+                          op: 'set-transform', kind: drag.kind, index: drag.index,
+                          transform: {
+                            x: drag.baseTransform.x + (event.clientX - drag.startX) / Math.max(1, rect.width),
+                            y: drag.baseTransform.y + (event.clientY - drag.startY) / Math.max(1, rect.height),
+                          },
+                        };
+                      }
+                      if (drag.mode === 'scale') {
+                        const dist = Math.hypot(event.clientX - drag.centerX, event.clientY - drag.centerY);
+                        return {
+                          op: 'set-transform', kind: drag.kind, index: drag.index,
+                          transform: { scale: drag.baseTransform.scale * (dist / drag.startDist) },
+                        };
+                      }
+                      const angle = Math.atan2(event.clientY - drag.centerY, event.clientX - drag.centerX);
+                      return {
+                        op: 'set-transform', kind: drag.kind, index: drag.index,
+                        transform: { rotation: drag.baseTransform.rotation + ((angle - drag.startAngle) * 180) / Math.PI },
+                      };
+                    };
+                    const onGizmoMove = (event: React.PointerEvent<HTMLElement>) => {
+                      const drag = gizmoDragRef.current;
+                      const palco = event.currentTarget.closest('.live-stage') as HTMLElement | null;
+                      if (!drag || !palco) return;
+                      drag.moved = true;
+                      const operation = gizmoOperation(drag, event, palco);
+                      if (operation) applyLiveOperation(operation, false);
+                    };
+                    const onGizmoUp = (event: React.PointerEvent<HTMLElement>) => {
+                      const drag = gizmoDragRef.current;
+                      gizmoDragRef.current = null;
+                      const palco = event.currentTarget.closest('.live-stage') as HTMLElement | null;
+                      if (!drag || !drag.moved || !palco) return;
+                      const operation = gizmoOperation(drag, event, palco);
+                      if (operation) applyLiveOperation(operation, true);
+                    };
+                    return (
+                      <div
+                        className="stage-gizmo"
+                        style={{
+                          left: `${(cx - w / 2) * 100}%`,
+                          top: `${(cy - h / 2) * 100}%`,
+                          width: `${w * 100}%`,
+                          height: `${h * 100}%`,
+                          rotate: selectedGizmo.kind === 'inserts' && t.rotation ? `${t.rotation}deg` : undefined,
+                        }}
+                        onPointerDown={beginGizmo('move')}
+                        onPointerMove={onGizmoMove}
+                        onPointerUp={onGizmoUp}
+                        onPointerCancel={() => { gizmoDragRef.current = null; }}
+                      >
+                        <span className="gizmo-rotate" title="Girar" onPointerDown={beginGizmo('rotate')} onPointerMove={onGizmoMove} onPointerUp={onGizmoUp} />
+                        {['nw', 'ne', 'sw', 'se'].map((corner) => (
+                          <span key={corner} className={`gizmo-corner ${corner}`} title="Tamanho" onPointerDown={beginGizmo('scale')} onPointerMove={onGizmoMove} onPointerUp={onGizmoUp} />
+                        ))}
+                      </div>
+                    );
+                  })()}
                   </>
                 )
                 : (
@@ -1796,7 +1959,7 @@ function EditorWorkspace({
                 )}
             </div>
           ) : null}
-          {media && !liveMode ? (
+          {media && !liveActive ? (
             <>
               <video
                 key={media.url}
@@ -1927,13 +2090,18 @@ function EditorWorkspace({
                 chips vêm dos ranges REAIS do edit-data.json (overlays). */}
             {phase === 2 && style.captions !== 'none' && (
               <TimelineTrack icon="captions" label="Legendas" tone="teal">
-                <div className="timeline-chip captions-chip" style={{ left: '2%', width: '96%' }}>Legendas</div>
+                <div
+                  className={`timeline-chip captions-chip selectable${selectedElement?.kind === 'captions' ? ' selected' : ''}`}
+                  style={{ left: '2%', width: '96%' }}
+                  onClick={() => setSelectedElement({ kind: 'captions' })}
+                >Legendas</div>
               </TimelineTrack>
             )}
             {phase === 2 && style.headline !== 'none' && (
               <TimelineTrack icon="text" label="Texto" tone="orange">
                 <div
-                  className="timeline-chip headline-chip"
+                  className={`timeline-chip headline-chip selectable${selectedElement?.kind === 'headline' ? ' selected' : ''}`}
+                  onClick={() => setSelectedElement({ kind: 'headline' })}
                   style={{ width: overlays?.hookEnd && effectiveDuration > 0 ? `${Math.min(100, (overlays.hookEnd / effectiveDuration) * 100)}%` : '31%' }}
                 >
                   Headline · {style.headline}
@@ -2014,7 +2182,11 @@ function EditorWorkspace({
             ))}
             {phase === 2 && style.elements.musicAI && (
               <TimelineTrack icon="music" label="Trilha" tone="olive">
-                <div className="timeline-chip music-chip" style={{ left: '0%', width: '100%' }}>Trilha sonora</div>
+                <div
+                  className={`timeline-chip music-chip selectable${selectedElement?.kind === 'soundtrack' ? ' selected' : ''}`}
+                  style={{ left: '0%', width: '100%' }}
+                  onClick={() => setSelectedElement({ kind: 'soundtrack' })}
+                >Trilha sonora</div>
               </TimelineTrack>
             )}
             {corrections.map((correction, index) => (
@@ -2354,6 +2526,17 @@ export function App() {
     status: 'unknown',
   });
   const [phase2Render, setPhase2Render] = useState<Phase2RenderState>({ status: 'idle' });
+  // "Ha algo para renderizar" — decidido pela impressao digital no main e
+  // reportado pelo EditorWorkspace. O botao vive na barra de abas: renderizar
+  // e EXPORTAR, nao um modo de ver.
+  const [renderPending, setRenderPending] = useState(false);
+  // Muda quando um render termina: o EditorWorkspace re-busca os dados da
+  // previa (e o pendente cai sozinho, pela impressao digital).
+  const [renderStamp, setRenderStamp] = useState('');
+  const phase2Status = phase2Render.status;
+  useEffect(() => {
+    if (phase2Status === 'ready') setRenderStamp(String(Date.now()));
+  }, [phase2Status]);
   const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ status: 'idle' });
   const [memberAuth, setMemberAuth] = useState<MemberAuthState>({ status: 'unconfigured' });
   const [runtimePack, setRuntimePack] = useState<RuntimePackState>({ status: 'unknown' });
@@ -4068,11 +4251,36 @@ export function App() {
             <nav className="work-tabs" aria-label="Área de trabalho">
               <button type="button" className={workTab === 'edit' ? 'active' : ''} onClick={() => setWorkTab('edit')}><Icon name="layers" /><strong>Edição</strong></button>
               <button type="button" className={workTab === 'styles' ? 'active' : ''} onClick={() => setWorkTab('styles')}><Icon name="sparkles" /><strong>Estilos</strong></button>
+              {/* Renderizar = exportar. So existe quando o estado atual difere
+                  do ultimo render (impressao digital); a previa ja mostra tudo
+                  ao vivo, entao nao ha botao nenhum quando nao ha nada novo. */}
+              {(renderPending || phase2Status === 'rendering') && projectDirectory && (
+                <button
+                  type="button"
+                  className="render-action"
+                  disabled={phase2Status === 'rendering'}
+                  title="Gera o vídeo final com tudo o que está na prévia"
+                  onClick={() => {
+                    const directory = projectDirectory;
+                    if (!directory) return;
+                    void window.edvidDesktop.renderPhase2(directory).catch(() => {});
+                  }}
+                >
+                  <Icon name="video" />
+                  <strong>
+                    {phase2Status === 'rendering'
+                      ? `Renderizando… ${Math.round((phase2Render.progress ?? 0) * 100)}%`
+                      : 'Renderizar'}
+                  </strong>
+                </button>
+              )}
             </nav>
             <div className="work-content">
               {workTab === 'edit' ? (
                 <EditorWorkspace
                   workspace={workspace}
+                  renderStamp={renderStamp}
+                  onRenderPendingChange={setRenderPending}
                   style={style}
                   styleApplied={styleApplied}
                   corrections={corrections}

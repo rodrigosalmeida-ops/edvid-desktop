@@ -9,6 +9,12 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // UMA copia do remotion, custe o que custar: o Player carrega estatico e a
+  // composicao carrega DINAMICO, e o otimizador do vite ja serviu as duas por
+  // caminhos diferentes — o useVideoConfig da composicao nao achava o contexto
+  // do Player ("No video config found... multiple versions of remotion").
+  resolve: { dedupe: ['remotion', '@remotion/player', 'react', 'react-dom'] },
+  optimizeDeps: { include: ['remotion', '@remotion/player'] },
   server: {
     proxy: {
       '/edvid-preview/qa': {

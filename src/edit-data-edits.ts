@@ -10,15 +10,25 @@
 
 export type OverlayKind = 'splits' | 'inserts' | 'behind' | 'animations';
 
+export type ManualTransform = { x?: number; y?: number; scale?: number; rotation?: number };
+
 export type EditOperation =
   | { op: 'set-divider'; index: number; divider: number }
   | { op: 'move'; kind: OverlayKind; index: number; start: number }
-  | { op: 'resize'; kind: OverlayKind; index: number; edge: 'start' | 'end'; time: number };
+  | { op: 'resize'; kind: OverlayKind; index: number; edge: 'start' | 'end'; time: number }
+  // O gizmo do palco: pan/zoom/giro do elemento selecionado. Parcial — so os
+  // eixos que o mouse mexeu; os demais ficam como estavam.
+  | { op: 'set-transform'; kind: 'splits' | 'inserts'; index: number; transform: ManualTransform };
 
 // Os mesmos limites do template (Main.tsx): fora deles a divisa colaria no
 // topo ou no pe do quadro e o recorte do video degeneraria.
 const DIVIDER_MIN = 0.15;
 const DIVIDER_MAX = 0.85;
+// Limites do gizmo: alem de +-1 quadro de deslocamento o elemento ja sumiu;
+// escala fora de [0.2, 5] e clique tremido, nao intencao.
+const SHIFT_LIMIT = 1;
+const SCALE_MIN = 0.2;
+const SCALE_MAX = 5;
 // Janela menor que isto nao da nem para o fade de entrada do proprio item.
 const MIN_WINDOW = 0.2;
 
@@ -76,6 +86,50 @@ export function applyEditOperation(
     const next = [...splits];
     next[operation.index] = { ...item, divider };
     return { ok: true, data: { ...data, splits: next }, changed: true };
+  }
+
+  if (operation.op === 'set-transform') {
+    const items = listOf(data, operation.kind);
+    const item = items?.[operation.index];
+    if (!items || !item) return { ok: false, reason: 'esse item não existe mais' };
+    const before = (item.transform ?? {}) as ManualTransform;
+    const next: ManualTransform = { ...before };
+    const patch = operation.transform;
+    if (patch.x !== undefined) {
+      if (!Number.isFinite(patch.x)) return { ok: false, reason: 'deslocamento ilegível' };
+      next.x = round3(clamp(patch.x, -SHIFT_LIMIT, SHIFT_LIMIT));
+    }
+    if (patch.y !== undefined) {
+      if (!Number.isFinite(patch.y)) return { ok: false, reason: 'deslocamento ilegível' };
+      next.y = round3(clamp(patch.y, -SHIFT_LIMIT, SHIFT_LIMIT));
+    }
+    if (patch.scale !== undefined) {
+      if (!Number.isFinite(patch.scale)) return { ok: false, reason: 'escala ilegível' };
+      next.scale = round3(clamp(patch.scale, SCALE_MIN, SCALE_MAX));
+    }
+    if (patch.rotation !== undefined) {
+      if (!Number.isFinite(patch.rotation)) return { ok: false, reason: 'rotação ilegível' };
+      // Normaliza para (-180, 180]: 370 e 10 sao o MESMO giro, e gravar 370
+      // faria o proximo arrasto partir de um numero que ninguem entende.
+      let degrees = patch.rotation % 360;
+      if (degrees > 180) degrees -= 360;
+      if (degrees <= -180) degrees += 360;
+      next.rotation = round3(degrees);
+    }
+    // Identidade limpa o campo: edit-data sem lixo e o render identico ao de
+    // antes do gizmo existir (paridade byte a byte).
+    const isIdentity = !next.x && !next.y && (next.scale === undefined || next.scale === 1) && !next.rotation;
+    if (JSON.stringify(before) === JSON.stringify(next) || (isIdentity && item.transform === undefined)) {
+      return { ok: true, data, changed: false };
+    }
+    const list = [...items];
+    if (isIdentity) {
+      const { transform: _removed, ...rest } = item;
+      list[operation.index] = rest;
+    } else {
+      list[operation.index] = { ...item, transform: next };
+    }
+    return { ok: true, data: { ...data, [operation.kind]: list }, changed: true };
   }
 
   const items = listOf(data, operation.kind);

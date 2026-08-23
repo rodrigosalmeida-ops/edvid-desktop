@@ -1222,6 +1222,35 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.29.0: A PRÉVIA É O PREVIEW (pedido de uso real da 0.28.0: "não quero que
+  o usuário tenha que fazer essa escolha"). O chip Render/Ao vivo MORREU:
+  com Fase 2 montada e sem corte pendente, a prévia ao vivo é o que o aluno
+  vê, sempre; com corte pendente (mapped) ou sem edit-data, o player de vídeo
+  continua. Nenhum badge. RENDERIZAR virou EXPORTAR: um botão na ponta
+  direita da barra de abas (Edição/Estilos) que SÓ EXISTE quando o estado
+  atual difere do último render — decidido por IMPRESSÃO DIGITAL
+  (phase2Fingerprint vs render-stamp.json), então cobre ajuste manual, turno
+  do agente e estilo aplicado com a mesma verdade que o render usa para pular.
+  Durante o render o botão mostra a porcentagem; ao terminar, some sozinho.
+  SELEÇÃO UNIVERSAL: todo chip da timeline seleciona (clique sem arrasto),
+  inclusive Legendas, Headline e Trilha. Selecionar leva a agulha até o
+  elemento. Splits e inserts ganham o GIZMO no palco: corpo move, cantos
+  escalam, haste gira — cada arrasto é um set-transform {x,y,scale,rotation}
+  validado (limites, rotação normalizada para (-180,180], identidade LIMPA o
+  campo para o edit-data não acumular lixo). No template, transform ausente é
+  identidade — paridade byte a byte re-provada em PNG. Nos splits o gizmo é a
+  FAIXA e os controles reenquadram a mídia dentro dela (o recorte é do
+  layout); no insert a caixa acompanha o cartão. Legendas/headline/trilha:
+  selecionáveis já; controles espaciais entram por elemento (cada um tem um
+  motor de layout próprio a respeitar — trilha é áudio, não tem corpo).
+  DOIS DEFEITOS DE MÉTODO que valem registro: (1) "No video config found" —
+  o otimizador do vite serviu DUAS cópias do remotion (Player estático +
+  composição dinâmica) e o useVideoConfig não achava o contexto;
+  resolve.dedupe nos DOIS vite configs (QA e renderer empacotado — o grafo é
+  o mesmo). (2) o soltar do gizmo zerava o ref ANTES de calcular a operação
+  final, que lia o ref zerado e devolvia null — o arrasto parecia funcionar e
+  nada persistia. A regra que fica: handler de soltar recebe o drag por
+  PARÂMETRO, nunca lê o ref que ele próprio zera.
 - 0.28.0: MANIPULAÇÃO DIRETA (passo 4, primeira metade) — arrastar em vez de
   pedir. No modo Ao vivo: a DIVISA da tela dividida ganha uma alça no próprio
   palco (aparece quando a agulha está dentro de um split; arrastar redesenha a

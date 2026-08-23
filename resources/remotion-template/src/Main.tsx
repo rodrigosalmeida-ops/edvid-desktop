@@ -41,7 +41,7 @@ type Caption = {text: string; startMs: number; endMs: number};
 // `kind` acompanha o Split: o b-roll gerado no hub vem em .mp4, e um insert
 // so de imagem obrigaria a tela dividida mesmo quando o clipe deveria ocupar
 // o cartao inteiro. `muted` nao e enfeite — o clipe entra por baixo da voz.
-type Insert = {kind?: 'image' | 'video'; src: string; start: number; end: number};
+type Insert = {kind?: 'image' | 'video'; src: string; start: number; end: number; transform?: ManualTransform};
 // Tela dividida OFICIAL: a midia ocupa uma FAIXA e o video segue no resto.
 // kind "video" toca o arquivo (mudo) em loop de cover; bandTop escolhe qual
 // faixa vertical do video 9:16 aparece na parte dele (fracao do topo);
@@ -55,7 +55,29 @@ export type Split = {
   position?: 'top' | 'bottom';
   bandTop?: number;
   divider?: number;
+  // Enquadramento manual da MIDIA dentro da faixa (pan/zoom/giro). A faixa em
+  // si continua mandando no layout; isto so reposiciona o que ela mostra.
+  transform?: ManualTransform;
 };
+// TRANSFORMACAO MANUAL (0.29.0): o gizmo da previa grava aqui. x/y sao
+// fracoes do quadro (portavel entre resolucoes), scale multiplica e rotation
+// e em graus. Ausente = identidade — e o teste de paridade byte a byte do
+// refactor de contexto e re-rodado a cada mudanca destas para garantir isso.
+export type ManualTransform = {x?: number; y?: number; scale?: number; rotation?: number};
+
+export const manualTransformCss = (
+  t: ManualTransform | undefined,
+  width: number,
+  height: number,
+): string => {
+  if (!t) return '';
+  const parts: string[] = [];
+  if (t.x || t.y) parts.push(`translate(${(t.x ?? 0) * width}px, ${(t.y ?? 0) * height}px)`);
+  if (t.rotation) parts.push(`rotate(${t.rotation}deg)`);
+  if (t.scale !== undefined && t.scale !== 1) parts.push(`scale(${t.scale})`);
+  return parts.join(' ');
+};
+
 type BehindImage = {kind: 'image'; src: string; matte: string; start: number; dur: number};
 type BehindWords = {kind: 'words'; words: {t: string; at: number}[]; matte: string; start: number; dur: number};
 type Behind = BehindImage | BehindWords;
@@ -493,23 +515,27 @@ const Karaoke: React.FC = () => {
 };
 
 // ============ ILLUSTRATIVE IMAGE INSERTS (rounded card + shadow, upper zone) ====
-const CARD_W = 780;
-const CARD_H = 500;
-const CARD_TOP = 90;
+export const CARD_W = 780;
+export const CARD_H = 500;
+export const CARD_TOP = 90;
 
-const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'}> = ({src, totalFrames, kind}) => {
+const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'; transform?: ManualTransform}> = ({src, totalFrames, kind, transform}) => {
   const frame = useCurrentFrame();
   const enter = interpolate(frame, [0, 9], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
   const exit = interpolate(frame, [totalFrames - 7, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const opacity = Math.min(enter, exit);
   // dynamic zoom: the image itself grows slowly while on screen (Ken-Burns)
   const grow = interpolate(frame, [0, totalFrames], [1, 1.08], {extrapolateRight: 'clamp'});
-  const scale = interpolate(enter, [0, 1], [0.92, 1]) * grow;
+  const scale = interpolate(enter, [0, 1], [0.92, 1]) * grow * (transform?.scale ?? 1);
   const y = interpolate(enter, [0, 1], [26, 0]);
+  // O deslocamento manual soma-se a animacao de entrada; o giro e so manual.
+  const {width: vw, height: vh} = useVideoConfig();
+  const tx = (transform?.x ?? 0) * vw;
+  const ty = (transform?.y ?? 0) * vh;
   return (
     <AbsoluteFill style={{justifyContent: 'flex-start', alignItems: 'center'}}>
       <Sfx src="whoosh.mp3" />
-      <div style={{width: CARD_W, height: CARD_H, marginTop: CARD_TOP, borderRadius: 28, overflow: 'hidden', opacity, scale: String(scale), translate: `0px ${y}px`, boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
+      <div style={{width: CARD_W, height: CARD_H, marginTop: CARD_TOP, borderRadius: 28, overflow: 'hidden', opacity, scale: String(scale), translate: `${tx}px ${y + ty}px`, ...(transform?.rotation ? {rotate: `${transform.rotation}deg`} : null), boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
         {kind === 'video'
           ? <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
           : <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />}
@@ -528,7 +554,7 @@ const Inserts: React.FC = () => {
         const duration = Math.round((it.end - it.start) * fps);
         return (
           <Sequence key={i} from={from} durationInFrames={duration} layout="none">
-            <InsertCard src={it.src} kind={it.kind} totalFrames={duration} />
+            <InsertCard src={it.src} kind={it.kind} transform={it.transform} totalFrames={duration} />
           </Sequence>
         );
       })}
@@ -542,9 +568,16 @@ const Inserts: React.FC = () => {
 // divisa). A midia entra com fade curto.
 const SplitMedia: React.FC<{split: Split; totalFrames: number}> = ({split, totalFrames}) => {
   const f = useCurrentFrame();
+  const {width, height} = useVideoConfig();
   const enter = interpolate(f, [0, 7], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
   const exit = interpolate(f, [totalFrames - 6, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-  const style: React.CSSProperties = {width: '100%', height: '100%', objectFit: 'cover', opacity: Math.min(enter, exit)};
+  const manual = manualTransformCss(split.transform, width, height);
+  const style: React.CSSProperties = {
+    width: '100%', height: '100%', objectFit: 'cover', opacity: Math.min(enter, exit),
+    // O enquadramento manual gira/desloca a midia DENTRO da faixa; o overflow
+    // hidden do container da faixa recorta o que sair.
+    ...(manual ? {transform: manual} : null),
+  };
   return (
     <>
       <Sfx src="whoosh.mp3" />

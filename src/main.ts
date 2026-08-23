@@ -5085,8 +5085,23 @@ function registerIpcHandlers(): void {
     // dados quando o estado de render mudar.
     if (bespoke && !layersReady) void updateGraphicLayers(directory).catch(() => {});
 
+    // "Ha algo para renderizar?" pela IMPRESSAO DIGITAL, nao por quem mexeu:
+    // cobre ajuste manual, turno do agente e estilo aplicado com a mesma
+    // verdade que o proprio render usa para decidir se pula.
+    let renderPending = false;
+    try {
+      const fingerprint = await phase2Fingerprint(publicDirectory);
+      const stamp = JSON.parse(
+        await readFile(path.join(remotionDirectory, 'out', 'render-stamp.json'), 'utf8'),
+      ) as { fingerprint?: unknown };
+      renderPending = Boolean(fingerprint) && stamp.fingerprint !== fingerprint;
+    } catch {
+      renderPending = true; // sem carimbo: nunca renderizou este estado
+    }
+
     return {
       editData,
+      renderPending,
       captions: (await readJson('captions.json')) ?? [],
       // Sem segmentos a camera dividiria por zero: um segmento cobrindo o
       // video inteiro reproduz o comportamento de "sem cortes".

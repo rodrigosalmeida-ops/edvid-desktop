@@ -316,6 +316,9 @@ export type ImageGenState = {
 // null = projeto ainda sem Fase 2 montada (sem edit-data ou sem cut.mp4).
 export type LivePreviewData = {
   editData: Record<string, unknown>;
+  // O estado atual difere do ultimo render (impressao digital). E o que faz o
+  // botao Renderizar existir — nao ha mais escolha entre "render" e "ao vivo".
+  renderPending: boolean;
   captions: unknown;
   segments: unknown;
   track: unknown;

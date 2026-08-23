@@ -900,3 +900,43 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   letter-spacing: .4px; text-transform: uppercase; backdrop-filter: blur(6px);
 }
 .live-render:hover { background: rgba(56,27,10,.9); }
+
+/* --- Seleção universal + gizmo (0.29.0) ------------------------------------ */
+.timeline-chip.selectable { cursor: pointer; }
+.timeline-chip.selected { outline: 2px solid rgba(255,119,19,.9); outline-offset: 1px; }
+/* Renderizar na barra de abas: exportação, não modo. Só existe quando há algo
+   novo desde o último render. */
+.work-tabs { position: relative; }
+.render-action {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: 10px; cursor: pointer;
+  border: 1px solid rgba(255,119,19,.5); background: rgba(31,17,8,.85);
+  color: #ffd2b0; font: inherit; font-size: 12px; font-weight: 800;
+}
+.render-action:hover { background: rgba(56,27,10,.9); }
+.render-action:disabled { opacity: .75; cursor: default; }
+.render-action svg { width: 14px; height: 14px; }
+/* O gizmo: caixa com cantos e haste de giro. Nos splits a caixa é a faixa e os
+   controles reenquadram a mídia dentro dela. */
+.stage-gizmo {
+  position: absolute; z-index: 7; cursor: move; touch-action: none;
+  border: 1.5px solid rgba(255,119,19,.9);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.4);
+}
+.gizmo-corner {
+  position: absolute; width: 12px; height: 12px; border-radius: 3px;
+  background: #ff7713; border: 1.5px solid #0d0d10; touch-action: none;
+}
+.gizmo-corner.nw { left: -6px; top: -6px; cursor: nwse-resize; }
+.gizmo-corner.se { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.gizmo-corner.ne { right: -6px; top: -6px; cursor: nesw-resize; }
+.gizmo-corner.sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.gizmo-rotate {
+  position: absolute; left: 50%; top: -26px; translate: -50% 0;
+  width: 13px; height: 13px; border-radius: 999px; cursor: grab;
+  background: #0d0d10; border: 2px solid #ff7713; touch-action: none;
+}
+.gizmo-rotate::before {
+  content: ''; position: absolute; left: 50%; top: 100%; translate: -50% 0;
+  width: 1.5px; height: 13px; background: rgba(255,119,19,.9);
+}

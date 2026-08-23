@@ -107,7 +107,27 @@ try {
   applyEditOperation(original, { op: 'set-divider', index: 0, divider: 0.7 });
   assert.equal(original.splits[0].divider, undefined);
 
-  // --- 5. Split ativo no instante -------------------------------------------
+  // --- 5. Transformação do gizmo ---------------------------------------------
+  const girado = applyEditOperation(base(), { op: 'set-transform', kind: 'splits', index: 0, transform: { rotation: 15, scale: 1.3 } });
+  assert.ok(girado.ok && girado.changed);
+  assert.deepEqual(girado.data.splits[0].transform, { rotation: 15, scale: 1.3 });
+  // Parcial: mexer só no x preserva o resto.
+  const deslocado = applyEditOperation(girado.data, { op: 'set-transform', kind: 'splits', index: 0, transform: { x: 0.1 } });
+  assert.deepEqual(deslocado.data.splits[0].transform, { rotation: 15, scale: 1.3, x: 0.1 });
+  // Limites: escala e deslocamento travam; rotação normaliza (370° == 10°).
+  assert.equal(applyEditOperation(base(), { op: 'set-transform', kind: 'inserts', index: 0, transform: { scale: 99 } }).data.inserts[0].transform.scale, 5);
+  assert.equal(applyEditOperation(base(), { op: 'set-transform', kind: 'inserts', index: 0, transform: { x: -7 } }).data.inserts[0].transform.x, -1);
+  assert.equal(applyEditOperation(base(), { op: 'set-transform', kind: 'inserts', index: 0, transform: { rotation: 370 } }).data.inserts[0].transform.rotation, 10);
+  assert.equal(applyEditOperation(base(), { op: 'set-transform', kind: 'inserts', index: 0, transform: { rotation: -270 } }).data.inserts[0].transform.rotation, 90);
+  // Voltar à identidade LIMPA o campo — edit-data sem lixo, render idêntico
+  // ao de antes do gizmo existir.
+  const zerado = applyEditOperation(girado.data, { op: 'set-transform', kind: 'splits', index: 0, transform: { rotation: 0, scale: 1 } });
+  assert.ok(zerado.ok && zerado.changed);
+  assert.ok(!('transform' in zerado.data.splits[0]), 'identidade não deixa campo para trás');
+  // NaN é recusa.
+  assert.equal(applyEditOperation(base(), { op: 'set-transform', kind: 'splits', index: 0, transform: { scale: NaN } }).ok, false);
+
+  // --- 6. Split ativo no instante -------------------------------------------
   assert.equal(activeSplitIndexAt(base(), 5), 0);
   assert.equal(activeSplitIndexAt(base(), 15), -1);
   assert.equal(activeSplitIndexAt(base(), 9), -1, 'o fim da janela é exclusivo');
