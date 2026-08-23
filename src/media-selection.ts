@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ProjectMedia } from './shared';
 
 // Escolha da midia que o preview exibe. O criterio e o estado real do
@@ -144,7 +145,53 @@ export function mediaMimeType(extension: string): string {
       return 'video/webm';
     case '.mkv':
       return 'video/x-matroska';
+    // A previa ao vivo serve o public/ inteiro do projeto: fontes, css, sfx e
+    // imagens passam pelo mesmo protocolo do video. CSS sem o tipo certo e
+    // IGNORADO pelo Chromium (<link rel=stylesheet> exige text/css) — as
+    // fontes cairiam para a reserva sem nenhum erro visivel.
+    case '.css':
+      return 'text/css';
+    case '.woff2':
+      return 'font/woff2';
+    case '.woff':
+      return 'font/woff';
+    case '.ttf':
+      return 'font/ttf';
+    case '.png':
+      return 'image/png';
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.webp':
+      return 'image/webp';
+    case '.json':
+      return 'application/json';
+    case '.mp3':
+      return 'audio/mpeg';
+    case '.wav':
+      return 'audio/wav';
     default:
       return 'application/octet-stream';
   }
+}
+
+// --- Caminho relativo da PREVIA AO VIVO -------------------------------------
+// O token de edvid-media://preview/<token>/<relativo> autoriza UM diretorio.
+// Esta funcao decide o que o relativo pode ser: qualquer coisa que escape da
+// raiz (.., absoluto, byte nulo) morre aqui — e uma raiz autorizada da acesso
+// ao public/ INTEIRO do projeto, entao a guarda e o que impede o token de
+// virar leitura arbitraria do disco.
+export function resolvePreviewPath(root: string, rawSegments: readonly string[]): string | null {
+  if (!rawSegments.length) return null;
+  let relative: string;
+  try {
+    relative = rawSegments.map((part) => decodeURIComponent(part)).join('/');
+  } catch {
+    return null; // percent-encoding malformado
+  }
+  if (!relative || relative.includes('\0')) return null;
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(resolvedRoot, relative);
+  if (!resolved.startsWith(`${resolvedRoot}${path.sep}`)) return null;
+  return resolved;
 }

@@ -25,9 +25,9 @@ import {
 } from 'remotion';
 import {LORA, loadEdvidFonts} from './fonts';
 import {measureText} from '@remotion/layout-utils';
-import captions from '../public/captions.json';
-import editData from '../public/edit-data.json';
-import {activeSplitAt} from './Main';
+import {useMemo} from 'react';
+import {useProjectData} from './data';
+import {activeSplitAt, useEditData} from './Main';
 
 loadEdvidFonts();
 const fontFamily = LORA;
@@ -36,16 +36,19 @@ type Word = {text: string; startMs: number; endMs: number};
 type Placed = Word & {size: number; hi: boolean};
 type Cue = {startMs: number; endMs: number; lines: Placed[][]; shift: number[]; drop: number};
 
-const C = (editData as any).captions ?? {};
-const SAFE_W = C.scatterSafeWidth ?? 820;
-const BASE = C.scatterFontSize ?? 58;
 const HI_SCALE = 1.62;
 const SPREAD = 0.45; // how far a line may wander off centre, 0..1 of the free room
 const WORD_GAP = 12;
-// Block centre as a fraction of height. The reference puts this text over
-// B-roll, where the middle of the frame is free; on a talking head the middle IS
-// the face, so the default sits on the chest instead. Raise it only over B-roll.
-const OFFSET_Y = C.scatterOffsetY ?? 0.72;
+
+// Ajustes que vem do edit-data (via contexto — ver ./data). O OFFSET_Y padrao:
+// a referencia poe este texto sobre B-roll, onde o meio do quadro esta livre;
+// num talking head o meio E o rosto, entao o padrao senta no peito.
+type ScatterCfg = {safeW: number; base: number; offsetY: number};
+const cfgOf = (captionsCfg: any): ScatterCfg => ({
+  safeW: captionsCfg?.scatterSafeWidth ?? 820,
+  base: captionsCfg?.scatterFontSize ?? 58,
+  offsetY: captionsCfg?.scatterOffsetY ?? 0.72,
+});
 
 // deterministic hash — same input, same layout, on every frame
 const hash = (n: number) => {
@@ -71,7 +74,7 @@ const clean = (t: string) => t.replace(/[.,!?…]+$/, '').toLowerCase();
 const isBreak = (t: string) => /[.,!?…]$/.test(t);
 
 // A cue is a breath: punctuation, or 6 words, or a gap of 400ms+ in the speech.
-function buildCues(words: Word[]): Cue[] {
+function buildCues(words: Word[], cfg: ScatterCfg): Cue[] {
   const groups: Word[][] = [];
   let cur: Word[] = [];
   words.forEach((w, i) => {
@@ -99,7 +102,7 @@ function buildCues(words: Word[]): Cue[] {
 
     const placed: Placed[] = g.map((w, i) => ({
       ...w,
-      size: i === hiIdx ? Math.round(BASE * HI_SCALE) : BASE,
+      size: i === hiIdx ? Math.round(cfg.base * HI_SCALE) : cfg.base,
       hi: i === hiIdx,
     }));
 
@@ -135,7 +138,7 @@ function buildCues(words: Word[]): Cue[] {
       // Only a fraction of the free room: at full range consecutive lines land
       // at opposite edges and the cue reads as scattered debris instead of a
       // phrase. SPREAD is what keeps it a paragraph that breathes.
-      const room = Math.max(0, (SAFE_W - w) / 2) * SPREAD;
+      const room = Math.max(0, (cfg.safeW - w) / 2) * SPREAD;
       return (hash(gi * 17 + li * 5 + 3) * 2 - 1) * room;
     });
 
@@ -149,8 +152,6 @@ function buildCues(words: Word[]): Cue[] {
   });
 }
 
-const CUES = buildCues(captions as Word[]);
-
 const ENTER = 7; // frames — fade + drop
 const HI_ENTER = 10; // frames — blur resolve
 const EXIT = 8; // frames — the cue leaves
@@ -158,6 +159,8 @@ const EXIT = 8; // frames — the cue leaves
 const CueView: React.FC<{cue: Cue; endFrame: number}> = ({cue, endFrame}) => {
   const frame = useCurrentFrame();
   const {fps, height} = useVideoConfig();
+  const D = useEditData();
+  const cfg = cfgOf((D as any).captions);
   const exitStart = endFrame - EXIT;
   const out = interpolate(frame, [exitStart, endFrame], [0, 1], {
     extrapolateLeft: 'clamp',
@@ -168,9 +171,9 @@ const CueView: React.FC<{cue: Cue; endFrame: number}> = ({cue, endFrame}) => {
     <AbsoluteFill style={{justifyContent: 'center', alignItems: 'center'}}>
       <div
         style={{
-          width: SAFE_W,
+          width: cfg.safeW,
           // Tela dividida: o bloco se centra na divisa (frame aqui e GLOBAL).
-          translate: `0px ${(activeSplitAt(frame, fps) ? 0 : Math.round(height * (OFFSET_Y - 0.5))) + cue.drop}px`,
+          translate: `0px ${(activeSplitAt(D.splits ?? [], frame, fps) ? 0 : Math.round(height * (cfg.offsetY - 0.5))) + cue.drop}px`,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -228,6 +231,12 @@ const CueView: React.FC<{cue: Cue; endFrame: number}> = ({cue, endFrame}) => {
 export const ScatterCaptions: React.FC = () => {
   const {fps, durationInFrames} = useVideoConfig();
   const frame = useCurrentFrame();
+  const D = useEditData();
+  const {captions} = useProjectData();
+  const CUES = useMemo(
+    () => buildCues(captions as Word[], cfgOf((D as any).captions)),
+    [captions, D],
+  );
   // ONE mounted layer picking the live cue, not a <Sequence> per cue: the same
   // reason the split layer is mounted flat — a Sequence would restart the local
   // frame and the per-word absolute timings would have to be rebased.

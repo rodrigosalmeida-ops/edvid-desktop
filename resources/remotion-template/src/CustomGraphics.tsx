@@ -24,8 +24,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import {POPPINS, loadEdvidFonts} from './fonts';
-import {Sfx} from './Main';
-import editData from '../public/edit-data.json';
+import {Sfx, useEditData} from './Main';
 
 loadEdvidFonts();
 const fontFamily = POPPINS;
@@ -91,7 +90,7 @@ const kindOf = (a: Animation): Animation['kind'] | null =>
   a.kind ?? (/\bflash/i.test(a.label ?? '') ? 'flash' : null);
 
 export const CustomGraphics: React.FC = () => {
-  const d = editData as {
+  const d = useEditData() as unknown as {
     splitInserts?: SplitInsert[];
     transitions?: CutFlash[];
     animations?: Animation[];

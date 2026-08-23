@@ -26,7 +26,7 @@ try {
     { stdio: 'inherit' },
   );
 
-  const { mediaKind, mediaMimeType, mediaTier, pickPreviewMedia, resolveByteRange } = await import(
+  const { mediaKind, mediaMimeType, mediaTier, pickPreviewMedia, resolveByteRange, resolvePreviewPath } = await import(
     pathToFileURL(path.join(outDir, 'media-selection.js')).href
   );
 
@@ -143,6 +143,29 @@ try {
   assert.equal(mediaMimeType('.mp4'), 'video/mp4');
   assert.equal(mediaMimeType('.MOV'), 'video/quicktime');
   assert.equal(mediaMimeType('.webm'), 'video/webm');
+
+  // --- Guarda da prévia ao vivo (0.27.0) ------------------------------------
+  // Um token de prévia autoriza o public/ INTEIRO de um projeto. Esta guarda é
+  // o que impede o token de virar leitura arbitrária do disco: tudo que escapa
+  // da raiz morre aqui, e o teste enumera os jeitos de escapar.
+  const raiz = '/proj/edit/remotion/public';
+  assert.equal(resolvePreviewPath(raiz, ['cut.mp4']), `${raiz}/cut.mp4`);
+  assert.equal(resolvePreviewPath(raiz, ['fonts', 'fonts.css']), `${raiz}/fonts/fonts.css`);
+  assert.equal(resolvePreviewPath(raiz, ['imagens', 'arte%20final.png']), `${raiz}/imagens/arte final.png`);
+  for (const [nome, segmentos] of [
+    ['ponto-ponto', ['..', 'edit-data.json']],
+    ['ponto-ponto no meio', ['imagens', '..', '..', 'src', 'CustomGraphics.tsx']],
+    ['ponto-ponto codificado', ['%2e%2e', 'segredo']],
+    ['absoluto', ['%2Fetc%2Fpasswd']],
+    ['byte nulo', ['cut.mp4%00.png']],
+    ['vazio', []],
+    ['so barra', ['']],
+    ['encoding quebrado', ['%zz']],
+  ]) {
+    assert.equal(resolvePreviewPath(raiz, segmentos), null, `${nome} tem de morrer na guarda`);
+  }
+  // A raiz em si não é um arquivo: pedir a raiz também morre.
+  assert.equal(resolvePreviewPath(raiz, ['.']), null);
 
   console.log('test:media-selection ok — Fase 2 vence o corte limpo, fontes e rascunhos ficam fora; ranges de mídia resolvidos por byte.');
 } finally {

@@ -1222,6 +1222,43 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.27.0: PRÉVIA AO VIVO — a composição do render tocando DENTRO do app, sem
+  gerar arquivo (passo 3 do editor de camadas). Chip Render/Ao vivo sobre o
+  palco; começa em Render de propósito, até a prévia provar estabilidade no
+  material de todo dia.
+  O TEMPLATE virou CONTEXTO (src/data.tsx): os imports estáticos dos JSONs são
+  o VALOR PADRÃO, o render não passa provider nenhum e ficou byte a byte
+  idêntico — provado com sequência PNG antes/depois no mesmo projeto
+  (sha igual, quadros 40–44). A prévia injeta os dados do projeto aberto por
+  cima. Constante de módulo congelaria o import: a prévia mostraria para
+  sempre o projeto de exemplo (aconteceu na primeira rodada da bancada).
+  MÍDIA: staticFile() só aceita base em FORMA DE CAMINHO — qualquer outra
+  ganha "/" na frente dentro do Remotion (medido no fonte). A base é
+  /edvid-preview/<token> na origem da página; um webRequest.onBeforeRequest
+  redireciona para edvid-media://preview/<token>/<relativo>, servido com Range
+  pelo mesmo protocolo do player. O token autoriza UM diretório (public/ do
+  projeto) e resolvePreviewPath (media-selection.ts) mata qualquer escape
+  (.., absoluto, %2e%2e, byte nulo, encoding quebrado) — teste enumera os
+  jeitos de escapar. MIME novo para css/woff2/png/mp3: CSS sem text/css é
+  IGNORADO pelo Chromium e as fontes caem para a reserva sem erro visível.
+  GRÁFICO SOB MEDIDA: o CustomGraphics do projeto não compila no app; quando
+  bespoke, o Main monta as camadas pré-renderizadas da 0.26.0 (WebM alpha) NO
+  LUGAR do CustomGraphics — nunca os dois (o arquivo do projeto contém o
+  template inteiro; os dois juntos desenhariam em dobro). Camada só entra
+  FRESCA (impressão confere); defasada dispara updateGraphicLayers e a prévia
+  mostra o aviso "animação sendo preparada".
+  A importação da composição no renderer é DINÂMICA e só depois de
+  window.remotion_staticBase: o fonts.ts carrega fontes NO IMPORT, e importar
+  antes da base faria o CSS buscar na origem errada — 404 silencioso.
+  VERIFICADO na bancada de QA com mídia real (proxy /edvid-preview/qa →
+  servidor do spike): composição tocando a razão 1.000 do tempo real dentro
+  da interface, tela dividida + imagem + legenda montando ao vivo. Um alerta
+  de método: um pointerdown SINTÉTICO sem pointerup deixa o Player em modo
+  scrub eterno — parece travado em buffering e não é; cliques reais no QA.
+  PENDENTE DE VERIFICAÇÃO NO EMPACOTADO: o padrão file:///edvid-preview/* do
+  webRequest (o app empacotado carrega o renderer por file://; o dev usa http
+  e está coberto). Se falhar, a prévia fica indisponível e o Render continua
+  como sempre — sem regressão.
 - 0.26.0: CAMADAS DE GRÁFICO — o CustomGraphics sob medida pré-renderizado
   com alpha (passo 2 do editor de camadas; o passo 3, a prévia ao vivo que
   CONSOME isto, vem a seguir — nesta versão nada muda na tela ainda).
@@ -2365,7 +2402,10 @@ npx vite --host 127.0.0.1 --port 4831
 
 O `src/qa-browser-api.ts` fornece projeto, mídia, EDL, eventos e aprovações
 simulados. Validar visualmente mudanças importantes, além da tipagem.
-Parâmetros úteis: `?hub` liga o Higgsfield conectado (exercita os seletores de
+Parâmetros úteis: `?aovivo` liga a prévia ao vivo com mídia real (exige
+`npm run spike` de pé — o proxy /edvid-preview/qa busca lá; use cliques REAIS
+no Player, evento sintético sem pointerup trava o scrub); `?hub` liga o
+Higgsfield conectado (exercita os seletores de
 nível, o papel de vídeo e o card da conexão sem precisar de conta); `?render`,
 `?imagens`, `?catalogo`, `?ia`, `?semchatgpt` cobrem os outros estados.
 

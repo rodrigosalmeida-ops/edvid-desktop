@@ -826,3 +826,34 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .connect-account { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .connect-account strong { display: block; font-size: 12px; }
 .connect-account small { color: var(--dim); font-size: 11px; }
+
+/* --- Prévia ao vivo (0.27.0) ------------------------------------------------
+   O chip fica SOBRE o palco, canto superior direito: é um modo de ver, não uma
+   ação de edição, então não ganha lugar na toolbar. */
+.video-stage { position: relative; }
+.live-toggle {
+  position: absolute; top: 10px; right: 10px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--stroke); background: rgba(10,11,14,.72);
+  color: #97a1ad; font: inherit; font-size: 10.5px; font-weight: 800;
+  letter-spacing: .4px; text-transform: uppercase; backdrop-filter: blur(6px);
+}
+.live-toggle:hover { color: var(--text); border-color: rgba(255,119,19,.45); }
+.live-toggle .live-dot { width: 7px; height: 7px; border-radius: 999px; background: #6d7684; }
+/* Ligado: o vermelho de transmissão — a linguagem universal de "ao vivo". */
+.live-toggle.on { color: #ffd9cf; border-color: rgba(242,90,70,.5); }
+.live-toggle.on .live-dot { background: #f25a46; box-shadow: 0 0 8px rgba(242,90,70,.8); }
+.live-stage { width: 100%; max-height: 100%; background: #000; border-radius: 12px; overflow: hidden; position: relative; }
+.live-preview-loading, .live-preview-error {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; height: 100%; color: var(--dim); font-size: 12.5px; text-align: center; padding: 18px;
+}
+.live-preview-error small { color: #f2705f; max-width: 340px; overflow-wrap: anywhere; }
+/* O aviso da animação personalizada em preparo: informativo, não erro. */
+.live-preview-note {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 4;
+  padding: 8px 10px; border-radius: 9px; background: rgba(10,11,14,.82);
+  border: 1px solid var(--stroke); color: #c8cfd9; font-size: 11px; line-height: 1.4;
+  backdrop-filter: blur(6px);
+}

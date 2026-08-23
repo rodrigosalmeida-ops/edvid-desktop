@@ -76,6 +76,7 @@ import type {
   WhisperModelState,
 } from './shared';
 import { AI_CATALOG, catalogEntry, type AiCatalogEntry } from './ai-catalog';
+import { LivePreview } from './live-preview';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
 import {
   VIDEO_TRACK_ID,
@@ -498,6 +499,22 @@ function EditorWorkspace({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const currentTimeRef = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
+  // PREVIA AO VIVO (0.27.0): a composicao do render tocando no Player, sem
+  // arquivo. Comeca desligada de proposito — o player de render continua
+  // sendo o padrao ate a previa provar estabilidade no material de todo dia.
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveData, setLiveData] = useState<import('./shared').LivePreviewData>(null);
+  const liveDirectory = workspace?.project.directory ?? null;
+  useEffect(() => {
+    if (!liveMode || !liveDirectory) return;
+    let alive = true;
+    void window.edvidDesktop.getLivePreview(liveDirectory)
+      .then((data) => { if (alive) setLiveData(data); })
+      .catch(() => { if (alive) setLiveData(null); });
+    return () => { alive = false; };
+    // timelineLoadStamp muda a cada turno/render aplicado: e o sinal de que o
+    // edit-data pode ter mudado e a previa precisa de dados novos.
+  }, [liveMode, liveDirectory, workspace?.timelineLoadStamp]);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [markIn, setMarkIn] = useState<number | null>(null);
@@ -1477,7 +1494,31 @@ function EditorWorkspace({
     <div className={`editor-workspace ${orientation}`}>
       <section className="preview-section">
         <div className={`video-stage ${orientation}`}>
-          {media ? (
+          {media && (
+            <button
+              type="button"
+              className={`live-toggle${liveMode ? ' on' : ''}`}
+              title={liveMode ? 'Voltar ao vídeo renderizado' : 'Ver a edição ao vivo, sem esperar o render'}
+              onClick={() => setLiveMode((current) => !current)}
+            >
+              <span className="live-dot" aria-hidden="true" />
+              {liveMode ? 'Ao vivo' : 'Render'}
+            </button>
+          )}
+          {media && liveMode ? (
+            <div className="live-stage" style={{ aspectRatio: `${media.width} / ${media.height}` }}>
+              {liveData
+                ? <LivePreview data={liveData} />
+                : (
+                  <div className="video-placeholder">
+                    <span><Icon name="video" /></span>
+                    <strong>Prévia ao vivo indisponível</strong>
+                    <small>Monte a edição (Fase 2) para ver ao vivo. O vídeo renderizado continua no botão Render.</small>
+                  </div>
+                )}
+            </div>
+          ) : null}
+          {media && !liveMode ? (
             <>
               <video
                 key={media.url}
@@ -1531,7 +1572,8 @@ function EditorWorkspace({
                 <div className="video-stage-note">Arquivo-fonte indisponível para a prévia</div>
               )}
             </>
-          ) : (
+          ) : null}
+          {!media && (
             <div className="video-placeholder">
               <span><Icon name="video" /></span>
               <strong>O preview aparecerá aqui</strong>

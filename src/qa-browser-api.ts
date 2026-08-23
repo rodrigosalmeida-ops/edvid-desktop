@@ -286,6 +286,38 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     },
     fulfillImageRequests: async () => ({ status: 'idle' }),
     fulfillVideoRequests: async () => ({ status: 'idle' }),
+    // QA da prévia ao vivo: com ?aovivo e o servidor do spike de pé
+    // (npm run spike), os dados e a mídia vêm do MESMO projeto real,
+    // atravessando o proxy /edvid-preview/qa do vite. Sem o spike, devolve
+    // null e a interface mostra o estado indisponível — que também é um
+    // estado a testar.
+    getLivePreview: async () => {
+      if (!qaSearch().has('aovivo')) return null;
+      const base = '/edvid-preview/qa';
+      const grab = async (name: string): Promise<unknown> => {
+        const response = await fetch(`${base}/${name}`);
+        if (!response.ok) throw new Error(name);
+        return response.json() as Promise<unknown>;
+      };
+      try {
+        const editData = (await grab('edit-data.json')) as Record<string, unknown>;
+        const [captions, segments, track, cues] = await Promise.all([
+          grab('captions.json').catch(() => []),
+          grab('segments.json').catch(() => ({ segments: [{ start: 0, dur: Number(editData.durationSec) || 0 }] })),
+          grab('track.json').catch(() => ({ points: [] })),
+          grab('caption-cues.json').catch(() => []),
+        ]);
+        return {
+          editData, captions, segments, track, cues,
+          staticBase: base,
+          graphicLayers: null,
+          bespokeGraphics: false,
+          layersReady: true,
+        };
+      } catch {
+        return null;
+      }
+    },
     fulfillMusicRequests: async () => ({ done: 0 }),
     applyJcut: async () => ({ applied: true, cuts: 2, error: null }),
     syncJcut: async () => ({ changed: false }),

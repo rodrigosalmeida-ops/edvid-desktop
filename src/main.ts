@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from 'electron';
 import started from 'electron-squirrel-startup';
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -86,6 +86,7 @@ import {
   isMediaFileName,
   mediaKind,
   mediaMimeType,
+  resolvePreviewPath,
   mediaTier,
   resolveByteRange,
 } from './media-selection';
@@ -191,6 +192,24 @@ function authorizeMediaToken(absolutePath: string, fingerprint: string | null): 
   }
   return token;
 }
+// Raizes da PREVIA AO VIVO: um token por diretorio public/ de projeto. O
+// staticFile() da composicao so aceita base em forma de caminho (qualquer
+// outra ganha "/" na frente e quebra — medido no fonte do Remotion), entao a
+// base e /edvid-preview/<token> na ORIGEM DA PAGINA e um redirecionamento de
+// webRequest leva ate edvid-media://preview/, que serve o arquivo com Range.
+const previewRoots = new Map<string, string>();
+const previewTokenByRoot = new Map<string, string>();
+
+function authorizePreviewRoot(rootDirectory: string): string {
+  let token = previewTokenByRoot.get(rootDirectory);
+  if (!token) {
+    token = randomUUID();
+    previewTokenByRoot.set(rootDirectory, token);
+    previewRoots.set(token, rootDirectory);
+  }
+  return token;
+}
+
 const videoExtensions = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv']);
 const ignoredMediaDirectories = new Set([
   '.git',
@@ -5000,6 +5019,86 @@ function registerIpcHandlers(): void {
     return fulfillMusicRequests(directory);
   });
 
+  // --- PREVIA AO VIVO -------------------------------------------------------
+  // Entrega os dados que a composicao consome (edit-data, legendas, track,
+  // segmentos, cues), a base de arquivos e as camadas de grafico. A leitura e
+  // tolerante: projeto sem legenda ainda toca, sem track ainda toca — o que
+  // nao pode e a camera dividir por zero num segments vazio.
+  ipcMain.handle('preview:data', async (_event, input: { directory?: string }) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+    }
+    const remotionDirectory = path.join(directory, 'edit', 'remotion');
+    const publicDirectory = path.join(remotionDirectory, 'public');
+    const readJson = async (name: string): Promise<unknown> => {
+      try {
+        return JSON.parse(await readFile(path.join(publicDirectory, name), 'utf8')) as unknown;
+      } catch {
+        return null;
+      }
+    };
+    const editData = (await readJson('edit-data.json')) as Record<string, unknown> | null;
+    if (!editData) return null; // Fase 2 ainda nao montada: sem previa ao vivo.
+    try {
+      await stat(path.join(publicDirectory, 'cut.mp4'));
+    } catch {
+      return null; // Sem o video-base nao ha o que tocar.
+    }
+    const durationSec = Number(editData.durationSec) || 0;
+    const segments = (await readJson('segments.json')) as { segments?: unknown[] } | null;
+    const track = (await readJson('track.json')) as { points?: unknown[] } | null;
+
+    // Camadas de grafico: so entram FRESCAS. Uma camada de codigo antigo
+    // tocando como se fosse atual e o pior erro possivel — melhor o aviso.
+    let graphicLayers: Array<{ src: string; start: number; end: number }> | null = null;
+    let bespoke = false;
+    let layersReady = true;
+    try {
+      const source = await readFile(path.join(remotionDirectory, 'src', 'CustomGraphics.tsx'), 'utf8');
+      bespoke = !(await customGraphicsUntouched(publicDirectory));
+      if (bespoke) {
+        const expected = layerManifest(source, editData.animations, durationSec, Number(editData.fps) || 30);
+        const stored = JSON.parse(
+          await readFile(path.join(directory, 'edit', 'graficos', 'manifest.json'), 'utf8'),
+        ) as LayerManifest;
+        if (stored.fingerprint === expected.fingerprint) {
+          graphicLayers = [];
+          for (const layer of stored.layers) {
+            const file = path.join(directory, 'edit', 'graficos', `${layer.name}.webm`);
+            const info = await stat(file);
+            graphicLayers.push({
+              src: `edvid-media://local/${authorizeMediaToken(file, String(info.mtimeMs))}`,
+              start: layer.start,
+              end: layer.end,
+            });
+          }
+        } else {
+          layersReady = false;
+        }
+      }
+    } catch {
+      if (bespoke) layersReady = false;
+    }
+    // Camadas defasadas: dispara a atualizacao agora; o renderer re-pede os
+    // dados quando o estado de render mudar.
+    if (bespoke && !layersReady) void updateGraphicLayers(directory).catch(() => {});
+
+    return {
+      editData,
+      captions: (await readJson('captions.json')) ?? [],
+      // Sem segmentos a camera dividiria por zero: um segmento cobrindo o
+      // video inteiro reproduz o comportamento de "sem cortes".
+      segments: segments?.segments?.length ? segments : { segments: [{ start: 0, dur: durationSec }] },
+      track: track?.points?.length ? track : { points: [] },
+      cues: (await readJson('caption-cues.json')) ?? [],
+      staticBase: `/edvid-preview/${authorizePreviewRoot(publicDirectory)}`,
+      graphicLayers,
+      bespokeGraphics: bespoke,
+      layersReady,
+    };
+  });
+
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
@@ -5694,8 +5793,17 @@ void app.whenReady().then(async () => {
   // timeline era ignorado ou o vídeo reiniciava do zero.
   void protocol.handle('edvid-media', async (request) => {
     const url = new URL(request.url);
-    const token = url.hostname === 'local' ? url.pathname.slice(1) : '';
-    const mediaPath = authorizedMedia.get(token);
+    let mediaPath: string | undefined;
+    if (url.hostname === 'local') {
+      mediaPath = authorizedMedia.get(url.pathname.slice(1));
+    } else if (url.hostname === 'preview') {
+      // PREVIA AO VIVO: edvid-media://preview/<token do public/>/<relativo>.
+      // O token autoriza UM diretorio; o caminho relativo e resolvido DENTRO
+      // dele e qualquer tentativa de sair (.., absoluto) morre aqui.
+      const [token, ...rest] = url.pathname.slice(1).split('/');
+      const root = previewRoots.get(token ?? '');
+      if (root) mediaPath = resolvePreviewPath(root, rest) ?? undefined;
+    }
     if (!mediaPath) return new Response('Midia nao autorizada.', { status: 404 });
     let size: number;
     try {
@@ -5730,6 +5838,22 @@ void app.whenReady().then(async () => {
     ) as unknown as BodyInit;
     return new Response(stream, { status, headers });
   });
+  // A base do staticFile e um CAMINHO na origem da pagina (/edvid-preview/…):
+  // qualquer outra forma ganha "/" na frente dentro do Remotion e quebra. O
+  // redirecionamento leva a requisicao ate o protocolo edvid-media, que ja
+  // serve com Range — e o mesmo caminho do player. O padrao "*://*/" nao casa
+  // com file:// (regra do Chromium), dai o segundo filtro para o app
+  // empacotado, que carrega o renderer por file://.
+  session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['*://*/edvid-preview/*', 'file:///edvid-preview/*'] },
+    (details, callback) => {
+      const marker = details.url.indexOf('/edvid-preview/');
+      if (marker < 0) return callback({});
+      const rest = details.url.slice(marker + '/edvid-preview/'.length);
+      callback({ redirectURL: `edvid-media://preview/${rest}` });
+    },
+  );
+
   createWindow();
 
   app.on('activate', () => {

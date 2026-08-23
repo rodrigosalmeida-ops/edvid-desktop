@@ -25,17 +25,12 @@ import {
   useVideoConfig,
 } from 'remotion';
 import {PLAYFAIR, POPPINS, loadEdvidFonts} from './fonts';
-import cues from '../public/caption-cues.json';
-import editData from '../public/edit-data.json';
-import {activeSplitAt} from './Main';
+import {useProjectData} from './data';
+import {activeSplitAt, useEditData} from './Main';
 import {PencilOutline} from './PencilOutline';
 
 loadEdvidFonts();
 
-// A linha serifada carrega a cor de destaque escolhida na aba Estilos; antes
-// ela era laranja fixo e ignorava a escolha do usuario.
-const ORANGE =
-  ((editData as {captions?: {accent?: string}}).captions?.accent ?? '#ff5200');
 const WHITE_GRAD: React.CSSProperties = {
   backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #ffffff 46%, #cfcfcf 100%)',
   WebkitBackgroundClip: 'text',
@@ -43,11 +38,13 @@ const WHITE_GRAD: React.CSSProperties = {
   WebkitTextFillColor: 'transparent',
   color: 'transparent',
 };
-// 0=bold-italic, 1=regular(small), 2=serif-orange, 3=bold
-const LINE_STYLES: React.CSSProperties[] = [
+// 0=bold-italic, 1=regular(small), 2=serif-orange, 3=bold. A linha serifada
+// carrega a cor de destaque escolhida na aba Estilos (via contexto); antes era
+// laranja fixo e ignorava a escolha do usuario.
+const lineStylesFor = (accent: string): React.CSSProperties[] => [
   {fontFamily: POPPINS, fontWeight: 900, fontStyle: 'italic', ...WHITE_GRAD},
   {fontFamily: POPPINS, fontWeight: 400, fontStyle: 'normal', ...WHITE_GRAD},
-  {fontFamily: PLAYFAIR, fontWeight: 900, fontStyle: 'italic', color: ORANGE},
+  {fontFamily: PLAYFAIR, fontWeight: 900, fontStyle: 'italic', color: accent},
   {fontFamily: POPPINS, fontWeight: 800, fontStyle: 'normal', ...WHITE_GRAD},
 ];
 const SHADOW = 'drop-shadow(0 5px 9px rgba(0,0,0,0.5))';
@@ -64,14 +61,10 @@ const fitFont = (text: string, base: number, avail = 900, factor = 0.59): number
 
 // -------- config (optional overrides in edit-data.json → captions) --------
 type SfxCfg = {enabled?: boolean; clickVolume?: number; scratchVolume?: number};
-type CapCfg = {stackedOffsetY?: number; fontScale?: number; sfx?: SfxCfg};
-const CAP = ((editData as {captions?: CapCfg}).captions ?? {}) as CapCfg;
-const OFFSET_Y = CAP.stackedOffsetY ?? 0.156; // fraction of height, below center
-const FONT_SCALE = CAP.fontScale ?? 0.8;
-const SFX = CAP.sfx ?? {};
-const SFX_ON = SFX.enabled !== false;
-const CLICK_VOL = SFX.clickVolume ?? 0.45;
-const SCRATCH_VOL = SFX.scratchVolume ?? 0.16;
+type CapCfg = {accent?: string; stackedOffsetY?: number; fontScale?: number; sfx?: SfxCfg};
+// Config lida por componente (contexto): offset, escala, cor e SFX.
+const capCfgOf = (editData: unknown): CapCfg =>
+  ((editData as {captions?: CapCfg}).captions ?? {}) as CapCfg;
 
 type Word = {text: string; fromMs: number; toMs: number};
 type CueData = {
@@ -90,12 +83,17 @@ type CueData = {
 const Cue: React.FC<{cue: CueData; cueDurationFrames: number}> = ({cue, cueDurationFrames}) => {
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
+  const D = useEditData();
+  const CAP = capCfgOf(D);
+  const LINE_STYLES = lineStylesFor(CAP.accent ?? '#ff5200');
+  const OFFSET_Y = CAP.stackedOffsetY ?? 0.156;
+  const FONT_SCALE = CAP.fontScale ?? 0.8;
 
   const scale = (width / 1080) * FONT_SCALE;
   const avail = width - 180;
   // Tela dividida: o bloco abandona o offset e se centra na divisa (H/2).
   const globalFrame = Math.round((cue.startMs / 1000) * fps) + frame;
-  const baseY = activeSplitAt(globalFrame, fps) ? 0 : Math.round(height * OFFSET_Y);
+  const baseY = activeSplitAt((D as {splits?: []}).splits ?? [], globalFrame, fps) ? 0 : Math.round(height * OFFSET_Y);
 
   const ENTER = Math.max(3, Math.min(8, Math.floor(cueDurationFrames * 0.45)));
   const EXIT = Math.max(2, Math.min(7, Math.floor(cueDurationFrames * 0.35)));
@@ -257,7 +255,12 @@ const Cue: React.FC<{cue: CueData; cueDurationFrames: number}> = ({cue, cueDurat
 
 export const StackedCaptions: React.FC = () => {
   const {fps, durationInFrames} = useVideoConfig();
-  const CUES = cues as unknown as CueData[];
+  const D = useEditData();
+  const SFX = capCfgOf(D).sfx ?? {};
+  const SFX_ON = SFX.enabled !== false;
+  const CLICK_VOL = SFX.clickVolume ?? 0.45;
+  const SCRATCH_VOL = SFX.scratchVolume ?? 0.16;
+  const CUES = useProjectData().cues as unknown as CueData[];
   return (
     <AbsoluteFill>
       {CUES.map((cue) => {

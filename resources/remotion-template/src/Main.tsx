@@ -24,12 +24,10 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
+import {useMemo} from 'react';
 import {POPPINS, loadEdvidFonts} from './fonts';
 import {measureText} from '@remotion/layout-utils';
-import captions from '../public/captions.json';
-import track from '../public/track.json';
-import segData from '../public/segments.json';
-import editData from '../public/edit-data.json';
+import {type GraphicLayer, useProjectData} from './data';
 import {CustomGraphics} from './CustomGraphics';
 import {StackedCaptions} from './StackedCaptions';
 import {ScatterCaptions} from './ScatterCaptions';
@@ -133,13 +131,17 @@ export type EditData = {
   soundtrack: {enabled: boolean; file: string; volume: number};
 };
 
-const D = editData as unknown as EditData;
-const SPLITS: Split[] = D.splits ?? [];
+// Os dados chegam pelo CONTEXTO (./data): o render usa o padrao estatico e a
+// previa ao vivo do Edvid injeta o projeto aberto por cima. Uma constante de
+// modulo aqui congelaria o import — a previa mostraria para sempre o projeto
+// de exemplo, que foi exatamente o primeiro defeito da bancada.
+export const useEditData = (): EditData => useProjectData().editData as unknown as EditData;
 
 // Divisa da tela dividida no frame GLOBAL. O +1 e o mesmo lag de video que a
-// CaptionShell e o CustomGraphics compensam (VIDEO_LAG).
-export const activeSplitAt = (globalFrame: number, fps: number): Split | null =>
-  SPLITS.find(
+// CaptionShell e o CustomGraphics compensam (VIDEO_LAG). `splits` vem de quem
+// chama (D.splits ?? []): funcao de modulo nao pode usar hook.
+export const activeSplitAt = (splits: readonly Split[], globalFrame: number, fps: number): Split | null =>
+  splits.find(
     (s) => globalFrame >= Math.round(s.start * fps) + 1 && globalFrame < Math.round(s.end * fps) + 1,
   ) ?? null;
 
@@ -226,6 +228,8 @@ export const DynamicVideo: React.FC<{src?: string; frameOffset?: number; transpa
 }) => {
   const frame = useCurrentFrame() + frameOffset;
   const {width, height, fps} = useVideoConfig();
+  const {segments: segData, track} = useProjectData();
+  const D = useEditData();
   const cam = D.camera;
 
   let S = 1;
@@ -321,6 +325,7 @@ const BehindWordsEl: React.FC<{words: {t: string; at: number}[]; startSec: numbe
 
 const BehindSubject: React.FC = () => {
   const {fps} = useVideoConfig();
+  const D = useEditData();
   return (
     <>
       {D.behind.map((b, i) => {
@@ -358,8 +363,6 @@ function buildLines(caps: Caption[], maxWords: number): Caption[][] {
   if (cur.length) lines.push(cur);
   return lines;
 }
-const LINES = buildLines(captions as Caption[], D.captions.maxWords);
-
 const Word: React.FC<{caption: Caption; lineFromFrame: number}> = ({caption, lineFromFrame}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
@@ -391,18 +394,19 @@ const Word: React.FC<{caption: Caption; lineFromFrame: number}> = ({caption, lin
 // manual, quando existir, tem prioridade (ajuste fino do agente).
 // textHalfPx: metade da altura visual do bloco de texto, para centrar de fato.
 export const captionPaddingBottomAt = (
+  data: EditData,
   globalFrame: number,
   fps: number,
   height: number,
   fallback: number,
   textHalfPx: number,
 ): number => {
-  const C = D.captions;
+  const C = data.captions;
   const w = (C.windows || []).find(
     (x) => globalFrame >= Math.round(x.start * fps) + 1 && globalFrame < Math.round(x.end * fps) + 1,
   );
   if (w) return w.paddingBottom;
-  const split = activeSplitAt(globalFrame, fps);
+  const split = activeSplitAt(data.splits ?? [], globalFrame, fps);
   if (split) {
     // Centrada na divisa de verdade: com a divisa fora do meio, height/2
     // jogava a legenda para dentro da arte.
@@ -415,11 +419,13 @@ export const captionPaddingBottomAt = (
 const CaptionShell: React.FC<{fromFrame: number; children: React.ReactNode}> = ({fromFrame, children}) => {
   const {fps, height} = useVideoConfig();
   const local = useCurrentFrame();
+  const D = useEditData();
   const C = D.captions;
   // Compared in FRAMES, never seconds: window bounds are rounded in the JSON, and
   // an epsilon comparison there lands a frame off. +1 is the same video lag the
   // split layout compensates for (see VIDEO_LAG in CustomGraphics).
   const paddingBottom = captionPaddingBottomAt(
+    D,
     fromFrame + local,
     fps,
     height,
@@ -435,7 +441,12 @@ const CaptionShell: React.FC<{fromFrame: number; children: React.ReactNode}> = (
 
 const Karaoke: React.FC = () => {
   const {fps, durationInFrames} = useVideoConfig();
+  const D = useEditData();
+  const {captions} = useProjectData();
   const C = D.captions;
+  // Quebra em linhas memoizada: roda por quadro no Player e o measureText das
+  // larguras nao e de graca.
+  const LINES = useMemo(() => buildLines(captions as Caption[], C.maxWords), [captions, C.maxWords]);
   return (
     <>
       {LINES.map((line, i) => {
@@ -509,6 +520,7 @@ const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | '
 
 const Inserts: React.FC = () => {
   const {fps} = useVideoConfig();
+  const D = useEditData();
   return (
     <>
       {D.inserts.map((it, i) => {
@@ -549,7 +561,8 @@ const SplitMedia: React.FC<{split: Split; totalFrames: number}> = ({split, total
 const BaseWithSplits: React.FC = () => {
   const frame = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
-  const s = activeSplitAt(frame, fps);
+  const D = useEditData();
+  const s = activeSplitAt(D.splits ?? [], frame, fps);
   if (!s) return <DynamicVideo />;
   const g = splitGeometry(height, s.position, s.bandTop, s.divider);
   const from = Math.round(s.start * fps);
@@ -573,6 +586,7 @@ const BaseWithSplits: React.FC = () => {
 // ============ SOUNDTRACK (Treblo AI track or a local file) — background bed ====
 const Soundtrack: React.FC = () => {
   const {durationInFrames} = useVideoConfig();
+  const D = useEditData();
   const S = D.soundtrack;
   return (
     <Audio
@@ -654,6 +668,7 @@ function fitHeadline(lines: [string, string], s: HlStyle): number {
 
 const HookInner: React.FC<{totalFrames: number}> = ({totalFrames}) => {
   const f = useCurrentFrame();
+  const D = useEditData();
   const H = D.hook;
   const enter = interpolate(f, [0, 8], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
   const exit = interpolate(f, [totalFrames - 9, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
@@ -766,6 +781,7 @@ const HookInner: React.FC<{totalFrames: number}> = ({totalFrames}) => {
 
 const HookIntro: React.FC = () => {
   const {fps} = useVideoConfig();
+  const D = useEditData();
   const dur = Math.round(D.hook.endSec * fps);
   return (
     <Sequence from={0} durationInFrames={dur} layout="none">
@@ -774,15 +790,42 @@ const HookIntro: React.FC = () => {
   );
 };
 
+// Grafico sob medida PRE-RENDERIZADO (edit/graficos/*.webm, VP9 com alpha).
+// So a previa ao vivo monta isto: o CustomGraphics do projeto nao compila no
+// app, entao o clipe pronto toca no lugar dele. No render, graphicLayers e
+// sempre null e o CustomGraphics roda ao vivo como sempre rodou.
+const PrerenderedGraphics: React.FC<{layers: GraphicLayer[]}> = ({layers}) => {
+  const {fps} = useVideoConfig();
+  return (
+    <>
+      {layers.map((layer, i) => {
+        const from = Math.round(layer.start * fps);
+        const duration = Math.max(1, Math.round((layer.end - layer.start) * fps));
+        return (
+          <Sequence key={i} from={from} durationInFrames={duration} layout="none">
+            <OffthreadVideo
+              src={layer.src}
+              muted
+              style={{position: 'absolute', inset: 0, width: '100%', height: '100%'}}
+            />
+          </Sequence>
+        );
+      })}
+    </>
+  );
+};
+
 // ============ MAIN ============
 export const Main: React.FC = () => {
+  const D = useEditData();
+  const {graphicLayers} = useProjectData();
   return (
     <AbsoluteFill style={{backgroundColor: 'black'}}>
       {D.soundtrack.enabled ? <Soundtrack /> : null}
       <BaseWithSplits />
       <BehindSubject />
       <Inserts />
-      <CustomGraphics />
+      {graphicLayers?.length ? <PrerenderedGraphics layers={graphicLayers} /> : <CustomGraphics />}
       {D.hook.enabled ? <HookIntro /> : null}
       {D.captions.enabled
         ? D.captions.style === 'stacked'

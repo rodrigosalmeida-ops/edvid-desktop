@@ -312,6 +312,24 @@ export type ImageGenState = {
 // J-Cut deterministico aplicado pelo aplicativo: o video do corte e copiado
 // byte a byte e so o audio e remontado (antecipacao + crossfade) a partir do
 // EDL. "sync" reaplica em silencio quando o agente re-renderiza o corte.
+// Dados da PREVIA AO VIVO: a mesma composicao do render tocando no Player.
+// null = projeto ainda sem Fase 2 montada (sem edit-data ou sem cut.mp4).
+export type LivePreviewData = {
+  editData: Record<string, unknown>;
+  captions: unknown;
+  segments: unknown;
+  track: unknown;
+  cues: unknown;
+  // Base do staticFile: /edvid-preview/<token>. Forma de caminho por
+  // obrigacao do Remotion; o main redireciona ate o protocolo com Range.
+  staticBase: string;
+  // Camadas do CustomGraphics sob medida, FRESCAS (impressao confere) — ou
+  // null com bespokeGraphics=true e layersReady=false enquanto preparam.
+  graphicLayers: Array<{ src: string; start: number; end: number }> | null;
+  bespokeGraphics: boolean;
+  layersReady: boolean;
+} | null;
+
 export type JcutApplyResult = {
   applied: boolean;
   cuts: number;
@@ -432,6 +450,7 @@ export type EdvidDesktopApi = {
   onAiRoles: (listener: (state: AiRolesState) => void) => () => void;
   fulfillImageRequests: (directory: string) => Promise<ImageGenState>;
   fulfillVideoRequests: (directory: string) => Promise<ImageGenState>;
+  getLivePreview: (directory: string) => Promise<LivePreviewData>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;
