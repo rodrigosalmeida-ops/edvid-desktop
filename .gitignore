@@ -16,3 +16,7 @@ __pycache__/
 python/whisperx/.venv/
 dist/
 signing.env
+
+# Experimento da prévia ao vivo: links para a pasta de um projeto do aluno.
+spike/public
+spike/fonts

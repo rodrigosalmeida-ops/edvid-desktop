@@ -66,11 +66,14 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@remotion/layout-utils": "^4.0.482",
+    "@remotion/player": "^4.0.482",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "43.4.0",
+    "remotion": "^4.0.482",
     "typescript": "^5.9.3",
     "vite": "^5.4.21"
   }

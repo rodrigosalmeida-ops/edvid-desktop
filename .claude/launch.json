@@ -4,8 +4,36 @@
     {
       "name": "edvid-qa",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--host", "127.0.0.1", "--port", "4831"],
+      "runtimeArgs": [
+        "vite",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "4831"
+      ],
       "port": 4831
+    },
+    {
+      "name": "edvid-spike",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "spike/live-preview/vite.config.ts"
+      ],
+      "port": 4832
+    },
+    {
+      "name": "edvid-spike-quebrado",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "spike/live-preview/vite.config.ts",
+        "--port",
+        "4833"
+      ],
+      "port": 4833
     }
   ]
 }
