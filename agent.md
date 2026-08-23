@@ -2326,6 +2326,7 @@ npm run test:project-files
 npm run test:clean-cut-pipeline
 npm run test:generation-tier
 npm run test:hub-generation
+npm run test:ffmpeg-alpha
 EDVID_TEST_VIDEO=<um vídeo falado> npm run test:clean-cut-live
 git diff --check
 ```
