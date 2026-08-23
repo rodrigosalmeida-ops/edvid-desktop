@@ -10,9 +10,11 @@
 //   estar definido: o fonts.ts carrega as fontes NO IMPORT, e importar antes
 //   da base faria o CSS das fontes buscar /fonts/fonts.css na origem da
 //   pagina — 404 silencioso e tipografia de reserva, sem nenhum erro visivel.
-import { Player } from '@remotion/player';
-import { useEffect, useMemo, useState } from 'react';
+import { Player, type PlayerRef } from '@remotion/player';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LivePreviewData } from './shared';
+
+export type { PlayerRef } from '@remotion/player';
 
 type CompositionModule = {
   Main: React.FC;
@@ -34,8 +36,23 @@ function loadComposition(): Promise<CompositionModule> {
   return compositionPromise;
 }
 
-export function LivePreview({ data }: { data: NonNullable<LivePreviewData> }) {
+export function LivePreview({
+  data,
+  playerRef,
+  onPlayerReady,
+  controls = true,
+}: {
+  data: NonNullable<LivePreviewData>;
+  // A TIMELINE comanda: o EditorWorkspace segura o ref e liga play, agulha e
+  // mudo nele. Sem isso a previa tinha transporte proprio e o play da
+  // timeline parecia quebrado — foi o primeiro relato de uso real da 0.27.0.
+  playerRef?: React.RefObject<PlayerRef | null>;
+  onPlayerReady?: () => void;
+  controls?: boolean;
+}) {
   const [composition, setComposition] = useState<CompositionModule | null>(null);
+  const innerRef = useRef<PlayerRef | null>(null);
+  const readyNotified = useRef(false);
 
   useEffect(() => {
     // A base PRECEDE o import — ver o cabecalho. Trocar de projeto atualiza a
@@ -69,6 +86,19 @@ export function LivePreview({ data }: { data: NonNullable<LivePreviewData> }) {
   const fps = Number(data.editData.fps) || 30;
   const durationInFrames = Math.max(1, Math.round((Number(data.editData.durationSec) || 0) * fps));
 
+  // Avisa quando o Player EXISTE de verdade: a composicao chega por import
+  // dinamico e o ref so preenche depois. Sem o aviso, o EditorWorkspace
+  // tentaria pendurar os ouvintes num ref ainda nulo.
+  useEffect(() => {
+    // Uma vez por montagem do Player: sem a trava, o aviso rodaria a cada
+    // render e o setState de quem ouve viraria um laco infinito.
+    if (readyNotified.current) return;
+    if (composition && (playerRef?.current ?? innerRef.current)) {
+      readyNotified.current = true;
+      onPlayerReady?.();
+    }
+  });
+
   if (!composition) {
     return <div className="live-preview-loading">Preparando a prévia ao vivo…</div>;
   }
@@ -80,13 +110,15 @@ export function LivePreview({ data }: { data: NonNullable<LivePreviewData> }) {
     // rodada da bancada (24 fps e 30s de dados de amostra sobre o video real).
     <ProjectDataProvider value={value}>
       <Player
+        ref={(playerRef ?? innerRef) as React.Ref<PlayerRef>}
         component={Main}
         durationInFrames={durationInFrames}
         fps={fps}
         compositionWidth={width}
         compositionHeight={height}
         style={{ width: '100%', height: '100%' }}
-        controls
+        controls={controls}
+        clickToPlay
         acknowledgeRemotionLicense
         renderPoster={() => null}
         errorFallback={({ error }) => (

@@ -1222,6 +1222,30 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.27.1: A TIMELINE COMANDA A PRÉVIA AO VIVO. Primeiro relato de uso real da
+  0.27.0: "o play da timeline para de funcionar e apenas o play dentro do
+  palco funciona". Não era defeito — era o limite de onde o passo 3 parou:
+  dois players, cada um com transporte próprio. Agora o Player fica sem
+  controles (controls=false) e play, agulha, ±5s, passo de quadro e mudo da
+  timeline valem nos dois modos; a prévia devolve posição e estado por um
+  espelho de POLLING (setInterval 33ms lendo getCurrentFrame/isPlaying).
+  POR QUE POLLING E NÃO EVENTOS, E UMA ARMADILHA DE QA PARA NUNCA MAIS CAIR:
+  o addEventListener do PlayerRef parecia mudo e o relógio parecia travado —
+  na verdade o PAINEL do navegador da bancada estava OCULTO
+  (document.visibilityState=hidden, ZERO rAF em 2s, medido) e o relógio do
+  Remotion roda em requestAnimationFrame: congela em página oculta enquanto a
+  MÍDIA continua correndo por fora (vídeo andou 2,00s com o quadro parado em
+  0). Todo o "não funciona" da sessão de QA era oclusão, não produto. Regras:
+  (1) espelho por setInterval, que roda oculto; (2) em QA de Player, conferir
+  visibilityState ANTES de concluir qualquer coisa; (3) validar seek em página
+  oculta é legítimo (seekTo grava o quadro sem relógio) — validar PLAY não é.
+  Segunda armadilha, da mesma sessão: pointerdown SINTÉTICO sem pointerup
+  deixa o Player em scrub eterno; e .click() sintético não é ativação de
+  usuário para mídia com áudio. Cliques REAIS no QA de Player, sempre.
+  VERIFICADO oculto na bancada: +5s da timeline → seekTo → vídeo em 5,0s →
+  poll → agulha em 00:05:00 (o laço completo, nos dois sentidos). Etiqueta
+  fixa "Trilha sonora · −15 dB" da timeline também caiu (o volume real é
+  0,079 = −22 dB; a etiqueta mentia desde a mudança).
 - 0.27.0: PRÉVIA AO VIVO — a composição do render tocando DENTRO do app, sem
   gerar arquivo (passo 3 do editor de camadas). Chip Render/Ao vivo sobre o
   palco; começa em Render de propósito, até a prévia provar estabilidade no

@@ -76,7 +76,7 @@ import type {
   WhisperModelState,
 } from './shared';
 import { AI_CATALOG, catalogEntry, type AiCatalogEntry } from './ai-catalog';
-import { LivePreview } from './live-preview';
+import { LivePreview, type PlayerRef } from './live-preview';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
 import {
   VIDEO_TRACK_ID,
@@ -515,6 +515,20 @@ function EditorWorkspace({
     // timelineLoadStamp muda a cada turno/render aplicado: e o sinal de que o
     // edit-data pode ter mudado e a previa precisa de dados novos.
   }, [liveMode, liveDirectory, workspace?.timelineLoadStamp]);
+  // QUEM COMANDA A PREVIA E A TIMELINE. O Player fica sem controles proprios
+  // (controls=false) e o play/agulha/mudo de baixo valem para os dois modos —
+  // dois transportes na mesma tela foi o primeiro relato de confusao da
+  // 0.27.0. liveReady conta remontagens: o ref enche DEPOIS do import
+  // dinamico da composicao, e os ouvintes precisam esperar por ele.
+  const livePlayerRef = useRef<PlayerRef | null>(null);
+  const [liveReady, setLiveReady] = useState(0);
+  const liveActive = liveMode && Boolean(liveData);
+  const liveActiveRef = useRef(false);
+  liveActiveRef.current = liveActive;
+  const liveFps = liveData ? Number(liveData.editData.fps) || 30 : 0;
+  const liveFpsRef = useRef(30);
+  liveFpsRef.current = liveFps || 30;
+  const liveDuration = liveData ? Number(liveData.editData.durationSec) || 0 : 0;
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [markIn, setMarkIn] = useState<number | null>(null);
@@ -601,7 +615,9 @@ function EditorWorkspace({
   const mapped = (dirty || sourceMirror) && programme.length > 0;
   mappedRef.current = mapped;
   programmeRef.current = programme;
-  const effectiveDuration = mapped ? modelDuration : duration || timelineDuration || modelDuration;
+  const effectiveDuration = liveActive && liveDuration > 0
+    ? liveDuration
+    : mapped ? modelDuration : duration || timelineDuration || modelDuration;
   const fps = model?.fps ?? media?.fps ?? 30;
   const phase = media?.kind === 'final' || styleApplied ? 2 : 1;
   const overlays = workspace?.overlays ?? null;
@@ -810,6 +826,10 @@ function EditorWorkspace({
   function seek(value: number) {
     const nextTime = Math.max(0, Math.min(value, effectiveDuration || 0));
     syncCurrentTime(nextTime);
+    if (liveActiveRef.current) {
+      livePlayerRef.current?.seekTo(Math.round(nextTime * liveFpsRef.current));
+      return;
+    }
     if (!mapped) {
       if (videoRef.current) {
         try {
@@ -839,6 +859,10 @@ function EditorWorkspace({
   seekRef.current = seek;
 
   async function togglePlayback() {
+    if (liveActiveRef.current) {
+      livePlayerRef.current?.toggle();
+      return;
+    }
     if (mappedRef.current) {
       if (playingRef.current) {
         setPlaying(false);
@@ -899,15 +923,76 @@ function EditorWorkspace({
     setPlaying(false);
     playingRef.current = false;
     videoRef.current?.pause();
-    seek(currentTimeRef.current + frames / Math.max(fps, 1));
+    livePlayerRef.current?.pause();
+    const stepFps = liveActiveRef.current ? liveFpsRef.current : Math.max(fps, 1);
+    seek(currentTimeRef.current + frames / stepFps);
   }
 
   function toggleMute() {
+    if (liveActiveRef.current) {
+      const player = livePlayerRef.current;
+      if (!player) return;
+      if (player.isMuted()) player.unmute();
+      else player.mute();
+      setMuted(player.isMuted());
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     video.muted = !video.muted;
     setMuted(video.muted);
   }
+
+  // A PREVIA devolve o estado para a timeline: agulha segue o quadro, o botao
+  // de play espelha o player, e o fim volta o botao para play. Sem este
+  // efeito a agulha ficava morta no modo ao vivo — a metade que faltava do
+  // relato "o play da timeline parou de funcionar".
+  useEffect(() => {
+    if (!liveActive) return;
+    const player = livePlayerRef.current;
+    if (!player) return;
+    // Entrar no modo ao vivo carrega a posicao atual da agulha: o aluno
+    // continua olhando o MESMO instante, so que agora montado ao vivo.
+    player.seekTo(Math.round(currentTimeRef.current * liveFpsRef.current));
+    // POLLING, nao eventos. Os comandos do PlayerRef funcionam (play, seek),
+    // mas o addEventListener dele ficou mudo neste arranjo — medido na
+    // bancada: video andando e nenhum frameupdate entregue. Um raf lendo
+    // getCurrentFrame()/isPlaying() nao depende do emissor de ninguem, e e o
+    // mesmo custo de um listener de frame.
+    // setInterval e nao requestAnimationFrame: rAF PARA em janela oculta, e a
+    // agulha congelaria sempre que o app perdesse o foco — na bancada foi
+    // exatamente assim que o espelho "nao funcionava" sem nenhum erro.
+    const tick = () => {
+      const current = livePlayerRef.current;
+      if (!current) return;
+      const seconds = current.getCurrentFrame() / liveFpsRef.current;
+      if (Math.abs(seconds - currentTimeRef.current) > 0.0005) {
+        currentTimeRef.current = seconds;
+        setCurrentTime(seconds);
+      }
+      const isPlaying = current.isPlaying();
+      if (isPlaying !== playingRef.current) {
+        playingRef.current = isPlaying;
+        setPlaying(isPlaying);
+      }
+    };
+    const handle = window.setInterval(tick, 33);
+    return () => {
+      window.clearInterval(handle);
+      player.pause();
+    };
+    // liveReady re-executa quando o Player monta de verdade (import dinamico).
+  }, [liveActive, liveReady]);
+
+  // Trocar de modo nao pode deixar os DOIS tocando: o que sai, pausa.
+  useEffect(() => {
+    if (liveMode) {
+      videoRef.current?.pause();
+      setPlaying(false);
+    } else {
+      livePlayerRef.current?.pause();
+    }
+  }, [liveMode]);
 
   // Motor de reprodução: no modo normal a agulha segue o vídeo; no modo
   // mapeado o vídeo pula entre segmentos e um relógio próprio cobre os vazios.
@@ -1508,7 +1593,14 @@ function EditorWorkspace({
           {media && liveMode ? (
             <div className="live-stage" style={{ aspectRatio: `${media.width} / ${media.height}` }}>
               {liveData
-                ? <LivePreview data={liveData} />
+                ? (
+                  <LivePreview
+                    data={liveData}
+                    playerRef={livePlayerRef}
+                    onPlayerReady={() => setLiveReady((count) => count + 1)}
+                    controls={false}
+                  />
+                )
                 : (
                   <div className="video-placeholder">
                     <span><Icon name="video" /></span>
@@ -1730,7 +1822,7 @@ function EditorWorkspace({
             ))}
             {phase === 2 && style.elements.musicAI && (
               <TimelineTrack icon="music" label="Trilha" tone="olive">
-                <div className="timeline-chip music-chip" style={{ left: '0%', width: '100%' }}>Trilha sonora · −15 dB</div>
+                <div className="timeline-chip music-chip" style={{ left: '0%', width: '100%' }}>Trilha sonora</div>
               </TimelineTrack>
             )}
             {corrections.map((correction, index) => (
