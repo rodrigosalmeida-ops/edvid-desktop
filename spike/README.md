@@ -9,13 +9,22 @@ Nada aqui é produção. Se a resposta fosse não, era só apagar a pasta.
 
 ## Rodar
 
+**De dentro do repositório** — `~/Developer/edvid-desktop`. Os comandos são
+scripts do npm justamente por isso: o npm sempre roda a partir da raiz do
+pacote, então funcionam de qualquer subpasta. Fora do repositório o `npx vite`
+não encontra o Vite instalado e tenta BAIXAR a versão mais nova, que nem lê
+esta configuração.
+
 ```bash
-node spike/prepare.mjs "/caminho/do/projeto"
-npx vite --config spike/live-preview/vite.config.ts
+npm run spike:preparar -- "/caminho/do/projeto"
 ```
 
-`prepare.mjs` liga `spike/public` ao `edit/remotion/public` do projeto e traz as
-fontes do runtime compartilhado (que o app só copia na hora do render). Ele
+```bash
+npm run spike
+```
+
+`spike:preparar` liga `spike/public` ao `edit/remotion/public` do projeto e traz
+as fontes do runtime compartilhado (que o app só copia na hora do render). Ele
 também limpa o cache do Vite: sem isso, trocar de projeto mede o ANTERIOR e
 parece que mediu o novo.
 
@@ -48,5 +57,5 @@ desenhou mesmo — e a medida é descartada quando qualquer uma dispara.
 Para ver a recusa funcionando:
 
 ```bash
-EDVID_SPIKE_GRAFICOS=template npx vite --config spike/live-preview/vite.config.ts --port 4833
+npm run spike:quebrado
 ```
