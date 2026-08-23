@@ -38,6 +38,7 @@ import {
   promptWithFraming,
   type ImageUse,
 } from './image-format';
+import { applyEditOperations, type EditOperation } from './edit-data-edits';
 import {
   DEFAULT_TIER,
   TIER_LABEL,
@@ -5097,6 +5098,29 @@ function registerIpcHandlers(): void {
       bespokeGraphics: bespoke,
       layersReady,
     };
+  });
+
+  // MANIPULACAO DIRETA (0.28.0): o arrasto no palco ou na timeline vira uma
+  // operacao validada sobre o edit-data.json. Nada renderiza aqui — o aluno
+  // ajusta ao vivo e renderiza uma vez, no fim. A escrita e atomica (tmp +
+  // rename): um crash no meio nao pode deixar meio-JSON para o render ler.
+  ipcMain.handle('preview:edit', async (_event, input: { directory?: string; operations?: unknown }) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+    }
+    const operations = Array.isArray(input.operations) ? (input.operations as EditOperation[]) : [];
+    if (!operations.length) throw new Error('Nenhum ajuste para aplicar.');
+    const file = path.join(directory, 'edit', 'remotion', 'public', 'edit-data.json');
+    const data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const result = applyEditOperations(data, operations);
+    if (!result.ok) throw new Error(`Não consegui aplicar o ajuste: ${result.reason}.`);
+    if (result.changed) {
+      const temporary = `${file}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(result.data, null, 2)}\n`);
+      await rename(temporary, file);
+    }
+    return result.data;
   });
 
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {

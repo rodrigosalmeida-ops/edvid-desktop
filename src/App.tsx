@@ -77,6 +77,8 @@ import type {
 } from './shared';
 import { AI_CATALOG, catalogEntry, type AiCatalogEntry } from './ai-catalog';
 import { LivePreview, type PlayerRef } from './live-preview';
+import { activeSplitIndexAt, type EditOperation, type OverlayKind } from './edit-data-edits';
+import { SPLIT_DIVIDER } from './image-format';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
 import {
   VIDEO_TRACK_ID,
@@ -529,6 +531,46 @@ function EditorWorkspace({
   const liveFpsRef = useRef(30);
   liveFpsRef.current = liveFps || 30;
   const liveDuration = liveData ? Number(liveData.editData.durationSec) || 0 : 0;
+  // MANIPULACAO DIRETA (0.28.0). O arrasto muda o liveData na hora (a
+  // composicao re-renderiza sozinha — e React) e persiste no soltar. dirty
+  // acende o botao de renderizar: o render agora e UMA acao no fim, nao um
+  // efeito colateral de cada ajuste.
+  const [liveDirty, setLiveDirty] = useState(false);
+  const liveDataRef = useRef<typeof liveData>(null);
+  liveDataRef.current = liveData;
+  const overlayDragRef = useRef<{
+    kind: OverlayKind; index: number; mode: 'move' | 'start' | 'end';
+    grabOffset: number; moved: boolean;
+  } | null>(null);
+  const dividerDragRef = useRef<{ index: number; moved: boolean } | null>(null);
+
+  const applyLiveOperation = (operation: EditOperation, persist: boolean) => {
+    const atual = liveDataRef.current;
+    if (!atual) return;
+    // Otimista: a mesma mutacao do main roda aqui para o quadro responder ao
+    // mouse; o disco so e tocado no soltar.
+    import('./edit-data-edits').then(({ applyEditOperation }) => {
+      const result = applyEditOperation(atual.editData, operation);
+      if (!result.ok || !liveDataRef.current) return;
+      if (result.changed) {
+        setLiveData({ ...liveDataRef.current, editData: result.data });
+      }
+      if (persist && liveDirectory) {
+        window.edvidDesktop.applyPreviewEdits(liveDirectory, [operation])
+          .then((persisted) => {
+            if (liveDataRef.current) setLiveData({ ...liveDataRef.current, editData: persisted });
+            setLiveDirty(true);
+          })
+          .catch(() => {
+            // A escrita falhou: recarrega a verdade do disco em vez de deixar
+            // a tela mentindo um ajuste que nao existe.
+            if (liveDirectory) {
+              void window.edvidDesktop.getLivePreview(liveDirectory).then(setLiveData).catch(() => {});
+            }
+          });
+      }
+    }).catch(() => {});
+  };
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [markIn, setMarkIn] = useState<number | null>(null);
@@ -635,6 +677,91 @@ function EditorWorkspace({
       {clip.label}
     </div>
   );
+  // Chips EDITAVEIS do modo ao vivo: derivam do liveData (a mesma verdade que
+  // a composicao desenha), enderecados por (kind, index) do edit-data cru —
+  // o overlays do workspace achata as listas e nao daria para gravar de volta.
+  type LiveChip = { kind: OverlayKind; index: number; start: number; end: number; label: string };
+  const liveChips = useMemo(() => {
+    if (!liveActive || !liveData) return null;
+    const d = liveData.editData as Record<string, unknown>;
+    const rows = { animations: [] as LiveChip[], images: [] as LiveChip[], videos: [] as LiveChip[] };
+    const push = (row: keyof typeof rows, kind: OverlayKind, index: number, item: Record<string, unknown>, fallback: string) => {
+      const start = Number(item.start);
+      const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+      const label = String(item.label ?? '').trim()
+        || (typeof item.src === 'string' ? item.src.split('/').pop() ?? '' : '')
+        || fallback;
+      rows[row].push({ kind, index, start, end, label });
+    };
+    const list = (value: unknown) => (Array.isArray(value) ? (value as Record<string, unknown>[]) : []);
+    list(d.splits).forEach((item, index) => push(item.kind === 'video' ? 'videos' : 'images', 'splits', index, item, 'Tela dividida'));
+    list(d.inserts).forEach((item, index) => push('images', 'inserts', index, item, 'Insert'));
+    list(d.behind).forEach((item, index) => push('animations', 'behind', index, item, 'Atrás do sujeito'));
+    list(d.animations).forEach((item, index) => push('animations', 'animations', index, item, 'Animação'));
+    return rows;
+  }, [liveActive, liveData]);
+
+  // Tempo sob o ponteiro, medido na pista do proprio chip: a pista cobre a
+  // duracao inteira, entao a fracao horizontal E o tempo.
+  const timeAtPointer = (event: { clientX: number }, lane: HTMLElement | null): number => {
+    if (!lane || effectiveDuration <= 0) return 0;
+    const rect = lane.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    return ((event.clientX - rect.left) / rect.width) * effectiveDuration;
+  };
+
+  const overlayOperationFor = (drag: NonNullable<typeof overlayDragRef.current>, time: number): EditOperation =>
+    drag.mode === 'move'
+      ? { op: 'move', kind: drag.kind, index: drag.index, start: time - drag.grabOffset }
+      : { op: 'resize', kind: drag.kind, index: drag.index, edge: drag.mode, time };
+
+  const renderLiveChip = (chip: LiveChip, className: string) => {
+    const EDGE_PX = 9;
+    return (
+      <div
+        key={`${chip.kind}:${chip.index}`}
+        className={`timeline-chip ${className} editable`}
+        style={{
+          left: `${effectiveDuration > 0 ? (chip.start / effectiveDuration) * 100 : 0}%`,
+          width: `${effectiveDuration > 0 ? Math.max(1.5, ((chip.end - chip.start) / effectiveDuration) * 100) : 0}%`,
+        }}
+        title={`${chip.label} · ${formatTime(chip.end - chip.start)} — arraste para mover; as pontas redimensionam`}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const alvo = event.currentTarget;
+          const rect = alvo.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const mode = x <= EDGE_PX ? 'start' : x >= rect.width - EDGE_PX ? 'end' : 'move';
+          overlayDragRef.current = {
+            kind: chip.kind,
+            index: chip.index,
+            mode,
+            grabOffset: timeAtPointer(event, alvo.parentElement) - chip.start,
+            moved: false,
+          };
+          alvo.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const drag = overlayDragRef.current;
+          if (!drag) return;
+          drag.moved = true;
+          applyLiveOperation(overlayOperationFor(drag, timeAtPointer(event, event.currentTarget.parentElement)), false);
+        }}
+        onPointerUp={(event) => {
+          const drag = overlayDragRef.current;
+          overlayDragRef.current = null;
+          if (!drag || !drag.moved) return;
+          applyLiveOperation(overlayOperationFor(drag, timeAtPointer(event, event.currentTarget.parentElement)), true);
+        }}
+        onPointerCancel={() => { overlayDragRef.current = null; }}
+      >
+        {chip.label}
+      </div>
+    );
+  };
+
   const progress = effectiveDuration > 0 ? Math.min(1, currentTime / effectiveDuration) : 0;
   const activeSource = activeSourceId ? sourceById.get(activeSourceId) ?? null : null;
   const videoSrc = mapped ? activeSource?.url ?? undefined : media?.url;
@@ -1579,6 +1706,20 @@ function EditorWorkspace({
     <div className={`editor-workspace ${orientation}`}>
       <section className="preview-section">
         <div className={`video-stage ${orientation}`}>
+          {media && liveMode && liveDirty && (
+            <button
+              type="button"
+              className="live-render"
+              title="Os ajustes já valem na prévia. Renderizar gera o vídeo final com eles."
+              onClick={() => {
+                if (!liveDirectory) return;
+                setLiveDirty(false);
+                void window.edvidDesktop.renderPhase2(liveDirectory).catch(() => setLiveDirty(true));
+              }}
+            >
+              Renderizar edição
+            </button>
+          )}
           {media && (
             <button
               type="button"
@@ -1594,12 +1735,57 @@ function EditorWorkspace({
             <div className="live-stage" style={{ aspectRatio: `${media.width} / ${media.height}` }}>
               {liveData
                 ? (
+                  <>
                   <LivePreview
                     data={liveData}
                     playerRef={livePlayerRef}
                     onPlayerReady={() => setLiveReady((count) => count + 1)}
                     controls={false}
                   />
+                  {/* A ALCA DA DIVISA: aparece quando a agulha esta dentro de
+                      uma tela dividida. Arrastar move a divisa NO QUADRO — a
+                      composicao redesenha na hora porque o dado muda, nao
+                      porque ha algum truque de CSS por cima. */}
+                  {(() => {
+                    const splitIndex = activeSplitIndexAt(liveData.editData, currentTime);
+                    if (splitIndex < 0) return null;
+                    const splits = liveData.editData.splits as Array<Record<string, unknown>>;
+                    const divider = Number(splits[splitIndex]?.divider ?? SPLIT_DIVIDER);
+                    return (
+                      <div
+                        className="divider-handle"
+                        style={{ top: `${divider * 100}%` }}
+                        title="Arraste para mover a divisa da tela dividida"
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          dividerDragRef.current = { index: splitIndex, moved: false };
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerMove={(event) => {
+                          const drag = dividerDragRef.current;
+                          const palco = event.currentTarget.parentElement;
+                          if (!drag || !palco) return;
+                          drag.moved = true;
+                          const rect = palco.getBoundingClientRect();
+                          const fraction = (event.clientY - rect.top) / Math.max(1, rect.height);
+                          applyLiveOperation({ op: 'set-divider', index: drag.index, divider: fraction }, false);
+                        }}
+                        onPointerUp={(event) => {
+                          const drag = dividerDragRef.current;
+                          dividerDragRef.current = null;
+                          const palco = event.currentTarget.parentElement;
+                          if (!drag || !drag.moved || !palco) return;
+                          const rect = palco.getBoundingClientRect();
+                          const fraction = (event.clientY - rect.top) / Math.max(1, rect.height);
+                          applyLiveOperation({ op: 'set-divider', index: drag.index, divider: fraction }, true);
+                        }}
+                        onPointerCancel={() => { dividerDragRef.current = null; }}
+                      >
+                        <span />
+                      </div>
+                    );
+                  })()}
+                  </>
                 )
                 : (
                   <div className="video-placeholder">
@@ -1754,19 +1940,25 @@ function EditorWorkspace({
                 </div>
               </TimelineTrack>
             )}
-            {overlays && overlays.animations.length > 0 && (
+            {(liveChips ? liveChips.animations.length > 0 : Boolean(overlays && overlays.animations.length > 0)) && (
               <TimelineTrack icon="sparkles" label="Animações" tone="olive">
-                {overlays.animations.map((clip, index) => renderOverlayChip(clip, index, 'animation-chip'))}
+                {liveChips
+                  ? liveChips.animations.map((chip) => renderLiveChip(chip, 'animation-chip'))
+                  : overlays?.animations.map((clip, index) => renderOverlayChip(clip, index, 'animation-chip'))}
               </TimelineTrack>
             )}
-            {overlays && overlays.images.length > 0 && (
+            {(liveChips ? liveChips.images.length > 0 : Boolean(overlays && overlays.images.length > 0)) && (
               <TimelineTrack icon="image" label="Imagem" tone="green">
-                {overlays.images.map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
+                {liveChips
+                  ? liveChips.images.map((chip) => renderLiveChip(chip, 'image-chip'))
+                  : overlays?.images.map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
               </TimelineTrack>
             )}
-            {overlays && overlays.videos.length > 0 && (
+            {(liveChips ? liveChips.videos.length > 0 : Boolean(overlays && overlays.videos.length > 0)) && (
               <TimelineTrack icon="video" label="Vídeo" tone="green">
-                {overlays.videos.map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
+                {liveChips
+                  ? liveChips.videos.map((chip) => renderLiveChip(chip, 'image-chip'))
+                  : overlays?.videos.map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
               </TimelineTrack>
             )}
             <TimelineTrack icon="video" label="Vídeo" tone="orange">

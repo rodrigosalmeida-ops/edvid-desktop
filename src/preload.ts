@@ -48,6 +48,7 @@ const api: EdvidDesktopApi = {
   fulfillImageRequests: (directory) => ipcRenderer.invoke('image:fulfill', { directory }),
   fulfillVideoRequests: (directory) => ipcRenderer.invoke('video:fulfill', { directory }),
   getLivePreview: (directory) => ipcRenderer.invoke('preview:data', { directory }),
+  applyPreviewEdits: (directory, operations) => ipcRenderer.invoke('preview:edit', { directory, operations }),
   fulfillMusicRequests: (directory) => ipcRenderer.invoke('music:fulfill', { directory }),
   applyJcut: (directory) => ipcRenderer.invoke('jcut:apply', { directory }),
   syncJcut: (directory) => ipcRenderer.invoke('jcut:sync', { directory }),

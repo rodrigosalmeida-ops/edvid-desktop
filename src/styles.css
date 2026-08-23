@@ -857,3 +857,46 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   border: 1px solid var(--stroke); color: #c8cfd9; font-size: 11px; line-height: 1.4;
   backdrop-filter: blur(6px);
 }
+
+/* --- Manipulação direta (0.28.0) -------------------------------------------
+   Chip editável: o cursor diz o que cada região faz. As pontas têm alças
+   visíveis no hover — sem elas ninguém descobre que dá para redimensionar. */
+.timeline-chip.editable { cursor: grab; touch-action: none; user-select: none; }
+.timeline-chip.editable:active { cursor: grabbing; }
+.timeline-chip.editable::before, .timeline-chip.editable::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 9px; opacity: 0;
+  transition: opacity .12s ease;
+}
+.timeline-chip.editable::before { left: 0; cursor: w-resize; border-left: 3px solid rgba(255,255,255,.75); border-radius: 6px 0 0 6px; }
+.timeline-chip.editable::after { right: 0; cursor: e-resize; border-right: 3px solid rgba(255,255,255,.75); border-radius: 0 6px 6px 0; }
+.timeline-chip.editable:hover::before, .timeline-chip.editable:hover::after { opacity: 1; }
+
+/* A alça da divisa: uma linha discreta que vira pegada no hover. O vermelho
+   do "ao vivo" não — laranja de edição, é ferramenta e não estado. */
+.divider-handle {
+  position: absolute; left: 0; right: 0; height: 22px; margin-top: -11px;
+  z-index: 6; cursor: ns-resize; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.divider-handle span {
+  width: 100%; height: 2px; background: rgba(255,119,19,.0);
+  transition: background .12s ease; position: relative;
+}
+.divider-handle:hover span, .divider-handle:active span { background: rgba(255,119,19,.85); }
+.divider-handle span::after {
+  content: ''; position: absolute; left: 50%; top: 50%; translate: -50% -50%;
+  width: 38px; height: 12px; border-radius: 999px;
+  background: rgba(10,11,14,.85); border: 1px solid rgba(255,119,19,.55);
+  opacity: 0; transition: opacity .12s ease;
+}
+.divider-handle:hover span::after, .divider-handle:active span::after { opacity: 1; }
+
+/* Renderizar: aparece só com ajuste manual pendente, ao lado do chip. */
+.live-render {
+  position: absolute; top: 10px; right: 106px; z-index: 5;
+  padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255,119,19,.5); background: rgba(31,17,8,.85);
+  color: #ffd2b0; font: inherit; font-size: 10.5px; font-weight: 800;
+  letter-spacing: .4px; text-transform: uppercase; backdrop-filter: blur(6px);
+}
+.live-render:hover { background: rgba(56,27,10,.9); }

@@ -451,6 +451,12 @@ export type EdvidDesktopApi = {
   fulfillImageRequests: (directory: string) => Promise<ImageGenState>;
   fulfillVideoRequests: (directory: string) => Promise<ImageGenState>;
   getLivePreview: (directory: string) => Promise<LivePreviewData>;
+  // Manipulacao direta: aplica operacoes validadas no edit-data.json e devolve
+  // o documento novo. Nada renderiza — o render acontece uma vez, no fim.
+  applyPreviewEdits: (
+    directory: string,
+    operations: import('./edit-data-edits').EditOperation[],
+  ) => Promise<Record<string, unknown>>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;

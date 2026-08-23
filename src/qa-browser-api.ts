@@ -134,6 +134,8 @@ let qaChatGptConnected = !qaSearch().has('ia') && !qaSearch().has('semchatgpt');
 // Com ?hub o Higgsfield ja atende imagem e video, que e o estado interessante
 // de testar: o seletor com um hub escolhido em vez de vazio.
 const qaHubRole = new URLSearchParams(window.location.search).has('hub') ? 'higgsfield' : null;
+// edit-data vivo da bancada ?aovivo: os arrastos mutam ESTA cópia.
+let qaLiveEditData: Record<string, unknown> | null = null;
 let qaRoles: AiRolesState = { chat: 'chatgpt', image: null, imageCatalog: qaHubRole, chatPinned: false, imagePinned: false,
   videoCatalog: qaHubRole, tiers: { imagem: DEFAULT_TIER.imagem, video: DEFAULT_TIER.video } };
 const rolesListeners = new Set<(state: AiRolesState) => void>();
@@ -291,6 +293,16 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     // atravessando o proxy /edvid-preview/qa do vite. Sem o spike, devolve
     // null e a interface mostra o estado indisponível — que também é um
     // estado a testar.
+    // QA da manipulação direta: aplica as MESMAS mutações do main sobre o
+    // edit-data em memória — o arrasto na bancada mexe de verdade na prévia.
+    applyPreviewEdits: async (_directory, operations) => {
+      const { applyEditOperations } = await import('./edit-data-edits');
+      const atual = qaLiveEditData ?? {};
+      const result = applyEditOperations(atual, operations);
+      if (!result.ok) throw new Error(result.reason);
+      qaLiveEditData = result.data;
+      return result.data;
+    },
     getLivePreview: async () => {
       if (!qaSearch().has('aovivo')) return null;
       const base = '/edvid-preview/qa';
@@ -300,7 +312,9 @@ export function createQaBrowserApi(): EdvidDesktopApi {
         return response.json() as Promise<unknown>;
       };
       try {
-        const editData = (await grab('edit-data.json')) as Record<string, unknown>;
+        const editData = qaLiveEditData
+          ?? ((await grab('edit-data.json')) as Record<string, unknown>);
+        qaLiveEditData = editData;
         const [captions, segments, track, cues] = await Promise.all([
           grab('captions.json').catch(() => []),
           grab('segments.json').catch(() => ({ segments: [{ start: 0, dur: Number(editData.durationSec) || 0 }] })),

@@ -1,7 +1,7 @@
 {
   "name": "@edvid/desktop",
   "productName": "Edvid",
-  "version": "0.27.1",
+  "version": "0.28.0",
   "description": "Aplicativo desktop do editor de video por conversa Edvid",
   "main": ".vite/build/main.js",
   "private": true,
@@ -38,6 +38,7 @@
     "test:phase2-preview": "node scripts/test-phase2-preview.mjs",
     "test:generation-tier": "node scripts/test-generation-tier.mjs",
     "test:hub-generation": "node scripts/test-hub-generation.mjs",
+    "test:edit-data-edits": "node scripts/test-edit-data-edits.mjs",
     "test:ffmpeg-alpha": "node scripts/test-ffmpeg-alpha.mjs",
     "test:graphic-layers": "node scripts/test-graphic-layers.mjs",
     "spike:preparar": "node spike/prepare.mjs",

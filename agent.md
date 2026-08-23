@@ -1222,6 +1222,36 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.28.0: MANIPULAÇÃO DIRETA (passo 4, primeira metade) — arrastar em vez de
+  pedir. No modo Ao vivo: a DIVISA da tela dividida ganha uma alça no próprio
+  palco (aparece quando a agulha está dentro de um split; arrastar redesenha a
+  composição na hora, porque o DADO muda — não há truque de CSS por cima); os
+  chips de imagem/vídeo/animação da timeline ficam EDITÁVEIS (corpo move
+  preservando duração, pontas redimensionam com mínimo de 0,2s); clicar na
+  régua move o palco. Nada disso renderiza: o botão "Renderizar edição"
+  aparece quando há ajuste manual pendente e chama o phase2:render UMA vez.
+  As mutações são um módulo PURO (src/edit-data-edits.ts) com teste
+  (test:edit-data-edits): mover preserva duração, behind grava {start,dur} e
+  NUNCA ganha um campo end (o template lê dur — um end fantasma viraria NaN
+  no render), lote é atômico, nada inválido chega ao disco, e o objeto
+  original nunca é mutado (é o desfazer otimista da interface). A escrita no
+  main é tmp+rename: crash no meio não deixa meio-JSON para o render ler.
+  O arrasto é OTIMISTA: a mesma mutação roda no renderer para o quadro seguir
+  o mouse, e o disco só é tocado no soltar; se a escrita falhar, recarrega a
+  verdade do disco em vez de deixar a tela mentindo.
+  Os chips editáveis derivam do liveData (kind+index do edit-data CRU) — o
+  overlays do workspace achata as listas e não daria para gravar de volta.
+  writeEditData já preservava os campos criativos por spread: reaplicar
+  estilos NÃO apaga ajustes manuais (conferido antes de construir).
+  VERIFICADO na bancada com o teste27 real: chip movido de 28,7% para 39,4%
+  com largura intacta, divisa de 39% para 58,9% com a composição redesenhando,
+  agulha da régua comandando o palco. Detalhe de método: a escala do
+  screenshot da bancada era 0,625 e não 0,5 — o primeiro arrasto da divisa
+  caiu FORA da alça e parecia defeito do código; sonda de eventos no elemento
+  resolveu em dois minutos o que a releitura do código não teria resolvido.
+  Projetos da geração antiga (tela dividida via splitInserts no
+  CustomGraphics, ex.: Rodrigo DN.IA) não têm splits no edit-data e portanto
+  não ganham chips editáveis — o caminho deles é o gráfico pré-renderizado.
 - 0.27.1: A TIMELINE COMANDA A PRÉVIA AO VIVO. Primeiro relato de uso real da
   0.27.0: "o play da timeline para de funcionar e apenas o play dentro do
   palco funciona". Não era defeito — era o limite de onde o passo 3 parou:
@@ -2412,6 +2442,7 @@ npm run test:project-files
 npm run test:clean-cut-pipeline
 npm run test:generation-tier
 npm run test:hub-generation
+npm run test:edit-data-edits
 npm run test:ffmpeg-alpha
 npm run test:graphic-layers
 EDVID_TEST_VIDEO=<um vídeo falado> npm run test:clean-cut-live
