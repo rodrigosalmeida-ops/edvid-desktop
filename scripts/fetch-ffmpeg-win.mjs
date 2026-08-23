@@ -94,6 +94,19 @@ try {
     throw new Error('ffmpeg.exe/ffprobe.exe ausentes no zip BtbN.');
   }
 
+  // O .exe nao roda aqui (o fetch roda no mac e no CI), mas a linha de
+  // configuracao fica gravada como texto dentro do binario — e da para exigir
+  // dela o que o Edvid depende. O build do mac VALIDA executando; este valida
+  // lendo. Sem isto, um pin novo do BtbN sem libvpx passaria calado e o
+  // grafico com alpha quebraria so no Windows, que e onde ninguem aqui testa
+  // todo dia.
+  const binaryText = (await readFile(builtFfmpeg)).toString('latin1');
+  for (const flag of ['--enable-gpl', '--enable-libx264', '--enable-libvpx']) {
+    if (!binaryText.includes(flag)) {
+      throw new Error(`O build BtbN pinado nao registra ${flag} na configuracao.`);
+    }
+  }
+
   await rm(runtimeDestination, { recursive: true, force: true });
   await mkdir(path.join(runtimeDestination, 'bin'), { recursive: true });
   await cp(builtFfmpeg, path.join(runtimeDestination, 'bin', 'ffmpeg.exe'));

@@ -30,15 +30,27 @@ const jobs = String(Math.min(8, availableParallelism()));
 const x264Repository = 'https://code.videolan.org/videolan/x264.git';
 const x264Commit = '0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee';
 
+// libvpx (VP9): o unico codec COM ALPHA que o Chromium decodifica. E o que
+// permite pre-renderizar um grafico transparente e toca-lo na previa ao vivo
+// — o ProRes 4444, que ja sai daqui, o Chromium nao abre. Licenca BSD-3,
+// compativel com o GPL do conjunto. Pin no commit da v1.16.0, mesmo padrao do
+// x264: tag e ponteiro movel, commit nao.
+const libvpxRepository = 'https://chromium.googlesource.com/webm/libvpx';
+const libvpxCommit = '1024874c5919305883187e2953de8fcb4c3d7fa6';
+
 const cacheRoot = path.join(desktopRoot, '.runtime-cache');
 const ffmpegCache = path.join(cacheRoot, 'ffmpeg', ffmpegVersion);
 const ffmpegSource = path.join(ffmpegCache, 'source');
 const sourceMetadataPath = path.join(ffmpegCache, 'source-metadata.json');
 const x264Cache = path.join(cacheRoot, 'x264', x264Commit);
 const x264Source = path.join(x264Cache, 'source');
+const libvpxCache = path.join(cacheRoot, 'libvpx', libvpxCommit);
+const libvpxSource = path.join(libvpxCache, 'source');
 const buildRoot = path.join(ffmpegCache, 'build', target);
 const x264Build = path.join(buildRoot, 'x264');
 const x264Prefix = path.join(buildRoot, 'x264-install');
+const libvpxBuild = path.join(buildRoot, 'libvpx');
+const libvpxPrefix = path.join(buildRoot, 'libvpx-install');
 const ffmpegBuild = path.join(buildRoot, 'ffmpeg');
 const ffmpegPrefix = path.join(buildRoot, 'ffmpeg-install');
 const runtimeDestination = path.join(
@@ -115,6 +127,25 @@ async function prepareX264Source() {
   }
 }
 
+async function prepareLibvpxSource() {
+  if (!(await exists(path.join(libvpxSource, '.git')))) {
+    await rm(libvpxSource, { recursive: true, force: true });
+    await mkdir(libvpxCache, { recursive: true });
+    run('git', ['clone', '--filter=blob:none', '--no-checkout', libvpxRepository, libvpxSource]);
+    run('git', ['-C', libvpxSource, 'fetch', '--depth=1', 'origin', libvpxCommit]);
+    run('git', ['-C', libvpxSource, 'checkout', '--detach', libvpxCommit]);
+  }
+
+  const resolvedCommit = run(
+    'git',
+    ['-C', libvpxSource, 'rev-parse', 'HEAD'],
+    { capture: true },
+  ).trim();
+  if (resolvedCommit !== libvpxCommit) {
+    throw new Error(`Revisao libvpx inesperada: ${resolvedCommit}`);
+  }
+}
+
 async function validateDynamicLibraries(binaryPath) {
   const output = run('otool', ['-L', binaryPath], { capture: true });
   const dependencies = output
@@ -143,9 +174,13 @@ async function validateBuild(ffmpegPath, ffprobePath) {
   if (!versionOutput.includes('--enable-gpl') || !versionOutput.includes('--enable-libx264')) {
     throw new Error('O FFmpeg nao registra GPL e libx264 na configuracao.');
   }
+  if (!versionOutput.includes('--enable-libvpx')) {
+    throw new Error('O FFmpeg nao registra libvpx na configuracao.');
+  }
 
   const encoders = run(ffmpegPath, ['-hide_banner', '-encoders'], { capture: true });
   if (!/\blibx264\b/u.test(encoders)) throw new Error('Encoder libx264 ausente.');
+  if (!/\blibvpx-vp9\b/u.test(encoders)) throw new Error('Encoder libvpx-vp9 ausente.');
 
   const filters = run(ffmpegPath, ['-hide_banner', '-filters'], { capture: true });
   if (!/\bdeesser\b/u.test(filters)) throw new Error('Filtro deesser ausente.');
@@ -195,6 +230,59 @@ async function validateBuild(ffmpegPath, ffprobePath) {
     if (!probe.includes('h264') || !probe.includes('aac')) {
       throw new Error(`Smoke test produziu codecs inesperados:\n${probe}`);
     }
+
+    // VP9 COM ALPHA — a razao de o libvpx existir neste build. Gera um video
+    // metade opaco, metade transparente, e faz a VOLTA COMPLETA: decodifica e
+    // exige os dois extremos no canal. Encoder presente nao garante alpha de
+    // verdade, e um WebM sem alpha na previa viraria um quadrado preto por
+    // cima do video do aluno.
+    //
+    // MEDIDO no proprio build: o WebM guarda o alpha do VP9 num canal LATERAL.
+    // O ffprobe com o decodificador nativo responde pix_fmt=yuv420p (sem o
+    // "a") e marca a presenca em TAG:alpha_mode=1 — foi o que reprovou a
+    // primeira versao deste smoke, que perguntava pelo pix_fmt e condenou um
+    // binario perfeitamente bom. A extracao exige decodificar com
+    // -c:v libvpx-vp9.
+    const alphaVideo = path.join(smokeDirectory, 'alpha.webm');
+    run(ffmpegPath, [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-f', 'lavfi',
+      '-i', 'color=red:size=320x180:rate=30,format=rgba,geq=r=r(X\\,Y):g=g(X\\,Y):b=b(X\\,Y):a=if(lt(X\\,160)\\,255\\,0)',
+      '-t', '0.5',
+      '-c:v', 'libvpx-vp9',
+      '-pix_fmt', 'yuva420p',
+      '-b:v', '500k',
+      alphaVideo,
+    ]);
+    const alphaProbe = run(
+      ffprobePath,
+      ['-v', 'error', '-show_entries', 'stream=codec_name:stream_tags=alpha_mode', '-of', 'csv=p=0', alphaVideo],
+      { capture: true },
+    ).trim();
+    if (!alphaProbe.includes('vp9') || !alphaProbe.includes('1')) {
+      throw new Error(`O WebM nao registra vp9 com alpha_mode=1:\n${alphaProbe}`);
+    }
+    const alphaDump = path.join(smokeDirectory, 'alpha-frame.png');
+    run(ffmpegPath, [
+      '-hide_banner', '-loglevel', 'error',
+      '-c:v', 'libvpx-vp9',
+      '-i', alphaVideo,
+      '-vf', 'alphaextract',
+      '-frames:v', '1',
+      alphaDump,
+    ]);
+    const extremes = run(ffprobePath, [
+      '-v', 'error',
+      '-f', 'lavfi',
+      '-i', `movie=${alphaDump},signalstats`,
+      '-show_entries', 'frame_tags=lavfi.signalstats.YMIN,lavfi.signalstats.YMAX',
+      '-of', 'csv=p=0',
+    ], { capture: true }).trim();
+    const [ymin, ymax] = extremes.split(',').map(Number);
+    if (!(ymin <= 16 && ymax >= 230)) {
+      throw new Error(`O canal alpha do VP9 nao tem os dois extremos (YMIN=${ymin}, YMAX=${ymax}).`);
+    }
   } finally {
     await rm(smokeDirectory, { recursive: true, force: true });
   }
@@ -226,7 +314,8 @@ if (
     if (
       existingMetadata.target === target &&
       existingMetadata.ffmpeg?.version === ffmpegVersion &&
-      existingMetadata.x264?.commit === x264Commit
+      existingMetadata.x264?.commit === x264Commit &&
+      existingMetadata.libvpx?.commit === libvpxCommit
     ) {
       await validateBuild(existingFfmpeg, existingFfprobe);
       console.log(`FFmpeg ${ffmpegVersion} ja esta preparado e validado para ${target}.`);
@@ -265,11 +354,45 @@ run(
 run('make', [`-j${jobs}`], { cwd: x264Build, env: commonEnvironment });
 run('make', ['install'], { cwd: x264Build, env: commonEnvironment });
 
+await prepareLibvpxSource();
+await cp(libvpxSource, libvpxBuild, {
+  recursive: true,
+  filter: (source) => path.basename(source) !== '.git',
+});
+run(
+  './configure',
+  [
+    `--prefix=${libvpxPrefix}`,
+    // darwin21 = macOS 12, o MESMO alvo de implantacao do restante do build
+    // (deploymentTarget la em cima). O sufixo escolhe o -mmacosx-version-min
+    // que o libvpx usa; divergir daqui geraria uma biblioteca pedindo um macOS
+    // diferente do que o ffmpeg promete.
+    '--target=arm64-darwin21-gcc',
+    '--enable-static',
+    '--disable-shared',
+    '--enable-pic',
+    '--enable-vp9',
+    '--enable-vp8',
+    // Sem ferramentas nem testes: so a biblioteca que o FFmpeg linka.
+    '--disable-examples',
+    '--disable-tools',
+    '--disable-docs',
+    '--disable-unit-tests',
+  ],
+  { cwd: libvpxBuild, env: commonEnvironment },
+);
+run('make', [`-j${jobs}`], { cwd: libvpxBuild, env: commonEnvironment });
+run('make', ['install'], { cwd: libvpxBuild, env: commonEnvironment });
+
 await mkdir(ffmpegBuild, { recursive: true });
+const pkgconfigPaths = [
+  path.join(x264Prefix, 'lib', 'pkgconfig'),
+  path.join(libvpxPrefix, 'lib', 'pkgconfig'),
+].join(path.delimiter);
 const ffmpegEnvironment = {
   ...commonEnvironment,
-  PKG_CONFIG_PATH: path.join(x264Prefix, 'lib', 'pkgconfig'),
-  PKG_CONFIG_LIBDIR: path.join(x264Prefix, 'lib', 'pkgconfig'),
+  PKG_CONFIG_PATH: pkgconfigPaths,
+  PKG_CONFIG_LIBDIR: pkgconfigPaths,
 };
 const configureFlags = [
   `--prefix=${ffmpegPrefix}`,
@@ -285,6 +408,7 @@ const configureFlags = [
   '--enable-pic',
   '--enable-gpl',
   '--enable-libx264',
+  '--enable-libvpx',
   '--enable-pthreads',
   '--enable-zlib',
   '--enable-bzlib',
@@ -294,8 +418,8 @@ const configureFlags = [
   '--enable-videotoolbox',
   '--pkg-config-flags=--static',
   '--extra-libs=-liconv',
-  `--extra-cflags=-I${path.join(x264Prefix, 'include')} -mmacosx-version-min=${deploymentTarget}`,
-  `--extra-ldflags=-L${path.join(x264Prefix, 'lib')} -mmacosx-version-min=${deploymentTarget}`,
+  `--extra-cflags=-I${path.join(x264Prefix, 'include')} -I${path.join(libvpxPrefix, 'include')} -mmacosx-version-min=${deploymentTarget}`,
+  `--extra-ldflags=-L${path.join(x264Prefix, 'lib')} -L${path.join(libvpxPrefix, 'lib')} -mmacosx-version-min=${deploymentTarget}`,
 ];
 run(path.join(ffmpegSource, 'configure'), configureFlags, {
   cwd: ffmpegBuild,
@@ -328,6 +452,13 @@ await cp(
   path.join(x264Source, 'COPYING'),
   path.join(licenseDestination, 'x264', 'COPYING'),
 );
+await mkdir(path.join(licenseDestination, 'libvpx'), { recursive: true });
+for (const license of ['LICENSE', 'PATENTS']) {
+  await cp(
+    path.join(libvpxSource, license),
+    path.join(licenseDestination, 'libvpx', license),
+  );
+}
 
 const installedFfmpeg = path.join(runtimeDestination, 'bin', 'ffmpeg');
 const installedFfprobe = path.join(runtimeDestination, 'bin', 'ffprobe');
@@ -352,6 +483,11 @@ await writeFile(
       x264: {
         repository: x264Repository,
         commit: x264Commit,
+      },
+      libvpx: {
+        repository: libvpxRepository,
+        commit: libvpxCommit,
+        version: 'v1.16.0',
       },
       toolchain: run('/usr/bin/clang', ['--version'], { capture: true })
         .split(/\r?\n/u)[0],

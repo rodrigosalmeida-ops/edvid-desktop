@@ -111,6 +111,15 @@ Versões atuais:
 - FFmpeg compartilhado 7.1.5 para TorchCodec
 - Filtro `deesser` incluído no FFmpeg
 - `libx264` disponível
+- `libvpx` v1.16.0 (VP8/VP9) — o único codec COM ALPHA que o Chromium
+  decodifica; existe para os gráficos transparentes pré-renderizados da prévia
+  ao vivo. No mac é compilado da fonte (pin por commit, como o x264); no
+  Windows o build BtbN já vem com ele, e o fetch valida `--enable-libvpx` lendo
+  a configuração gravada no .exe. O smoke do build faz a volta completa de um
+  WebM com alpha — atenção: o WebM guarda o alpha do VP9 num canal LATERAL, o
+  ffprobe nativo responde `yuv420p` + `TAG:alpha_mode=1`, e extrair exige
+  decodificar com `-c:v libvpx-vp9`. A primeira versão do smoke perguntava pelo
+  pix_fmt e condenou um binário bom.
 - uv 0.12.3
 - yt-dlp 2026.07.04
 - Python 3.12.13
@@ -1213,6 +1222,33 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.25.0: LIBVPX NO FFMPEG (VP9 com alpha) — infraestrutura da prévia ao vivo.
+  O Chromium não decodifica ProRes 4444 nem qtrle, os dois únicos jeitos que o
+  build tinha de carregar alpha; sem VP9, um gráfico transparente
+  pré-renderizado não tem como tocar no preview. mac: libvpx v1.16.0 compilado
+  da fonte, pin por COMMIT (1024874c…) no padrão do x264, alvo
+  arm64-darwin21-gcc = macOS 12, o mesmo deploymentTarget do resto. Windows: o
+  BtbN pinado JÁ TEM --enable-libvpx (medido lendo a configuração gravada no
+  .exe); o fetch agora VALIDA isso, senão um pin futuro sem vpx passaria calado
+  e quebraria só no Windows.
+  O smoke de alpha faz a volta completa (codifica meio-transparente, decodifica,
+  exige YMIN≤16 e YMAX≥230) — e a primeira versão dele CONDENOU UM BINÁRIO BOM:
+  o WebM guarda o alpha do VP9 num canal LATERAL, o ffprobe nativo responde
+  pix_fmt=yuv420p com TAG:alpha_mode=1, e extrair exige decodificar com
+  -c:v libvpx-vp9. A validação segurou o stage nas duas direções: reprovou
+  quando devia (e quando não devia, até eu corrigir a sonda) e nunca deixou um
+  runtime meio-validado no lugar.
+  MEDIDO no gráfico real da bancada: ProRes 4444 de 15s = 105 MB; o MESMO
+  gráfico em VP9/WebM com alpha = 0,2 MB (500x), convertido em 4,9s com
+  -crf 32 -deadline good -cpu-used 2 -row-mt 1 e -an (webm exigiria vorbis,
+  que o build não tem — a camada de preview é só vídeo, o som fica na
+  composição). Verificado no Chromium de verdade: o cartão flutua sobre um
+  fundo xadrez, sem quadrado preto.
+  ENTREGA: runtime-manifest.json mudou "distribution" do ffmpeg/ffprobe para
+  source-build-gpl-libx264-libvpx — é isso que muda a CHAVE do runtime pack;
+  o app novo baixa o pacote novo e quem não atualizou continua com o antigo
+  (invariante 3 da faxina do R2). Licenças BSD do libvpx (LICENSE + PATENTS)
+  entram no pacote.
 - 0.24.0: HUB DE GERAÇÃO POR MCP (Higgsfield) — imagem e vídeo pela conta do
   aluno, com nível de qualidade escolhido nas Configurações.
   QUEM É O CLIENTE MCP: o APP, não o agente. Dava para plugar nos três agentes
