@@ -114,7 +114,21 @@ const qaWorkspace: ProjectWorkspace = {
       available: true,
     },
   ],
-  style: null,
+  // Projeto com ESTILOS APLICADOS: é o estado em que as faixas de Legendas e
+  // Texto existem na timeline (elas dependem do estilo salvo, não do
+  // edit-data) — e sem elas não há o que selecionar nem ajustar no palco.
+  style: {
+    edit: 'split',
+    headline: 'outline',
+    headlineText: 'O ChatGPT agora edita seus vídeos',
+    captions: 'stacked',
+    accent: '#ff5200',
+    elements: {
+      tracking: true, zoomAuto: true, zoomCuts: true, flashCut: true,
+      musicAI: false,
+    },
+    note: '',
+  },
   // Tracks de overlay no QA visual: um exemplar de cada tipo.
   overlays: {
     hookEnd: 3.2,

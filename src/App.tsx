@@ -608,6 +608,12 @@ function EditorWorkspace({
 
 
   const dividerDragRef = useRef<{ index: number; moved: boolean } | null>(null);
+  const textDragRef = useRef<{
+    mode: 'move' | 'scale'; startY: number; basePadding: number; baseCorpo: number;
+    centerY: number; startDist: number; moved: boolean;
+    alturaComposicao: number; alturaPalco: number;
+  } | null>(null);
+  const [headlineDraft, setHeadlineDraft] = useState<string | null>(null);
 
   const applyLiveOperation = (operation: EditOperation, persist: boolean) => {
     const atual = liveDataRef.current;
@@ -731,6 +737,49 @@ function EditorWorkspace({
     onCutsPendingChange(dirty);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty]);
+  // Caixa do TEXTO (legenda/headline) no quadro, em frações. Não há x/y no
+  // arquivo: a posição sai dos tunáveis que o template respeita —
+  // paddingBottom/fontSize na legenda, paddingTop/maxFontPx na headline.
+  const textRegion = (kind: 'captions' | 'headline') => {
+    const d = (liveData?.editData ?? {}) as Record<string, unknown>;
+    const altura = Number(d.height) || 1920;
+    if (kind === 'captions') {
+      const c = (d.captions ?? {}) as Record<string, unknown>;
+      const fonte = Number(c.fontSize) || 61;
+      const base = Number(c.paddingBottom) || 420;
+      const alturaCaixa = (fonte * 1.6) / altura;
+      return { x: 0.06, y: 1 - base / altura - alturaCaixa, w: 0.88, h: alturaCaixa };
+    }
+    const h = (d.hook ?? {}) as Record<string, unknown>;
+    const corpo = Number(h.maxFontPx ?? h.fontSizePx) || 51;
+    const topo = Number(h.paddingTop) || 330;
+    const alturaCaixa = (corpo * 2.3) / altura;
+    return { x: 0.06, y: topo / altura, w: 0.88, h: alturaCaixa };
+  };
+
+  const selectedText = useMemo(() => {
+    if (!liveActive || !liveData || !selectedElement) return null;
+    if (selectedElement.kind !== 'captions' && selectedElement.kind !== 'headline') return null;
+    const d = liveData.editData as Record<string, unknown>;
+    const alvo = (selectedElement.kind === 'captions' ? d.captions : d.hook) as Record<string, unknown> | undefined;
+    if (!alvo || alvo.enabled === false) return null;
+    // A headline só existe nos primeiros segundos: fora da janela o gizmo
+    // apontaria para um texto que não está na tela.
+    if (selectedElement.kind === 'headline') {
+      const fim = Number(alvo.endSec) || 0;
+      if (fim > 0 && currentTime >= fim) return null;
+    }
+    return {
+      kind: selectedElement.kind,
+      region: textRegion(selectedElement.kind),
+      text: selectedElement.kind === 'headline'
+        ? String(alvo.text ?? (Array.isArray(alvo.lines) ? (alvo.lines as string[]).join(' ') : '')).trim()
+        : null,
+      altura: Number(d.height) || 1920,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveActive, liveData, selectedElement, currentTime]);
+
   const selectedGizmo = useMemo(() => {
     if (!liveActive || !liveData || !selectedElement) return null;
     if (selectedElement.kind !== 'splits' && selectedElement.kind !== 'inserts') return null;
@@ -1214,6 +1263,30 @@ function EditorWorkspace({
     };
     // liveReady re-executa quando o Player monta de verdade (import dinamico).
   }, [liveActive, liveReady]);
+
+  // APAGAR o elemento selecionado com Delete/Backspace. Item de lista some;
+  // legenda/headline/trilha viram enabled:false — reversivel e o que o
+  // template entende. Nao dispara quando o foco esta num campo de texto.
+  useEffect(() => {
+    if (!liveActive || !selectedElement) return;
+    const aoTeclar = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      const foco = document.activeElement as HTMLElement | null;
+      if (foco && (foco.tagName === 'INPUT' || foco.tagName === 'TEXTAREA' || foco.isContentEditable)) return;
+      event.preventDefault();
+      const operacao: EditOperation = 'index' in selectedElement
+        ? { op: 'remove', kind: selectedElement.kind, index: selectedElement.index }
+        : {
+            op: 'disable',
+            kind: selectedElement.kind === 'headline' ? 'hook' : selectedElement.kind,
+          };
+      applyLiveOperation(operacao, true);
+      setSelectedElement(null);
+    };
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveActive, selectedElement]);
 
   // Trocar de preview nao pode deixar os DOIS tocando: o que sai, pausa.
   useEffect(() => {
@@ -1915,6 +1988,159 @@ function EditorWorkspace({
                       </button>
                     );
                   })()}
+                  {/* GIZMO DE TEXTO (legenda e headline): arrastar move na
+                      vertical (é o eixo que o motor de layout deles aceita),
+                      os cantos mudam o corpo da fonte, e duplo clique edita a
+                      headline no lugar. x/y livre brigaria com o auto-ajuste
+                      de duas linhas e com a centralização na divisa. */}
+                  {selectedText && (() => {
+                    const { region, altura } = selectedText;
+                    const inicio = () => (selectedText.kind === 'captions'
+                      ? Number((liveDataRef.current?.editData as Record<string, unknown> | undefined)?.captions instanceof Object
+                        ? ((liveDataRef.current!.editData as { captions: Record<string, unknown> }).captions.paddingBottom ?? 420) : 420)
+                      : Number(((liveDataRef.current!.editData as { hook?: Record<string, unknown> }).hook ?? {}).paddingTop ?? 330));
+                    const corpoAtual = () => {
+                      const d = (liveDataRef.current?.editData ?? {}) as Record<string, unknown>;
+                      if (selectedText.kind === 'captions') return Number((d.captions as Record<string, unknown>)?.fontSize) || 61;
+                      const h = (d.hook ?? {}) as Record<string, unknown>;
+                      return Number(h.maxFontPx ?? h.fontSizePx) || 51;
+                    };
+                    const opFor = (padding: number, corpo?: number): EditOperation => (
+                      selectedText.kind === 'captions'
+                        ? { op: 'set-caption-layout', paddingBottom: padding, ...(corpo === undefined ? {} : { fontSize: corpo }) }
+                        : { op: 'set-headline-layout', paddingTop: padding, ...(corpo === undefined ? {} : { maxFontPx: corpo }) }
+                    );
+                    return (
+                      <div
+                        className="stage-gizmo text-gizmo"
+                        style={{
+                          left: `${region.x * 100}%`,
+                          top: `${Math.max(0, region.y) * 100}%`,
+                          width: `${region.w * 100}%`,
+                          // Piso de 4%: uma caixa de 3px não dá para pegar
+                          // com o mouse (medido na bancada).
+                          height: `${Math.max(0.04, region.h) * 100}%`,
+                        }}
+                        title={selectedText.kind === 'headline' ? 'Arraste para mover · duplo clique para editar o texto' : 'Arraste para mover · cantos mudam o tamanho'}
+                        onPointerDown={(event) => {
+                          if ((event.target as HTMLElement).closest('.gizmo-corner')) return;
+                          event.preventDefault();
+                          const palco = event.currentTarget.closest('.live-stage') as HTMLElement | null;
+                          if (!palco) return;
+                          // Palco sem altura medível (janela oculta, layout
+                          // ainda montando): dividir por isso transformava um
+                          // arrasto de 80px num salto para o limite — medido
+                          // na bancada com o painel fechado. Sem medida, sem
+                          // arrasto.
+                          const alturaPalco = palco.getBoundingClientRect().height;
+                          if (alturaPalco < 40) return;
+                          textDragRef.current = {
+                            mode: 'move', startY: event.clientY, basePadding: inicio(),
+                            baseCorpo: corpoAtual(), centerY: 0, startDist: 1, moved: false,
+                            alturaComposicao: altura, alturaPalco,
+                          };
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerMove={(event) => {
+                          const drag = textDragRef.current;
+                          if (!drag) return;
+                          drag.moved = true;
+                          const deslocado = ((event.clientY - drag.startY) / Math.max(1, drag.alturaPalco)) * drag.alturaComposicao;
+                          // A legenda mede do PÉ do quadro: arrastar para
+                          // baixo diminui o padding. A headline mede do topo.
+                          const padding = selectedText.kind === 'captions'
+                            ? drag.basePadding - deslocado
+                            : drag.basePadding + deslocado;
+                          applyLiveOperation(
+                            drag.mode === 'move' ? opFor(padding) : opFor(drag.basePadding, drag.baseCorpo * (1 + deslocado / 300)),
+                            false,
+                          );
+                        }}
+                        onPointerUp={(event) => {
+                          const drag = textDragRef.current;
+                          textDragRef.current = null;
+                          if (!drag || !drag.moved) return;
+                          const deslocado = ((event.clientY - drag.startY) / Math.max(1, drag.alturaPalco)) * drag.alturaComposicao;
+                          const padding = selectedText.kind === 'captions'
+                            ? drag.basePadding - deslocado
+                            : drag.basePadding + deslocado;
+                          applyLiveOperation(
+                            drag.mode === 'move' ? opFor(padding) : opFor(drag.basePadding, drag.baseCorpo * (1 + deslocado / 300)),
+                            true,
+                          );
+                        }}
+                        onPointerCancel={() => { textDragRef.current = null; }}
+                        onDoubleClick={() => {
+                          if (selectedText.kind !== 'headline') return;
+                          setHeadlineDraft(selectedText.text ?? '');
+                        }}
+                      >
+                        {(['nw', 'ne', 'sw', 'se'] as const).map((corner) => (
+                          <span
+                            key={corner}
+                            className={`gizmo-corner ${corner}`}
+                            title="Tamanho do texto"
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const palco = event.currentTarget.closest('.live-stage') as HTMLElement | null;
+                              if (!palco) return;
+                              const alturaPalco = palco.getBoundingClientRect().height;
+                              if (alturaPalco < 40) return;
+                              textDragRef.current = {
+                                mode: 'scale', startY: event.clientY, basePadding: inicio(),
+                                baseCorpo: corpoAtual(), centerY: 0, startDist: 1, moved: false,
+                                alturaComposicao: altura, alturaPalco,
+                              };
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                            }}
+                            onPointerMove={(event) => {
+                              const drag = textDragRef.current;
+                              if (!drag || drag.mode !== 'scale') return;
+                              drag.moved = true;
+                              // Puxar para BAIXO aumenta (canto de baixo) e
+                              // para cima diminui: o sinal segue o canto.
+                              const sentido = corner.startsWith('s') ? 1 : -1;
+                              const fator = 1 + (sentido * (event.clientY - drag.startY)) / 160;
+                              applyLiveOperation(opFor(drag.basePadding, drag.baseCorpo * fator), false);
+                            }}
+                            onPointerUp={(event) => {
+                              const drag = textDragRef.current;
+                              textDragRef.current = null;
+                              if (!drag || !drag.moved) return;
+                              const sentido = corner.startsWith('s') ? 1 : -1;
+                              const fator = 1 + (sentido * (event.clientY - drag.startY)) / 160;
+                              applyLiveOperation(opFor(drag.basePadding, drag.baseCorpo * fator), true);
+                            }}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {/* Edição do texto da headline NO PALCO, sobre o próprio
+                      lugar dela. Enter grava, Esc desiste. */}
+                  {headlineDraft !== null && (
+                    <div className="headline-editor" style={{ top: `${textRegion('headline').y * 100}%` }}>
+                      <textarea
+                        autoFocus
+                        value={headlineDraft}
+                        onChange={(event) => setHeadlineDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') { setHeadlineDraft(null); return; }
+                          if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault();
+                            applyLiveOperation({ op: 'set-headline-text', text: headlineDraft }, true);
+                            setHeadlineDraft(null);
+                          }
+                        }}
+                        onBlur={() => {
+                          applyLiveOperation({ op: 'set-headline-text', text: headlineDraft }, true);
+                          setHeadlineDraft(null);
+                        }}
+                      />
+                      <small>Enter grava · Esc desiste</small>
+                    </div>
+                  )}
                   {selectedGizmo && (() => {
                     const { region, transform: t } = selectedGizmo;
                     const cx = region.x + region.w / 2 + (selectedGizmo.kind === 'inserts' ? t.x : 0);

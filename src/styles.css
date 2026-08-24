@@ -970,3 +970,25 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   backdrop-filter: blur(6px);
 }
 .pick-media:hover { background: rgba(56,27,10,.92); }
+
+/* --- Gizmo de texto e edição da headline no palco (0.30.1) ------------------ */
+/* Tracejado, não sólido: a caixa do texto é uma REGIÃO de layout, não um
+   objeto com bordas — o contorno cheio do gizmo de mídia sugeriria recorte. */
+.stage-gizmo.text-gizmo { border-style: dashed; cursor: ns-resize; }
+.text-gizmo .gizmo-corner { cursor: ns-resize; }
+.headline-editor {
+  position: absolute; left: 6%; width: 88%; z-index: 9;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.headline-editor textarea {
+  width: 100%; min-height: 68px; resize: none; padding: 10px 12px;
+  border-radius: 10px; border: 1px solid rgba(255,119,19,.6);
+  background: rgba(10,11,14,.92); color: var(--text);
+  font: inherit; font-size: 16px; font-weight: 700; line-height: 1.25;
+  text-align: center; backdrop-filter: blur(6px);
+}
+.headline-editor textarea:focus { outline: none; border-color: var(--orange); }
+.headline-editor small {
+  align-self: center; padding: 3px 8px; border-radius: 999px;
+  background: rgba(10,11,14,.85); color: var(--dim); font-size: 10.5px;
+}

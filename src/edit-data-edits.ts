@@ -21,7 +21,19 @@ export type EditOperation =
   | { op: 'set-transform'; kind: 'splits' | 'inserts'; index: number; transform: ManualTransform }
   // O aluno apontou o arquivo de um espaco vazio (origem "nenhum"). O src e
   // RELATIVO a public/ e ja foi copiado para la por quem chama.
-  | { op: 'set-split-src'; index: number; src: string; kind: 'image' | 'video' };
+  | { op: 'set-split-src'; index: number; src: string; kind: 'image' | 'video' }
+  // LEGENDA e HEADLINE nao tem x/y livres: cada uma tem um motor de layout
+  // proprio (a legenda se centra sozinha na divisa do split; a headline se
+  // reparte em duas linhas e ajusta o corpo). Dar transform livre brigaria
+  // com esses motores. O que o gizmo mexe sao os TUNAVEIS que o template ja
+  // respeita: altura na tela e tamanho da fonte.
+  | { op: 'set-caption-layout'; paddingBottom?: number; fontSize?: number }
+  | { op: 'set-headline-layout'; paddingTop?: number; maxFontPx?: number }
+  | { op: 'set-headline-text'; text: string }
+  // Apagar o que foi selecionado. Legenda e headline nao somem do arquivo:
+  // viram enabled:false, que e reversivel e o que o template entende.
+  | { op: 'remove'; kind: OverlayKind; index: number }
+  | { op: 'disable'; kind: 'captions' | 'hook' | 'soundtrack' };
 
 // Os mesmos limites do template (Main.tsx): fora deles a divisa colaria no
 // topo ou no pe do quadro e o recorte do video degeneraria.
@@ -149,6 +161,60 @@ export function applyEditOperation(
       list[operation.index] = { ...item, transform: next };
     }
     return { ok: true, data: { ...data, [operation.kind]: list }, changed: true };
+  }
+
+  if (operation.op === 'set-caption-layout' || operation.op === 'set-headline-layout') {
+    const chave = operation.op === 'set-caption-layout' ? 'captions' : 'hook';
+    const antes = (data[chave] ?? {}) as Record<string, unknown>;
+    const depois = { ...antes };
+    // Limites em FRACAO da altura: o texto nunca sai do quadro nem encosta
+    // na borda onde a interface das redes cobre.
+    const altura = Number(data.height) || 1920;
+    if (operation.op === 'set-caption-layout') {
+      if (operation.paddingBottom !== undefined) {
+        if (!Number.isFinite(operation.paddingBottom)) return { ok: false, reason: 'posição ilegível' };
+        depois.paddingBottom = Math.round(clamp(operation.paddingBottom, altura * 0.03, altura * 0.85));
+      }
+      if (operation.fontSize !== undefined) {
+        if (!Number.isFinite(operation.fontSize)) return { ok: false, reason: 'tamanho ilegível' };
+        depois.fontSize = Math.round(clamp(operation.fontSize, 18, 160));
+      }
+    } else {
+      if (operation.paddingTop !== undefined) {
+        if (!Number.isFinite(operation.paddingTop)) return { ok: false, reason: 'posição ilegível' };
+        depois.paddingTop = Math.round(clamp(operation.paddingTop, altura * 0.02, altura * 0.8));
+      }
+      if (operation.maxFontPx !== undefined) {
+        if (!Number.isFinite(operation.maxFontPx)) return { ok: false, reason: 'tamanho ilegível' };
+        // O template trata isto como TETO do auto-ajuste, nunca tamanho fixo:
+        // fixo faz a linha quebrar em tres e desmonta a headline.
+        depois.maxFontPx = Math.round(clamp(operation.maxFontPx, 20, 120));
+        delete depois.fontSizePx;
+      }
+    }
+    if (JSON.stringify(antes) === JSON.stringify(depois)) return { ok: true, data, changed: false };
+    return { ok: true, data: { ...data, [chave]: depois }, changed: true };
+  }
+
+  if (operation.op === 'set-headline-text') {
+    const antes = (data.hook ?? {}) as Record<string, unknown>;
+    const texto = String(operation.text ?? '').replace(/\s+/gu, ' ').trim().slice(0, 160);
+    if (antes.text === texto) return { ok: true, data, changed: false };
+    // `text` vence `lines` no template; limpar lines evita duas verdades.
+    return { ok: true, data: { ...data, hook: { ...antes, text: texto, lines: [] } }, changed: true };
+  }
+
+  if (operation.op === 'disable') {
+    const antes = (data[operation.kind] ?? {}) as Record<string, unknown>;
+    if (antes.enabled === false) return { ok: true, data, changed: false };
+    return { ok: true, data: { ...data, [operation.kind]: { ...antes, enabled: false } }, changed: true };
+  }
+
+  if (operation.op === 'remove') {
+    const items = listOf(data, operation.kind);
+    if (!items || !items[operation.index]) return { ok: false, reason: 'esse item não existe mais' };
+    const next = items.filter((_, index) => index !== operation.index);
+    return { ok: true, data: { ...data, [operation.kind]: next }, changed: true };
   }
 
   const items = listOf(data, operation.kind);

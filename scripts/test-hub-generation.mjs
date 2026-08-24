@@ -57,6 +57,22 @@ try {
   assert.deepEqual(jobsFrom(null), []);
   assert.deepEqual(jobsFrom({ jobs: [{ index: 0 }] }), [], 'job sem id não conta');
 
+  // --- 1b. O formato REAL do hub: texto tabular + structuredContent ---------
+  // Medido no servidor de verdade (0.30.1): o bloco de texto NÃO é JSON —
+  // é uma tabela compacta — e o dado vive em structuredContent, campo do
+  // próprio protocolo MCP. Ler só o texto fazia a submissão parecer vazia:
+  // os jobs abriam, o hub cobrava, e o Edvid dizia "não abriu nenhuma
+  // geração". Cinco clipes já tinham sido pagos quando isso foi descoberto.
+  const tabular = 'jobs[1]{index,job_id,status,type,model}:   0,aad3a3a1,in_progress,image,seedance1_5';
+  assert.deepEqual(jobsFrom(tabular), [], 'o texto tabular não é fonte de jobs');
+  const estruturado = { jobs: [{ index: 0, job_id: 'aad3a3a1', status: 'in_progress' }], all_terminal: false };
+  assert.deepEqual(jobsFrom(estruturado), [{ index: 0, jobId: 'aad3a3a1' }]);
+  // E o resultado concluído no mesmo formato entrega a URL.
+  assert.equal(
+    resultsFrom({ jobs: [{ index: 0, job_id: 'x', status: 'completed', results: { rawUrl: 'https://cdn/v.mp4' } }] })[0].url,
+    'https://cdn/v.mp4',
+  );
+
   // --- 2. A resposta real do jobs_wait, medida -----------------------------
   const medida = {
     jobs: [{ index: 0, job_id: '00000000-0000-0000-0000-000000000000', status: 'lookup_failed', error: 'Generation not found', retryable: false }],

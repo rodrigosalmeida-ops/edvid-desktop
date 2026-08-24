@@ -1222,6 +1222,32 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.30.1: A GERAÇÃO PELO HIGGSFIELD ESTAVA COBRANDO SEM ENTREGAR. O sintoma
+  era "aceitou o pedido mas não abriu nenhuma geração"; a verificação no
+  histórico da conta mostrou 48 CRÉDITOS GASTOS em cinco clipes que ficaram
+  prontos no Higgsfield e nunca chegaram ao projeto. Causa: o hub responde o
+  texto em formato TABULAR compacto (não JSON) e põe o dado real em
+  `structuredContent`, campo do próprio protocolo MCP que o cliente ignorava.
+  Agora structuredContent vem primeiro; o texto é fallback. Segundo desvio no
+  mesmo caminho: o endereço do resultado é `rawUrl` em camelCase e a lista de
+  campos só tinha `raw_url`. Validado com o token real: submissão, espera e
+  URL do MP4 de ponta a ponta.
+  LIÇÃO DE CUSTO: `generate_*_batch` NÃO aceita get_cost (o esquema recusa) —
+  uma sonda de formato ali submete de verdade e cobra. Para inspecionar
+  envelope use `jobs_wait` (grátis) ou o UUID nulo.
+  LEGENDA E HEADLINE AJUSTÁVEIS: elas não ganham x/y livre — cada uma tem
+  motor de layout próprio (a legenda se centra na divisa do split; a headline
+  se reparte em duas linhas e auto-ajusta o corpo). O gizmo mexe nos TUNÁVEIS
+  que o template já respeita: paddingBottom/fontSize e paddingTop/maxFontPx
+  (nunca fontSizePx, que é fixo e quebra o auto-ajuste em três linhas).
+  Duplo clique na headline edita o TEXTO no palco (Enter grava, Esc desiste);
+  `text` vence `lines`, então lines é limpo para não haver duas verdades.
+  Delete/Backspace apaga: item de lista some, legenda/headline/trilha viram
+  enabled:false — reversível e é o que o template entende.
+  DEFEITO PEGO NA BANCADA: com o painel do navegador oculto o palco mede 0 de
+  altura e a conta do arrasto dividia por isso — 80px viravam salto para o
+  limite. Arrasto agora exige palco com altura medível (>=40px), e a caixa do
+  gizmo tem piso de 4% (3px não dá para pegar com o mouse).
 - 0.30.0: QUATRO FRENTES DE USO REAL. (1) A GERAÇÃO PELO HIGGSFIELD estava
   quebrada por DOIS desvios medidos com o token do aluno: o hub responde em
   VÁRIOS blocos de texto (JSON + avisos soltos) e juntar tudo antes do parse

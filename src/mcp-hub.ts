@@ -359,6 +359,17 @@ export class McpHub {
   async call(tool: string, args: Record<string, unknown>): Promise<unknown> {
     const client = await this.ensure();
     const result = await client.callTool({ name: tool, arguments: args });
+    // structuredContent PRIMEIRO. O hub responde o texto em formato TABULAR
+    // compacto ("jobs[1]{index,job_id,...}: 0,uuid,in_progress"), que nao e
+    // JSON, e poe o dado de verdade neste campo do proprio protocolo MCP.
+    // Ignora-lo era o defeito: a submissao funcionava, os jobs abriam, o hub
+    // COBRAVA os creditos — e o Edvid dizia "nao abriu nenhuma geracao"
+    // porque nao achava a lista no texto. Cinco clipes ja tinham sido pagos
+    // quando isto foi descoberto lendo o historico da conta.
+    const structured = (result as { structuredContent?: unknown }).structuredContent;
+    if (!result.isError && typeof structured === 'object' && structured !== null) {
+      return structured;
+    }
     const blocks = Array.isArray(result.content) ? result.content : [];
     const texts = blocks
       .filter((block): block is { type: 'text'; text: string } => (

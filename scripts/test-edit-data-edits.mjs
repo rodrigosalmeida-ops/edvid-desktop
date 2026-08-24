@@ -139,6 +139,44 @@ try {
     assert.equal(applyEditOperation(vazio, { op: 'set-split-src', index: 0, src: ruim, kind: 'image' }).ok, false, `src "${ruim}" tem de ser recusado`);
   }
 
+  // --- 5c. Legenda e headline: tunáveis, não transform livre ----------------
+  // Elas têm motor de layout próprio (a legenda se centra na divisa; a
+  // headline se reparte em duas linhas). O gizmo mexe no que o template já
+  // respeita — altura e corpo —, nunca em x/y livres.
+  const comTexto = () => ({
+    ...base(), height: 1920,
+    captions: { enabled: true, fontSize: 61, paddingBottom: 420 },
+    hook: { enabled: true, text: 'Olha isso', paddingTop: 330 },
+  });
+  const legenda = applyEditOperation(comTexto(), { op: 'set-caption-layout', paddingBottom: 600, fontSize: 74 });
+  assert.deepEqual([legenda.data.captions.paddingBottom, legenda.data.captions.fontSize], [600, 74]);
+  // Fora do quadro trava dentro da margem segura.
+  assert.equal(applyEditOperation(comTexto(), { op: 'set-caption-layout', paddingBottom: 5000 }).data.captions.paddingBottom, Math.round(1920 * 0.85));
+  assert.equal(applyEditOperation(comTexto(), { op: 'set-caption-layout', fontSize: 999 }).data.captions.fontSize, 160);
+  // O `enabled` e os campos vizinhos não podem sumir num ajuste parcial.
+  assert.equal(legenda.data.captions.enabled, true);
+
+  const headline = applyEditOperation(comTexto(), { op: 'set-headline-layout', maxFontPx: 44 });
+  assert.equal(headline.data.hook.maxFontPx, 44);
+  // fontSizePx é tamanho FIXO e desmonta o auto-ajuste em duas linhas: sai.
+  const comFixo = { ...comTexto(), hook: { enabled: true, text: 'x', fontSizePx: 66 } };
+  assert.ok(!('fontSizePx' in applyEditOperation(comFixo, { op: 'set-headline-layout', maxFontPx: 40 }).data.hook));
+
+  // Texto editado no preview: `text` vence `lines`, então lines é limpo para
+  // não haver duas verdades sobre a mesma headline.
+  const escrito = applyEditOperation({ ...comTexto(), hook: { enabled: true, lines: ['velho', 'texto'] } }, { op: 'set-headline-text', text: '  Novo   texto  aqui ' });
+  assert.equal(escrito.data.hook.text, 'Novo texto aqui');
+  assert.deepEqual(escrito.data.hook.lines, []);
+
+  // Apagar: item de lista some; legenda/headline viram enabled:false, que é
+  // reversível e é o que o template entende.
+  const semAnimacao = applyEditOperation(base(), { op: 'remove', kind: 'animations', index: 0 });
+  assert.equal(semAnimacao.data.animations.length, 0);
+  const semLegenda = applyEditOperation(comTexto(), { op: 'disable', kind: 'captions' });
+  assert.equal(semLegenda.data.captions.enabled, false);
+  assert.equal(semLegenda.data.captions.fontSize, 61, 'desligar não apaga o ajuste');
+  assert.equal(applyEditOperation(base(), { op: 'remove', kind: 'animations', index: 9 }).ok, false);
+
   // --- 6. Split ativo no instante -------------------------------------------
   assert.equal(activeSplitIndexAt(base(), 5), 0);
   assert.equal(activeSplitIndexAt(base(), 15), -1);

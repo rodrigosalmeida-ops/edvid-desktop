@@ -67,7 +67,13 @@ export function allTerminal(response: unknown): boolean {
 // MEDIR um job concluido sem gastar credito do aluno; o que NAO e generoso e o
 // caso de falha: um job "completed" sem endereco vira erro escrito, e nao um
 // arquivo que some sem explicacao.
-const URL_FIELDS = ['url', 'result_url', 'output_url', 'media_url', 'video_url', 'image_url', 'raw_url'];
+// `rawUrl` em camelCase e o que o Higgsfield usa de verdade (medido na conta
+// do aluno) — a lista so tinha a forma com underline e o endereco escapava.
+const URL_FIELDS = [
+  'url', 'rawUrl', 'raw_url', 'result_url', 'resultUrl',
+  'output_url', 'outputUrl', 'media_url', 'mediaUrl',
+  'video_url', 'videoUrl', 'image_url', 'imageUrl',
+];
 
 function urlIn(value: unknown, depth = 0): string | null {
   if (typeof value === 'string') return /^https?:\/\//u.test(value) ? value : null;
