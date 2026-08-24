@@ -440,8 +440,11 @@ O usuário escolhe visualmente:
 - Tracking, zoom automático, zoom nos cortes, flash e trilha com IA.
 - Observações livres.
 
-O botão **Salvar e aplicar** persiste o briefing e o envia automaticamente para
-o agente. O agente não deve voltar a perguntar as mesmas escolhas no chat.
+O botão **Salvar e aplicar** monta a Fase 2 INTEIRA no aplicativo (corte,
+legendas, headline, zoom, trilha, tela dividida e flash) e só depois, se
+sobrar coisa criativa e houver agente conectado, manda o briefing para ele. Ele
+não depende de IA nenhuma — exigia `canChat` até a 0.31.0 e trancava o caminho
+sem agente. O agente não deve voltar a perguntar as mesmas escolhas no chat.
 
 O agente grava essas escolhas em `edicao/fase_2/briefing.json`, com nomes
 próprios (`editing_type`, `accent_color`, `elements_included`). A interface lê
