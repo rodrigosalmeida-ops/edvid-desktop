@@ -1222,6 +1222,24 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.30.2: DOIS BUGS DA MANIPULAÇÃO, MESMA ORIGEM — a interface calculava por
+  conta própria em vez de espelhar a verdade do edit-data/template.
+  (1) APAGAR A HEADLINE tirava do palco e a faixa continuava na timeline: as
+  faixas de Legenda e Texto nasciam só do ESTILO SALVO, que não sabe de
+  enabled:false. Agora exigem também o enabled do edit-data (quando há prévia
+  ao vivo; sem ela, comportamento antigo — o preview de render não tem o
+  edit-data em mãos). A seleção também se solta sozinha quando o elemento
+  some, senão o gizmo apontaria para o nada e o Delete seguinte tentaria
+  apagar de novo.
+  (2) A CAIXA DA LEGENDA aparecia embaixo enquanto o texto estava na divisa
+  da tela dividida: eu espelhava só o paddingBottom guardado, mas o template
+  IGNORA esse valor durante um split (centra na divisa) e uma janela em
+  captions.windows tem prioridade sobre os dois. A região agora repete a
+  MESMA ordem do captionPaddingBottomAt: janela > divisa do split ativo >
+  paddingBottom. Medido na bancada: caixa em 35,8% com a divisa em 39% (antes
+  ia para ~74%).
+  A regra que fica: quando a interface desenha por cima do render, ela não
+  pode recalcular o layout — tem de repetir a mesma decisão, na mesma ordem.
 - 0.30.1: A GERAÇÃO PELO HIGGSFIELD ESTAVA COBRANDO SEM ENTREGAR. O sintoma
   era "aceitou o pedido mas não abriu nenhuma geração"; a verificação no
   histórico da conta mostrou 48 CRÉDITOS GASTOS em cinco clipes que ficaram

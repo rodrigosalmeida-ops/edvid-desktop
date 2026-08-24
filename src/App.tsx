@@ -733,6 +733,24 @@ function EditorWorkspace({
   // composicao (que le o cut.mp4 antigo) nao sabe mostrar.
   const liveActive = Boolean(liveData) && !mapped;
   liveActiveRef.current = liveActive;
+  // Sem previa ao vivo o edit-data nao esta em maos: manter as faixas
+  // visiveis e o comportamento antigo, correto para o preview de render.
+  const editDataAtual = (liveData?.editData ?? null) as Record<string, unknown> | null;
+  const captionsEnabled = !editDataAtual
+    || ((editDataAtual.captions ?? {}) as Record<string, unknown>).enabled !== false;
+  const headlineEnabled = !editDataAtual
+    || ((editDataAtual.hook ?? {}) as Record<string, unknown>).enabled !== false;
+  // Selecao presa a um elemento que sumiu deixaria o gizmo apontando para o
+  // nada — e o Delete seguinte tentaria apagar de novo.
+  useEffect(() => {
+    if (!selectedElement) return;
+    if (selectedElement.kind === 'captions' && !captionsEnabled) setSelectedElement(null);
+    if (selectedElement.kind === 'headline' && !headlineEnabled) setSelectedElement(null);
+    if ('index' in selectedElement) {
+      const lista = editDataAtual?.[selectedElement.kind];
+      if (Array.isArray(lista) && !lista[selectedElement.index]) setSelectedElement(null);
+    }
+  }, [selectedElement, captionsEnabled, headlineEnabled, editDataAtual]);
   useEffect(() => {
     onCutsPendingChange(dirty);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -746,8 +764,27 @@ function EditorWorkspace({
     if (kind === 'captions') {
       const c = (d.captions ?? {}) as Record<string, unknown>;
       const fonte = Number(c.fontSize) || 61;
-      const base = Number(c.paddingBottom) || 420;
       const alturaCaixa = (fonte * 1.6) / altura;
+      // A legenda NAO fica sempre no paddingBottom: o template a centra na
+      // DIVISA durante um split, e uma janela em captions.windows tem
+      // prioridade sobre os dois. Espelhar so o paddingBottom desenhava a
+      // caixa la embaixo enquanto o texto estava na divisa — foi o que o
+      // aluno viu. A ordem aqui e a MESMA do captionPaddingBottomAt.
+      const janelas = Array.isArray(c.windows) ? (c.windows as Array<Record<string, unknown>>) : [];
+      const janela = janelas.find((w) => currentTime >= Number(w.start) && currentTime < Number(w.end));
+      let base = Number(c.paddingBottom) || 420;
+      if (janela) {
+        base = Number(janela.paddingBottom) || base;
+      } else {
+        const indice = activeSplitIndexAt(d, currentTime);
+        if (indice >= 0) {
+          const split = (d.splits as Array<Record<string, unknown>>)[indice];
+          const divisa = Math.min(0.85, Math.max(0.15, Number(split.divider ?? SPLIT_DIVIDER)));
+          // seam = altura * divisa; a legenda fica centrada nela, e a metade
+          // visual do bloco de texto e o que o template chama de textHalfPx.
+          base = altura - altura * divisa - (fonte * 1.6) / 2;
+        }
+      }
       return { x: 0.06, y: 1 - base / altura - alturaCaixa, w: 0.88, h: alturaCaixa };
     }
     const h = (d.hook ?? {}) as Record<string, unknown>;
@@ -2374,7 +2411,10 @@ function EditorWorkspace({
             {/* Ordem das tracks de estilo: Legendas, Texto, Animações e por
                 fim Imagem/Vídeo (verde) — as bases Vídeo/Voz ficam abaixo. Os
                 chips vêm dos ranges REAIS do edit-data.json (overlays). */}
-            {phase === 2 && style.captions !== 'none' && (
+            {/* A faixa some quando o elemento foi APAGADO: a verdade e o
+                edit-data (enabled:false), nao o estilo salvo — apagar a
+                headline a tirava do palco e ela continuava na timeline. */}
+            {phase === 2 && style.captions !== 'none' && captionsEnabled && (
               <TimelineTrack icon="captions" label="Legendas" tone="teal">
                 <div
                   className={`timeline-chip captions-chip selectable${selectedElement?.kind === 'captions' ? ' selected' : ''}`}
@@ -2383,7 +2423,7 @@ function EditorWorkspace({
                 >Legendas</div>
               </TimelineTrack>
             )}
-            {phase === 2 && style.headline !== 'none' && (
+            {phase === 2 && style.headline !== 'none' && headlineEnabled && (
               <TimelineTrack icon="text" label="Texto" tone="orange">
                 <div
                   className={`timeline-chip headline-chip selectable${selectedElement?.kind === 'headline' ? ' selected' : ''}`}

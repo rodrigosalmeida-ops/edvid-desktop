@@ -177,6 +177,15 @@ try {
   assert.equal(semLegenda.data.captions.fontSize, 61, 'desligar não apaga o ajuste');
   assert.equal(applyEditOperation(base(), { op: 'remove', kind: 'animations', index: 9 }).ok, false);
 
+  // --- 5d. Apagar é reversível e não perde o conteúdo ------------------------
+  const comTextoCheio = { ...comTexto(), hook: { enabled: true, text: 'Minha headline', paddingTop: 330, maxFontPx: 48 } };
+  const semHeadline = applyEditOperation(comTextoCheio, { op: 'disable', kind: 'hook' });
+  assert.equal(semHeadline.data.hook.enabled, false);
+  assert.equal(semHeadline.data.hook.text, 'Minha headline', 'o texto sobrevive ao apagar');
+  assert.equal(semHeadline.data.hook.maxFontPx, 48, 'o ajuste de corpo sobrevive');
+  // Apagar de novo não muda nada — o chamador sabe que não precisa gravar.
+  assert.equal(applyEditOperation(semHeadline.data, { op: 'disable', kind: 'hook' }).changed, false);
+
   // --- 6. Split ativo no instante -------------------------------------------
   assert.equal(activeSplitIndexAt(base(), 5), 0);
   assert.equal(activeSplitIndexAt(base(), 15), -1);
