@@ -21,7 +21,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type {
   OAuthClientInformationMixed,
   OAuthClientMetadata,
@@ -214,13 +214,21 @@ export class McpHub {
     return this.authStore(CALLBACK_PORTS.includes(porta) ? porta : this.port);
   }
 
+  // Marca se o SDK chegou a ABRIR o navegador: a partir dai o aluno esta
+  // autorizando, e o servidor de retorno tem de sobreviver a qualquer erro da
+  // primeira conexao — fecha-lo cedo foi o ERR_CONNECTION_REFUSED no retorno.
+  private redirected = false;
+
   private authStore(port = this.port): HubAuthStore {
     if (!this.store || this.port !== port) {
       this.port = port;
       this.store = new HubAuthStore(
         path.join(this.storeDir, `${this.hub}.json`),
         `http://127.0.0.1:${port}/callback`,
-        this.openBrowser,
+        (url) => {
+          this.redirected = true;
+          this.openBrowser(url);
+        },
       );
     }
     return this.store;
@@ -272,7 +280,10 @@ export class McpHub {
       this.connecting = null;
       // Token vencido e sem refresh: o hub responde 401 e o SDK levanta
       // UnauthorizedError. Vira o mesmo recado de "entre na conta".
-      if (error instanceof Error && error.name === 'UnauthorizedError') {
+      // POR CLASSE, nunca por error.name: a classe do SDK nao define
+      // this.name, entao o nome e "Error" — a comparacao por nome falhava,
+      // o erro subia e o login morria com o navegador ainda aberto.
+      if (error instanceof UnauthorizedError) {
         throw new HubNeedsLogin(this.hub);
       }
       throw error;
@@ -315,11 +326,17 @@ export class McpHub {
       });
     });
 
+    this.redirected = false;
     try {
       // A primeira conexao levanta UnauthorizedError DEPOIS de abrir o
-      // navegador — e o caminho documentado, nao um erro de verdade.
+      // navegador — e o caminho documentado, nao um erro de verdade. A
+      // deteccao e por CLASSE (o SDK nao define error.name); e mesmo um erro
+      // de outra especie nao pode derrubar o login se o navegador JA abriu —
+      // o aluno esta la autorizando, e fechar o servidor de retorno agora e
+      // garantir o ERR_CONNECTION_REFUSED que apareceu em uso real.
       await client.connect(transport).catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'UnauthorizedError') return;
+        if (error instanceof UnauthorizedError) return;
+        if (this.redirected) return;
         throw error;
       });
       await transport.finishAuth(await code);

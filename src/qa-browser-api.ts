@@ -557,11 +557,17 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     },
     // QA do gate de aluno: ?aluno mostra o login; senha "errada" falha,
     // e-mail com "sem-acesso" cai na tela de matrícula inativa.
-    getMemberAuth: async () => (
-      new URLSearchParams(window.location.search).has('aluno')
+    getMemberAuth: async () => {
+      // ?conferindo segura a abertura por 2,5s: e o unico jeito de VER o
+      // splash — no caminho feliz ele dura o tempo da resposta da sessao.
+      if (qaSearch().has('conferindo')) {
+        const espera = Number(qaSearch().get('conferindo')) || 2500;
+        await new Promise((resolve) => { window.setTimeout(resolve, espera); });
+      }
+      return qaSearch().has('aluno')
         ? { status: 'signed-out' }
-        : { status: 'signed-in', email: 'aluno@creatorfactory.com.br', name: 'Aluno QA' }
-    ),
+        : { status: 'signed-in', email: 'aluno@creatorfactory.com.br', name: 'Aluno QA' };
+    },
     memberLogin: async (email, password) => {
       if (password === 'errada') {
         return { status: 'signed-out', error: 'E-mail ou senha incorretos. Use os mesmos dados da área de membros.' };

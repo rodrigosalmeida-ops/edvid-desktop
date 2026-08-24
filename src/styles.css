@@ -940,3 +940,11 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   content: ''; position: absolute; left: 50%; top: 100%; translate: -50% 0;
   width: 1.5px; height: 13px; background: rgba(255,119,19,.9);
 }
+
+/* --- Abertura (0.29.1): logo enquanto a sessão é conferida ------------------ */
+.app-splash {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--bg, #0d0d10);
+}
+.app-splash img { width: 148px; opacity: 0; animation: splash-in .5s ease .1s forwards; }
+@keyframes splash-in { from { opacity: 0; translate: 0 6px; } to { opacity: .92; translate: 0 0; } }

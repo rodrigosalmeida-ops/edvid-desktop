@@ -1222,6 +1222,27 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.29.1: TRÊS DEFEITOS DE USO REAL. (1) LOGIN DO HIGGSFIELD morria com
+  ERR_CONNECTION_REFUSED no retorno do navegador: o UnauthorizedError do SDK
+  do MCP NÃO define this.name (conferido no fonte — name fica "Error"), a
+  comparação por error.name falhava, o erro subia e o finally fechava o
+  servidor de retorno COM O ALUNO AINDA AUTORIZANDO. Detecção agora é por
+  instanceof, e cinto-e-suspensório: se o navegador JÁ abriu (flag no
+  redirect), nenhum erro da primeira conexão fecha o servidor — só o código
+  chegando ou o prazo de 10min. A regra que fica: erro de SDK se detecta por
+  CLASSE, nunca por error.name.
+  (2) A tela de login PISCAVA no boot para quem já estava logado: o gate
+  decidia durante o "checking". Agora existe a ABERTURA (.app-splash, logo
+  Edvid) até a primeira resposta que não seja checking; o formulário só
+  aparece para quem realmente está deslogado. QA: ?conferindo=<ms> segura a
+  abertura para ela ser visível (no caminho feliz dura a resposta da sessão).
+  (3) EXCLUIR O PROJETO ABERTO o deixava aberto até reiniciar o app: o
+  removeProjectFromList só mexia na lista de recentes. Agora fecha o
+  workspace (ref + estado + mensagens) e a tela inicial assume. Verificado na
+  bancada: Excluir → "Comece por um projeto".
+  Método: as primeiras sondas da abertura "provaram" que o splash não
+  existia — o round-trip da ferramenta leva ~8s e a espera era de 2,5s; toda
+  sonda chegava depois. performance.now() na própria página revelou o atraso.
 - 0.29.0: A PRÉVIA É O PREVIEW (pedido de uso real da 0.28.0: "não quero que
   o usuário tenha que fazer essa escolha"). O chip Render/Ao vivo MORREU:
   com Fase 2 montada e sem corte pendente, a prévia ao vivo é o que o aluno

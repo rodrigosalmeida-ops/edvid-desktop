@@ -2539,6 +2539,10 @@ export function App() {
   }, [phase2Status]);
   const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ status: 'idle' });
   const [memberAuth, setMemberAuth] = useState<MemberAuthState>({ status: 'unconfigured' });
+  // O gate so decide DEPOIS da primeira resposta real: antes dela (e durante
+  // "checking") o app mostra a abertura com o logo — quem ja esta logado nunca
+  // mais ve o formulario piscar no boot.
+  const [memberLoaded, setMemberLoaded] = useState(false);
   const [runtimePack, setRuntimePack] = useState<RuntimePackState>({ status: 'unknown' });
   const [claudeAccount, setClaudeAccount] = useState<ClaudeAccountState>({ status: 'signed-out', email: null });
   const [claudeLoaded, setClaudeLoaded] = useState(false);
@@ -2847,6 +2851,19 @@ export function App() {
     try {
       // Remove apenas da lista de recentes; a pasta continua intacta no disco.
       setProjects(await window.edvidDesktop.removeRecentProject(project.directory));
+      // Apagar o projeto ABERTO fecha o projeto: ele continuava na tela e so
+      // sumia reabrindo o app. O estado volta ao de "nenhum projeto" — a tela
+      // inicial assume sozinha.
+      if (activeProjectDirectoryRef.current === project.directory) {
+        activeProjectDirectoryRef.current = null;
+        setWorkspace(null);
+        setMessages([]);
+        setApprovals([]);
+        setCorrections([]);
+        setStyleApplied(false);
+        setHandledCutApprovalId(null);
+        setJcutApplied(false);
+      }
     } catch (error) {
       setMessages((current) => [...current, { id: `error:${Date.now()}`, role: 'system', text: errorMessage(error) }]);
     }
@@ -3640,7 +3657,10 @@ export function App() {
     const unsubscribePhase2 = window.edvidDesktop.onPhase2RenderState(handlePhase2RenderState);
     const unsubscribeCleanCut = window.edvidDesktop.onCleanCutState(handleCleanCutState);
     const unsubscribeUpdate = window.edvidDesktop.onAppUpdateState(setAppUpdate);
-    const unsubscribeMember = window.edvidDesktop.onMemberAuthState(setMemberAuth);
+    const unsubscribeMember = window.edvidDesktop.onMemberAuthState((state) => {
+      setMemberAuth(state);
+      if (state.status !== 'checking') setMemberLoaded(true);
+    });
     const unsubscribeClaude = window.edvidDesktop.onClaudeAccount(setClaudeAccount);
     const unsubscribeGemini = window.edvidDesktop.onGeminiAccount(setGeminiAccount);
     const unsubscribeCatalog = window.edvidDesktop.onAiCatalog(setAiCatalog);
@@ -3648,7 +3668,10 @@ export function App() {
     void window.edvidDesktop.getAiCatalog().then(setAiCatalog).catch(() => {});
     const unsubscribeRoles = window.edvidDesktop.onAiRoles(setAiRoles);
     const unsubscribeImageGen = window.edvidDesktop.onImageGenState(handleImageGenState);
-    void window.edvidDesktop.getMemberAuth().then(setMemberAuth);
+    void window.edvidDesktop.getMemberAuth().then((state) => {
+      setMemberAuth(state);
+      if (state.status !== 'checking') setMemberLoaded(true);
+    });
     const unsubscribePack = window.edvidDesktop.onRuntimePackState((state) => {
       setRuntimePack(state);
       // Com as ferramentas instaladas, a lista de dependências da rail deixa
@@ -3811,9 +3834,20 @@ export function App() {
     </div>
   );
 
+  // ABERTURA: enquanto a sessão é verificada, só o logo. O formulário de
+  // login piscava aqui para quem já estava logado — a decisão de mostrar o
+  // gate agora espera a primeira resposta que não seja "checking".
+  if (!memberLoaded || memberAuth.status === 'checking') {
+    return (
+      <div className="app-splash">
+        <img src={edvidLogo} alt="Edvid" />
+      </div>
+    );
+  }
+
   // Gate do aluno: sem sessão válida, o estúdio inteiro fica atrás do login.
   // "unconfigured" (sem as chaves do Supabase) mantém o app aberto como antes.
-  if (memberAuth.status === 'signed-out' || memberAuth.status === 'checking' || memberAuth.status === 'no-access') {
+  if (memberAuth.status === 'signed-out' || memberAuth.status === 'no-access') {
     return (
       <>
         {packModal}
