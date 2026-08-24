@@ -1222,6 +1222,12 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.31.1: as janelas guardadas de um corte MAIS LONGO ficavam depois do fim do
+  vídeo quando o aluno refazia o corte limpo e voltava aos estilos —
+  invisíveis no palco e com o chip estourando a timeline. `applySplitPlan`
+  agora recebe a duração atual: apara a janela que atravessa o fim e descarta
+  a que já começa fora. (A 0.31.0 saiu só no canal mac e foi substituída por
+  esta antes do build Windows.)
 - 0.31.0: O FORMULÁRIO PASSOU A ENTREGAR O QUE PROMETE, SEM AGENTE. Dois
   botões da aba Estilos eram texto no prompt do agente e mais nada, e sem
   agente conectado o chat ainda respondia "Estilos aplicados": TELA DIVIDIDA

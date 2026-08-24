@@ -196,6 +196,11 @@ export function applySplitPlan(input: {
   splitMedia?: 'imagem' | 'video' | 'nenhum';
   previous: readonly Record<string, unknown>[];
   planned: readonly PlannedSplit[];
+  // Duracao do corte ATUAL. As janelas guardadas podem ser de um corte mais
+  // longo (o aluno refez o corte limpo e voltou aos estilos): sem isto elas
+  // ficariam depois do fim do video — invisiveis no palco e com o chip
+  // estourando a timeline.
+  durationSec?: number;
 }): Record<string, unknown>[] {
   // "Limpa" e uma afirmacao sobre o RESULTADO. Deixar as janelas gravadas faz
   // o template continuar dividindo a tela (BaseWithSplits nao olha o
@@ -212,15 +217,25 @@ export function applySplitPlan(input: {
       : 'image';
 
   const base = input.previous.length ? input.previous : (input.planned as unknown as Record<string, unknown>[]);
-  return base.map((item) => {
+  const limite = Number(input.durationSec);
+  const temLimite = Number.isFinite(limite) && limite > 0;
+  return base.flatMap((item) => {
     const { kind: kindAnterior, ...resto } = item;
     const vazio = String(item.src ?? '').trim() === '';
     const kindFinal = vazio ? kind : (kindAnterior ?? null);
-    return {
+    const start = Number(resto.start);
+    let end = Number(resto.end);
+    if (temLimite) {
+      if (!(start < limite - MIN_JANELA)) return [];
+      end = Math.min(end, limite);
+      if (!(end - start >= MIN_JANELA)) return [];
+    }
+    return [{
       ...resto,
+      ...(temLimite ? { end: round3(end) } : {}),
       position,
       ...(kindFinal ? { kind: kindFinal } : {}),
-    };
+    }];
   });
 }
 

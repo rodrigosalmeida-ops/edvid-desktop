@@ -2852,6 +2852,7 @@ async function writeEditData(
     edit: style.edit,
     splitMedia: style.splitMedia,
     previous: Array.isArray(previous.splits) ? (previous.splits as Record<string, unknown>[]) : [],
+    durationSec: media.durationSec,
     planned: planSplits({
       captions: media.captions,
       durationSec: media.durationSec,

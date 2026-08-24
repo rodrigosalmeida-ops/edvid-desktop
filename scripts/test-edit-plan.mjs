@@ -149,6 +149,20 @@ try {
   assert.equal(doZero.length, janelas.length);
   assert.ok(doZero.every((j) => j.src === '' && j.kind === 'image'));
 
+  // Corte refeito e mais curto: as janelas do corte antigo não podem ficar
+  // depois do fim do vídeo — invisíveis no palco e com o chip estourando a
+  // timeline. A que atravessa o fim é cortada; a que ficou toda fora, sai.
+  const encurtado = applySplitPlan({
+    edit: 'split', splitMedia: 'imagem', previous: jaExistem, planned: [], durationSec: 9,
+  });
+  assert.equal(encurtado.length, 1, 'a janela que começa depois do fim desaparece');
+  assert.equal(encurtado[0].end, 9, 'a janela que atravessa o fim é aparada');
+  assert.deepEqual(
+    applySplitPlan({ edit: 'split', splitMedia: 'imagem', previous: jaExistem, planned: [], durationSec: 7 }),
+    [],
+    'sobrando menos que a janela mínima, não sobra janela',
+  );
+
   // "Limpa" apaga as janelas: o template não olha o editType, então deixá-las
   // gravadas faria a prévia contradizer o formulário.
   assert.deepEqual(
