@@ -50,6 +50,7 @@ const api: EdvidDesktopApi = {
   getLivePreview: (directory) => ipcRenderer.invoke('preview:data', { directory }),
   applyPreviewEdits: (directory, operations) => ipcRenderer.invoke('preview:edit', { directory, operations }),
   pickSplitMedia: (directory, index) => ipcRenderer.invoke('preview:pick-split-media', { directory, index }),
+  generateSplitMedia: (directory, index, prompt) => ipcRenderer.invoke('preview:generate-split-media', { directory, index, prompt }),
   fulfillMusicRequests: (directory) => ipcRenderer.invoke('music:fulfill', { directory }),
   applyJcut: (directory) => ipcRenderer.invoke('jcut:apply', { directory }),
   syncJcut: (directory) => ipcRenderer.invoke('jcut:sync', { directory }),

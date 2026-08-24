@@ -322,6 +322,22 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       qaLiveEditado = true;
       return result.data;
     },
+    // A geração de verdade custa crédito; na bancada ela só demora e entrega
+    // o mesmo arquivo do seletor. O que interessa testar aqui é o caminho da
+    // interface: campo, espera, erro e o src chegando no split.
+    generateSplitMedia: async (_directory, index, prompt) => {
+      if (!prompt.trim()) throw new Error('Escreva o que você quer ver nesta faixa.');
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      if (/falhar/iu.test(prompt)) throw new Error('A IA não devolveu o arquivo desta faixa.');
+      const { applyEditOperations } = await import('./edit-data-edits');
+      const result = applyEditOperations(qaLiveEditData ?? {}, [
+        { op: 'set-split-src', index, src: 'imagens/edvide_desktop_demo.png', kind: 'image' },
+      ]);
+      if (!result.ok) throw new Error(result.reason);
+      qaLiveEditData = result.data;
+      qaLiveEditado = true;
+      return result.data;
+    },
     applyPreviewEdits: async (_directory, operations) => {
       const { applyEditOperations } = await import('./edit-data-edits');
       const atual = qaLiveEditData ?? {};
@@ -340,13 +356,27 @@ export function createQaBrowserApi(): EdvidDesktopApi {
         return response.json() as Promise<unknown>;
       };
       try {
+        // "É a primeira busca?" tem de ser medido ANTES do await. A interface
+        // chama getLivePreview mais de uma vez ao abrir, as chamadas correm
+        // juntas, e a segunda encontrava qaLiveEditData já preenchido pela
+        // primeira: pulava o cenário e ainda sobrescrevia o resultado dele com
+        // a cópia crua. O ?faixavazia simplesmente não acontecia.
+        const primeiraBusca = !qaLiveEditData;
         let editData = qaLiveEditData
           ?? ((await grab('edit-data.json')) as Record<string, unknown>);
-        // ?faixavazia esvazia o primeiro split: e o estado da origem
-        // "nenhum", para exercitar o placeholder e o Escolher arquivo.
-        if (!qaLiveEditData && qaSearch().has('faixavazia') && Array.isArray(editData.splits) && editData.splits[0]) {
+        // ?faixavazia esvazia o primeiro split para exercitar o placeholder e
+        // as duas origens. O `kind` do espaco vazio e o que decide se o botao
+        // de gerar com IA aparece: ?faixavazia=nenhum o remove (a origem
+        // "nenhum", so arquivo); ?faixavazia=video pede clipe.
+        if (primeiraBusca && qaSearch().has('faixavazia') && Array.isArray(editData.splits) && editData.splits[0]) {
+          const origem = qaSearch().get('faixavazia');
           const splits = [...(editData.splits as Array<Record<string, unknown>>)];
-          splits[0] = { ...splits[0], src: '' };
+          const { kind: _antigo, ...resto } = splits[0];
+          splits[0] = {
+            ...resto,
+            src: '',
+            ...(origem === 'nenhum' ? {} : { kind: origem === 'video' ? 'video' : 'image' }),
+          };
           editData = { ...editData, splits };
         }
         qaLiveEditData = editData;
@@ -632,7 +662,13 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       }, 3_000);
       return { status: 'transcrevendo', done: 0, total: 1 };
     },
-    buildPhase2: async () => {},
+    // O número de janelas é o que a mensagem do "Salvar e aplicar" usa para
+    // dizer a verdade quando não há agente. Zero fixo escondia exatamente a
+    // frase que precisa ser lida no QA.
+    buildPhase2: async (_directory, style) => ({
+      splits: style.edit === 'limpa' ? 0 : 4,
+      flashes: style.elements.flashCut ? 6 : 0,
+    }),
     setImageCatalogProvider: async (id) => {
       qaRoles = { ...qaRoles, imageCatalog: id, image: id ? null : qaRoles.image };
       emitRoles();

@@ -577,6 +577,12 @@ function EditorWorkspace({
     | { kind: OverlayKind; index: number }
     | { kind: 'captions' | 'headline' | 'soundtrack' };
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
+  // Pedido de mídia por IA para um espaço vazio da tela dividida. `aberto`
+  // guarda o índice do trecho (0 é válido, por isso null e não falsy) — quem
+  // escreve o prompt é o aluno, e sem agente conectado é o único caminho.
+  const [faixaIa, setFaixaIa] = useState<{
+    aberto: number | null; texto: string; gerando: boolean; erro: string | null;
+  }>({ aberto: null, texto: '', gerando: false, erro: null });
   const gizmoDragRef = useRef<{
     mode: 'move' | 'scale' | 'rotate';
     kind: 'splits' | 'inserts';
@@ -2006,23 +2012,100 @@ function EditorWorkspace({
                     const start = Number(item.start);
                     const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
                     if (!(currentTime >= start && currentTime < end)) return null;
+                    const indice = selectedElement.index;
+                    // O `kind` do espaço vazio é a escolha do formulário ("Conteúdo
+                    // da faixa"). Origem "nenhum" não grava kind — e então este
+                    // espaço só oferece arquivo, como o aluno pediu.
+                    const geraIa = item.kind === 'video' ? 'video' : item.kind === 'image' ? 'imagem' : null;
+                    const abertoAqui = faixaIa.aberto === indice;
+                    const guardar = (updated: Record<string, unknown> | null) => {
+                      if (updated && liveDataRef.current) {
+                        setLiveData({ ...liveDataRef.current, editData: updated, renderPending: true });
+                      }
+                    };
+                    const gerar = () => {
+                      const texto = faixaIa.texto.trim();
+                      if (!liveDirectory || !texto || faixaIa.gerando) return;
+                      setFaixaIa((atual) => ({ ...atual, gerando: true, erro: null }));
+                      void window.edvidDesktop.generateSplitMedia(liveDirectory, indice, texto)
+                        .then((updated) => {
+                          guardar(updated);
+                          setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null });
+                        })
+                        .catch((error: unknown) => {
+                          // O erro fica NO CAMPO, com o texto preservado: a
+                          // geração pode ter falhado por rede ou crédito, e
+                          // reescrever o pedido do zero seria castigo duplo.
+                          setFaixaIa((atual) => ({ ...atual, gerando: false, erro: errorMessage(error) }));
+                        });
+                    };
                     return (
-                      <button
-                        type="button"
-                        className="pick-media"
-                        onClick={() => {
-                          if (!liveDirectory) return;
-                          void window.edvidDesktop.pickSplitMedia(liveDirectory, selectedElement.index)
-                            .then((updated) => {
-                              if (updated && liveDataRef.current) {
-                                setLiveData({ ...liveDataRef.current, editData: updated, renderPending: true });
-                              }
-                            })
-                            .catch(() => {});
-                        }}
-                      >
-                        Escolher arquivo…
-                      </button>
+                      <div className="pick-media-box">
+                        {abertoAqui ? (
+                          <div className="pick-media-prompt">
+                            <textarea
+                              rows={3}
+                              autoFocus
+                              value={faixaIa.texto}
+                              disabled={faixaIa.gerando}
+                              placeholder={geraIa === 'video'
+                                ? 'O que este clipe mostra? Ex.: mãos montando um teclado mecânico, close, luz quente'
+                                : 'O que esta imagem mostra? Ex.: gráfico de barras subindo, fundo escuro'}
+                              onChange={(event) => setFaixaIa((atual) => ({ ...atual, texto: event.target.value }))}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) gerar();
+                                if (event.key === 'Escape') setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null });
+                              }}
+                            />
+                            {faixaIa.erro && <p className="pick-media-error">{faixaIa.erro}</p>}
+                            <div className="pick-media-actions">
+                              <button
+                                type="button"
+                                className="pick-media"
+                                disabled={faixaIa.gerando || !faixaIa.texto.trim()}
+                                onClick={gerar}
+                              >
+                                {faixaIa.gerando
+                                  ? (geraIa === 'video' ? 'Gerando o clipe…' : 'Gerando a imagem…')
+                                  : 'Gerar'}
+                              </button>
+                              {!faixaIa.gerando && (
+                                <button
+                                  type="button"
+                                  className="pick-media ghost"
+                                  onClick={() => setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null })}
+                                >
+                                  Cancelar
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="pick-media-actions">
+                            <button
+                              type="button"
+                              className="pick-media"
+                              onClick={() => {
+                                if (!liveDirectory) return;
+                                void window.edvidDesktop.pickSplitMedia(liveDirectory, indice)
+                                  .then(guardar)
+                                  .catch(() => {});
+                              }}
+                            >
+                              Escolher arquivo…
+                            </button>
+                            {geraIa && (
+                              <button
+                                type="button"
+                                className="pick-media ghost"
+                                onClick={() => setFaixaIa({ aberto: indice, texto: '', gerando: false, erro: null })}
+                              >
+                                {geraIa === 'video' ? 'Gerar clipe com IA…' : 'Gerar imagem com IA…'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     );
                   })()}
                   {/* GIZMO DE TEXTO (legenda e headline): arrastar move na
@@ -2725,7 +2808,7 @@ function StyleWorkspace({
               ['tracking', 'Tracking do rosto', 'Mantém olhos e rosto na zona segura.'],
               ['zoomAuto', 'Zoom automático', 'Push-in sutil dentro de cada take.'],
               ['zoomCuts', 'Zoom nos cortes', 'Varia a escala a cada mudança de take.'],
-              ['flashCut', 'Flash na transição', 'Acentua mudanças de layout selecionadas.'],
+              ['flashCut', 'Flash na transição', 'Clarão curto nas trocas de take e de layout.'],
               ['musicAI', 'Trilha sonora com IA', 'Composição instrumental em volume de referência.'],
             ] as Array<[keyof StyleSetup['elements'], string, string]>).map(([key, name, description]) => (
               <button type="button" className={`element-toggle ${style.elements[key] ? 'enabled' : ''}`} key={key} onClick={() => updateElements(key)} aria-pressed={style.elements[key]}>
@@ -2977,6 +3060,24 @@ export function App() {
   );
   const activeAiConnected = catalogChatConnected || aiConnected[aiProvider];
   const canChat = Boolean(projectDirectory) && activeAiConnected;
+  // APLICAR ESTILOS NÃO É CONVERSAR. O botão usava `canChat` e ficava
+  // desligado sem nenhuma IA de chat conectada — e quem monta a Fase 2
+  // inteira (corte, legendas, headline, zoom, trilha, tela dividida, flash) é
+  // o aplicativo. Um aluno com só o Higgsfield conectado não conseguia nem
+  // chegar à edição: o caminho sem agente existia e estava trancado na porta.
+  const canApplyStyles = Boolean(projectDirectory);
+  // Contas capazes de GERAR mídia — coisa diferente do agente de chat. Vivem
+  // aqui, e não no meio do JSX, porque a mensagem do "Salvar e aplicar"
+  // precisa da mesma resposta que o seletor "Conteúdo da faixa": prometer
+  // "descreva e deixe a IA gerar" para quem não tem conta é a mesma mentira
+  // que esta versão veio desfazer.
+  const imageAiConnected = Boolean(
+    aiRoles.imageCatalog || aiRoles.image || imageCapable.chatgpt || imageCapable.gemini,
+  );
+  const videoAiConnected = AI_CATALOG.some((entry) => (
+    entry.capabilities.includes('video')
+    && aiCatalog.connections.some((item) => item.id === entry.id && item.connected)
+  ));
   const readyRuntimes = runtimes.filter((runtime) => runtime.available).length;
   const accountLabel = account.account?.type === 'apiKey'
     ? 'Chave de API conectada'
@@ -3129,7 +3230,14 @@ export function App() {
     setApprovals([]);
     setAnsweringApprovalId(null);
     setApprovalError(null);
-    setStyle(readStoredStyle(next.project.directory, next.style ?? defaultStyleSetup));
+    // O estilo do disco entra POR CIMA do padrão, nunca no lugar dele: um
+    // projeto salvo antes de um campo existir (splitMedia, da 0.30.0) voltava
+    // sem ele, e o seletor "Conteúdo da faixa" abria sem nenhuma opção
+    // marcada — mesmo o app tratando o ausente como "Imagens por IA".
+    setStyle(readStoredStyle(
+      next.project.directory,
+      next.style ? { ...defaultStyleSetup, ...next.style } : defaultStyleSetup,
+    ));
     setStyleApplied(next.media?.kind === 'final' || Boolean(next.style));
     setCorrections([]);
     setHandledCutApprovalId(storedChat.handledCutApprovalId);
@@ -3784,8 +3892,12 @@ export function App() {
     // formulário. Isto era um pedido ao agente, e o que voltava era um corte
     // de 91s declarado como 30s, legendas vazias, a headline de exemplo do
     // template e nenhum vídeo na pasta — nada renderizava.
+    // O plano volta com o que o APLICATIVO escreveu sozinho — janelas de tela
+    // dividida e flashes. Sem esse número a interface não tem como dizer a
+    // verdade quando não há agente para preencher as janelas.
+    let plano = { splits: 0, flashes: 0 };
     try {
-      await window.edvidDesktop.buildPhase2(projectDirectory, style);
+      plano = await window.edvidDesktop.buildPhase2(projectDirectory, style);
     } catch (error) {
       setMessages((current) => [...current, { id: `error:${Date.now()}`, role: 'system', text: errorMessage(error) }]);
       return;
@@ -3826,17 +3938,20 @@ export function App() {
       // duplicou o próprio vídeo nas duas metades). A regra padrão é gerar
       // imagens com IA ilustrando a fala; a Observação pode apontar outra
       // fonte (ex.: imagens da pasta do projeto).
-      ...(style.edit === 'split' || style.edit === 'split2'
+      ...((style.edit === 'split' || style.edit === 'split2') && plano.splits > 0
         ? [
             '',
-            // A ORIGEM da mídia é escolha do aluno na aba Estilos: imagem
-            // por IA, clipe por IA, ou nenhuma (espaços que ele preenche).
+            // AS JANELAS JÁ EXISTEM. O Edvid as escreve a partir da própria
+            // fala (src/edit-plan.ts), em fronteira de frase e com respiro
+            // entre uma e outra. Antes quem as inventava era o agente — e sem
+            // agente conectado elas simplesmente não existiam. O que sobrou
+            // para ele é o CONTEÚDO: o que cada imagem ou clipe mostra.
+            `Tela dividida: o campo splits do edit-data.json JÁ ESTÁ ESCRITO, com ${plano.splits} ${plano.splits === 1 ? 'janela' : 'janelas'} de tempo e "src": "" em cada uma. NÃO crie, apague, mova nem redimensione janela nenhuma, e não mexa em "position" — o tempo e o layout já estão decididos.`,
             style.splitMedia === 'video'
-              ? 'Tela dividida — regra de conteúdo: GERE CLIPES DE VÍDEO com IA ilustrando o que está sendo dito em cada trecho da fala. Peça os clipes em edit/clipes/pedidos.json com "uso": "tela-dividida" e "segundos" igual à janela de cada trecho, e use cada arquivo no campo splits do edit-data.json com {"kind": "video", "src": "clipes/nome.mp4"}, cobrindo os principais trechos do vídeo.'
+              ? 'Sua parte é o CONTEÚDO de cada janela: para cada uma, peça um clipe em edit/clipes/pedidos.json com "uso": "tela-dividida", "segundos" igual à duração daquela janela e um prompt em inglês ilustrando o que está sendo dito NAQUELE trecho da fala. Depois preencha só o "src" da janela correspondente com "clipes/nome.mp4" e "kind": "video".'
               : style.splitMedia === 'nenhum'
-                ? 'Tela dividida — regra de conteúdo: o aluno vai escolher os próprios arquivos. NÃO gere imagem nem clipe: escreva o campo splits do edit-data.json cobrindo os principais trechos da fala com "src": "" (vazio mesmo) em cada item. O Edvid mostra o espaço vazio na prévia e o aluno aponta o arquivo de cada trecho na timeline.'
-                : 'Tela dividida — regra de conteúdo: por padrão, GERE IMAGENS com IA ilustrando o que está sendo dito em cada trecho da fala. Peça as imagens em edit/imagens/pedidos.json com "proporcao": "4:3" (metade de tela é uma faixa larga; imagem 9:16 entra cortada) e use cada arquivo no campo splits do edit-data.json, cobrindo os principais trechos do vídeo com a imagem correspondente ao assunto daquele momento.',
-            `Posição da mídia na divisão: "${style.edit === 'split' ? 'top' : 'bottom'}" (${style.edit === 'split' ? 'imagem em cima, pessoa embaixo' : 'pessoa em cima, imagem embaixo'}).`,
+                ? 'O aluno vai apontar os próprios arquivos: NÃO gere imagem nem clipe e NÃO preencha "src". Deixe as janelas vazias como estão.'
+                : 'Sua parte é o CONTEÚDO de cada janela: para cada uma, peça uma imagem em edit/imagens/pedidos.json com "uso": "tela-dividida" e um prompt em inglês ilustrando o que está sendo dito NAQUELE trecho da fala. Depois preencha só o "src" da janela correspondente com "imagens/nome.png".',
             'NUNCA use o próprio vídeo do aluno como mídia da outra metade da divisão.',
             'Exceção: se a Observação acima indicar outra fonte (por exemplo, "insira as imagens que estão na pasta do projeto"), use a fonte indicada em vez de gerar imagens novas.',
           ]
@@ -3854,12 +3969,36 @@ export function App() {
     // esqueleto vazio.
     const precisaDoAgente = style.edit !== 'limpa' || style.note.trim().length > 0;
     if (!precisaDoAgente || !activeAiConnected) {
+      // ESTA MENSAGEM MENTIA DUAS VEZES. Dizia "estou renderizando o vídeo
+      // agora" — e desde a prévia ao vivo o render só acontece no botão — e
+      // dizia "estilos aplicados" mesmo quando a tela dividida escolhida no
+      // formulário não tinha saído, porque só o agente escrevia os splits e
+      // ele não estava conectado. Agora as janelas existem (o app as escreve)
+      // e o texto diz exatamente o que ficou pronto e o que falta.
+      const partes = ['Estilos aplicados na edição.'];
+      if (plano.splits > 0) {
+        const espacos = plano.splits === 1 ? 'um espaço' : `${plano.splits} espaços`;
+        // Só oferece a IA quando existe conta capaz de gerar AQUELE tipo — é
+        // a mesma pergunta que decide o botão no palco.
+        const podeGerar = style.splitMedia === 'video'
+          ? videoAiConnected
+          : style.splitMedia === 'nenhum' ? false : imageAiConnected;
+        partes.push(podeGerar
+          ? `Deixei ${espacos} de tela dividida na timeline: selecione cada um e escolha o arquivo, ou descreva o que quer ver e deixe a IA gerar.`
+          : `Deixei ${espacos} de tela dividida na timeline: selecione cada um e aponte o arquivo que vai entrar.`);
+      }
+      // A observação é a única parte que continua exigindo um agente: é texto
+      // livre, e não há como o aplicativo adivinhar o que ela pede.
+      if (style.note.trim() && !activeAiConnected) {
+        partes.push('A observação que você escreveu ficou de fora: ela precisa de uma IA de chat conectada para virar edição.');
+      }
+      partes.push('A prévia já mostra tudo — quando quiser o arquivo final, clique em Renderizar.');
       setMessages((current) => [...current,
         { id: `user:${Date.now()}`, role: 'user', text: 'Aplicar os estilos escolhidos na edição' },
         {
           id: `assistant:estilos-${Date.now()}`,
           role: 'assistant',
-          text: 'Estilos aplicados na edição. Estou renderizando o vídeo agora — ele entra no preview sozinho quando ficar pronto.',
+          text: partes.join(' '),
         },
       ]);
       return;
@@ -4690,7 +4829,7 @@ export function App() {
                   onTimelineModelChange={handleTimelineModelChange}
                   onApplyTimelineEdits={applyTimelineEdits}
                 />
-              ) : <StyleWorkspace style={style} onChange={setStyle} onApply={applyStyleSelection} canApply={canChat} applying={sending} runtime={remotionRuntime} imageAiConnected={Boolean(aiRoles.imageCatalog || aiRoles.image || imageCapable.chatgpt || imageCapable.gemini)} videoAiConnected={AI_CATALOG.some((entry) => entry.capabilities.includes('video') && aiCatalog.connections.some((item) => item.id === entry.id && item.connected))} />}
+              ) : <StyleWorkspace style={style} onChange={setStyle} onApply={applyStyleSelection} canApply={canApplyStyles} applying={sending} runtime={remotionRuntime} imageAiConnected={imageAiConnected} videoAiConnected={videoAiConnected} />}
             </div>
           </section>
         </div>

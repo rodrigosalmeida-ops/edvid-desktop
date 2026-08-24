@@ -36,6 +36,33 @@ try {
   assert.ok(/style\.elements\.musicAI/u.test(corpo), 'a trilha tem de ser pedida pelo próprio app');
   assert.ok(/pedidos\.json/u.test(corpo));
 
+  // --- 1b. O formulário inteiro vira edição, sem depender de agente --------
+  // "Tela dividida" e "Flash na transição" eram TEXTO no prompt do agente e
+  // mais nada: writeEditData copiava `previous.splits` e `previous.animations`
+  // e nunca criava. Sem agente conectado, as duas escolhas não aconteciam — e
+  // o chat ainda respondia "Estilos aplicados". Se alguém voltar a copiar em
+  // vez de planejar, isto quebra.
+  const escrita = source.slice(source.indexOf('async function writeEditData'));
+  const corpoEscrita = escrita.slice(0, escrita.indexOf('\nasync function ', 10));
+  assert.ok(
+    !/splits: Array\.isArray\(previous\.splits\)/u.test(corpoEscrita),
+    'copiar previous.splits era o defeito: sem agente a tela dividida nunca saía',
+  );
+  assert.ok(
+    !/animations: Array\.isArray\(previous\.animations\)/u.test(corpoEscrita),
+    'copiar previous.animations deixava o flash sem nunca ser escrito',
+  );
+  assert.ok(/applySplitPlan\(/u.test(corpoEscrita), 'as janelas de tela dividida saem do plano do app');
+  assert.ok(/planSplits\(/u.test(corpoEscrita));
+  assert.ok(/planCutFlashes\(/u.test(corpoEscrita));
+  assert.ok(
+    /style\.elements\.flashCut/u.test(corpoEscrita),
+    'o botão de flash precisa chegar ao edit-data, não só ao prompt do agente',
+  );
+  // O número volta para a interface: é o que permite dizer "deixei 4 espaços
+  // na timeline" em vez de repetir "estilos aplicados".
+  assert.ok(/return \{ splits: splits\.length/u.test(corpoEscrita));
+
   // --- 2. A headline vem da fala de abertura --------------------------------
   const arquivo = path.join(outDir, 'opening.ts');
   const inicio = source.indexOf('export function openingLine');

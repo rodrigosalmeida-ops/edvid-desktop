@@ -1222,6 +1222,62 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.31.0: O FORMULÁRIO PASSOU A ENTREGAR O QUE PROMETE, SEM AGENTE. Dois
+  botões da aba Estilos eram texto no prompt do agente e mais nada, e sem
+  agente conectado o chat ainda respondia "Estilos aplicados": TELA DIVIDIDA
+  (writeEditData copiava `previous.splits` e nunca criava — a edição saía
+  limpa) e FLASH NA TRANSIÇÃO (não chegava a nenhum campo do edit-data). A
+  mensagem ainda prometia "estou renderizando o vídeo agora", coisa que a
+  prévia ao vivo aposentou. Três peças:
+  (1) `src/edit-plan.ts` (módulo puro, test:edit-plan) planeja o que o
+  aplicativo escreve sozinho. `planSplits` tira as janelas da PRÓPRIA FALA:
+  frases pelo silêncio (>0,42s), fatias iguais do span elegível com a semente
+  na frase mais próxima do centro de cada fatia — guloso empilhava tudo nos
+  primeiros 20s —, fronteira de frase nas duas pontas, respiro de 3s entre
+  janelas, nunca sob a headline nem no último segundo, e uma janela a cada 18s
+  (2 a 6). Mais conservador que o zoom (12s) de propósito: cada janela pode
+  virar um clipe pago. Sem transcrição, fatias iguais — b-roll sobre silêncio
+  é pedido legítimo. `planCutFlashes` marca as trocas visuais (junções do
+  segments.json + entrada de cada split) com folga de 1,2s, porque estrobo não
+  é estilo. O flash entra como ANIMAÇÃO com kind "flash", não como
+  `transitions`: só a lista de animações vira chip, e chip é o que o aluno
+  seleciona e apaga. `applySplitPlan` faz o plano encontrar o que já existe —
+  as janelas mandam no tempo, o formulário manda no layout (trocar split por
+  split2 vira a montagem inteira), e o `kind` só segue o formulário enquanto o
+  espaço está vazio. "Limpa" APAGA as janelas: o template não olha o editType,
+  então deixá-las gravadas faria a prévia contradizer o formulário.
+  (2) GERAR A MÍDIA DE UM ESPAÇO PELO PALCO (`preview:generate-split-media`).
+  O espaço vazio selecionado passa a oferecer duas origens: "Escolher
+  arquivo…" e "Gerar imagem/clipe com IA…", esta última só quando o `kind` do
+  split diz qual (origem "nenhum" não grava kind). O aluno escreve o prompt —
+  é a única coisa que faltava, e quem sabe o que quer ver é ele. O resto o app
+  já fazia: `uso` pela posição da faixa (a de cima é larga, a de baixo quase
+  quadrada), duração pela janela, modelo pelo nível, download, silêncio no
+  clipe, arquivo em public/ e o src no split. Passa pelo MESMO pedidos.json do
+  agente (mesmo tratamento de erro e aviso de custo), acrescentando à fila em
+  vez de sobrescrever, com nome novo a cada pedido (reaproveitar o nome fazia
+  o fulfill ver o arquivo antigo e devolver "já existe" sem gerar) e duas
+  rodadas de fulfill (uma geração em voo devolve a promessa dela, que leu a
+  fila antes). O erro fica NO CAMPO, com o texto preservado para reenviar.
+  (3) MENSAGEM HONESTA: diz quantos espaços ficaram na timeline, avisa que a
+  Observação escrita precisa de uma IA de chat conectada, e fala em Renderizar
+  em vez de fingir que já está renderizando. O prompt do agente mudou junto —
+  as janelas JÁ EXISTEM, ele preenche só o `src` e não cria, apaga nem move
+  janela nenhuma (o aluno pode ter ajustado na timeline).
+  (4) O BOTÃO ESTAVA TRANCADO NA PORTA. "Salvar e aplicar" usava `canChat`
+  (`projectDirectory && activeAiConnected`) e ficava DESABILITADO sem nenhuma
+  IA de chat conectada — quem monta a Fase 2 inteira é o aplicativo, e um
+  aluno com só o Higgsfield conectado não chegava nem à edição. Virou
+  `canApplyStyles = Boolean(projectDirectory)`. Achado na bancada ao testar a
+  mensagem nova: sem isso, o caminho sem agente existia e era inalcançável.
+  De quebra, o estilo lido do disco agora entra POR CIMA do padrão em vez de
+  no lugar dele — projeto salvo antes de um campo existir (splitMedia) abria
+  com o seletor "Conteúdo da faixa" sem nenhuma opção marcada.
+  Ainda dependem de agente: a OBSERVAÇÃO (texto livre) e o preenchimento
+  automático dos espaços. Continua dead o botão TRACKING DO ROSTO — não chega
+  a nenhum campo do edit-data em caminho nenhum (a câmera usa alvo fixo
+  0,5/0,4) e nenhum agente tem detecção de rosto: precisa de detecção de
+  verdade ou de sair da interface.
 - 0.30.2: DOIS BUGS DA MANIPULAÇÃO, MESMA ORIGEM — a interface calculava por
   conta própria em vez de espelhar a verdade do edit-data/template.
   (1) APAGAR A HEADLINE tirava do palco e a faixa continuava na timeline: as
@@ -1289,8 +1345,14 @@ Dependências do Fill:
   estouraria), o chip vira "Escolher mídia…" e o botão no palco abre o
   seletor (preview:pick-split-media: copia para public/imagens|clipes com
   sufixo anti-colisão e grava set-split-src, que recusa caminho fora de
-  public/). QA: ?faixavazia esvazia o primeiro split; o stub de escolha usa
-  arquivo EXISTENTE do projeto (src inventado derrubaria o <Img> do Player).
+  public/). QA: ?faixavazia esvazia o primeiro split (=nenhum tira o kind, só
+  arquivo; =video pede clipe — o kind é o que decide se o botão de gerar
+  aparece); o stub de escolha usa arquivo EXISTENTE do projeto (src inventado
+  derrubaria o <Img> do Player), e o de geração espera 1,2s e falha de
+  propósito com "falhar" no prompt. A checagem de "primeira busca" no
+  getLivePreview do QA é feita ANTES do await: a interface chama duas vezes ao
+  abrir, e a segunda encontrava o cache da primeira, pulava o cenário e ainda
+  sobrescrevia com a cópia crua — o ?faixavazia não acontecia.
   Método: o teste27 foi apagado do disco pelo aluno — a bancada agora usa uma
   CÓPIA em scratchpad com splits injetados, nunca arquivos do aluno; e a
   escala do screenshot do pane mudou no meio da sessão (0,625→0,804) — medir
@@ -2578,6 +2640,7 @@ npm run test:hub-generation
 npm run test:edit-data-edits
 npm run test:ffmpeg-alpha
 npm run test:graphic-layers
+npm run test:edit-plan
 EDVID_TEST_VIDEO=<um vídeo falado> npm run test:clean-cut-live
 git diff --check
 ```

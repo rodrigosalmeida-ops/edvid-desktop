@@ -72,6 +72,13 @@ import {
 } from './member-auth-policy';
 import { EDIT_DIR, RENDER_DIR, nextRenderVersion } from './project-layout';
 import { SOUNDTRACK_VOLUME, musicBrief } from './music-brief';
+import {
+  applySplitPlan,
+  planCutFlashes,
+  planSplits,
+  type PlanSegment,
+  type PlanWord,
+} from './edit-plan';
 import { previewFrames, previewPlan } from './phase2-preview';
 import {
   cleanCutArgs,
@@ -1177,8 +1184,14 @@ async function inspectProjectStyle(directory: string): Promise<ProjectStyleState
         continue;
       }
       const elements = style.elements ?? {} as ProjectStyleState['elements'];
+      const splitMedia = asText((style as { splitMedia?: unknown }).splitMedia);
       return {
         edit: style.edit as ProjectStyleState['edit'],
+        // Sem o campo (projeto anterior a 0.30.0) fica indefinido e a
+        // interface aplica o padrao — imagem por IA.
+        ...(splitMedia === 'imagem' || splitMedia === 'video' || splitMedia === 'nenhum'
+          ? { splitMedia }
+          : {}),
         headline: style.headline as ProjectStyleState['headline'],
         headlineText: asText((style as { headlineText?: unknown }).headlineText),
         captions: style.captions as ProjectStyleState['captions'],
@@ -2793,8 +2806,15 @@ export function openingLine(
 async function writeEditData(
   publicDirectory: string,
   style: ProjectStyleState,
-  media: { width: number; height: number; fps: number; durationSec: number; opening: string[] },
-): Promise<void> {
+  media: {
+    width: number; height: number; fps: number; durationSec: number; opening: string[];
+    // A fala e as juncoes do corte entram AQUI porque e aqui que o `previous`
+    // ja esta lido: o plano de tela dividida precisa saber se o projeto ja tem
+    // janelas, e o de flash precisa saber onde a headline termina.
+    captions: readonly PlanWord[];
+    segments: readonly PlanSegment[];
+  },
+): Promise<{ splits: number; flashes: number }> {
   const file = path.join(publicDirectory, 'edit-data.json');
   // Preserva o que o agente ja tiver posto de criativo (inserts, animacoes,
   // tela dividida, hook escrito): as escolhas de estilo nao apagam trabalho.
@@ -2821,6 +2841,41 @@ async function writeEditData(
     return [words.slice(0, half).join(' '), words.slice(half).join(' ')];
   })();
   const zoomCount = Math.max(3, Math.min(12, Math.round(media.durationSec / 12)));
+
+  // --- O QUE O APLICATIVO PLANEJA SOZINHO ----------------------------------
+  // Tela dividida e flash eram texto no prompt do agente e mais nada: sem
+  // agente, o formulario oferecia e a edicao saia sem. Agora saem daqui.
+  const hookEnabled = style.headline !== 'none'
+    && (escrito.length > 0 || realLines.length > 0 || media.opening.length > 0);
+  const hookEndSec = Number(hookBefore.endSec) || 4;
+  const splits = applySplitPlan({
+    edit: style.edit,
+    splitMedia: style.splitMedia,
+    previous: Array.isArray(previous.splits) ? (previous.splits as Record<string, unknown>[]) : [],
+    planned: planSplits({
+      captions: media.captions,
+      durationSec: media.durationSec,
+      hookEndSec: hookEnabled ? hookEndSec : 0,
+      position: style.edit === 'split' ? 'top' : 'bottom',
+      kind: style.splitMedia === 'video' ? 'video' : style.splitMedia === 'nenhum' ? undefined : 'image',
+    }),
+  });
+  // Os flashes sao RECALCULADOS a cada aplicacao, porque as juncoes mudam
+  // quando o corte muda. As outras animacoes (as sob medida do agente) ficam
+  // intactas. O teste de "e flash?" e o MESMO do template (kindOf em
+  // CustomGraphics): a interface nao pode decidir diferente do render.
+  const animacoesAnteriores = Array.isArray(previous.animations)
+    ? (previous.animations as Record<string, unknown>[])
+    : [];
+  const ehFlash = (item: Record<string, unknown>): boolean =>
+    item.kind === 'flash' || (!item.kind && /\bflash/iu.test(asText(item.label)));
+  const animations = [
+    ...animacoesAnteriores.filter((item) => !ehFlash(item)),
+    ...(style.elements.flashCut
+      ? planCutFlashes({ segments: media.segments, splits: splits as { start: number }[], durationSec: media.durationSec })
+      : []),
+  ].sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0));
+
   const document: Record<string, unknown> = {
     ...previous,
     width: media.width,
@@ -2838,9 +2893,8 @@ async function writeEditData(
     hook: {
       ...hookBefore,
       // Sem texto escrito nao ha headline: melhor sem do que com o exemplo.
-      enabled: style.headline !== 'none'
-        && (escrito.length > 0 || realLines.length > 0 || media.opening.length > 0),
-      endSec: Number(hookBefore.endSec) || 4,
+      enabled: hookEnabled,
+      endSec: hookEndSec,
       style: style.headline === 'none' ? 'realce' : style.headline,
       accent: style.accent,
       // Ordem de preferência: o que o aluno escreveu, o que já estava no
@@ -2859,8 +2913,8 @@ async function writeEditData(
     },
     inserts: Array.isArray(previous.inserts) ? previous.inserts : [],
     behind: Array.isArray(previous.behind) ? previous.behind : [],
-    splits: Array.isArray(previous.splits) ? previous.splits : [],
-    animations: Array.isArray(previous.animations) ? previous.animations : [],
+    splits,
+    animations,
     soundtrack: {
       ...((previous.soundtrack ?? {}) as Record<string, unknown>),
       // Liga so quando o arquivo existir: soundtrack ligado apontando arquivo
@@ -2871,6 +2925,9 @@ async function writeEditData(
     },
   };
   await writeFile(file, `${JSON.stringify(document, null, 2)}\n`);
+  // O numero volta para a interface: sem agente conectado e ele que permite
+  // dizer "deixei 4 espacos na timeline" em vez de "estilos aplicados".
+  return { splits: splits.length, flashes: animations.filter(ehFlash).length };
   // Se a trilha ja estiver na pasta, liga na hora.
   await ensureSoundtrackFile(path.resolve(publicDirectory, '..', '..', '..'), publicDirectory).catch(() => {});
 }
@@ -2887,7 +2944,7 @@ async function writeEditData(
 async function buildPhase2(
   projectDirectory: string,
   style: ProjectStyleState,
-): Promise<void> {
+): Promise<{ splits: number; flashes: number }> {
   await scaffoldRemotionProject(projectDirectory);
   const python = resolveRuntime('python', appRuntimeContext());
   const ffprobe = resolveRuntime('ffprobe', appRuntimeContext());
@@ -2994,8 +3051,18 @@ async function buildPhase2(
   }
 
   // 7. As escolhas do formulario viram os campos oficiais do template.
-  await writeEditData(publicDirectory, style, {
-    width, height, fps, durationSec, opening: openingLine(captions),
+  //    As juncoes do corte entram junto: e delas que saem os flashes, e o
+  //    helper acima acabou de escrever o arquivo. Se ele falhou (o .catch
+  //    acima engole), a lista vem vazia e o plano so perde os flashes de
+  //    corte — os de tela dividida continuam.
+  const segments = await readFile(path.join(publicDirectory, 'segments.json'), 'utf8')
+    .then((raw) => {
+      const parsed = JSON.parse(raw) as { segments?: unknown };
+      return Array.isArray(parsed.segments) ? (parsed.segments as PlanSegment[]) : [];
+    })
+    .catch(() => [] as PlanSegment[]);
+  return writeEditData(publicDirectory, style, {
+    width, height, fps, durationSec, opening: openingLine(captions), captions, segments,
   });
 }
 
@@ -4607,6 +4674,123 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
   return tracked;
 }
 
+// --- A MIDIA DE UM ESPACO DA TELA DIVIDIDA ----------------------------------
+// Duas origens, um so destino: o arquivo entra em public/ e o `src` do split
+// passa a apontar para ele. COPIA, nunca referencia — o render roda no sandbox
+// com public/ como raiz, e um caminho de fora quebraria ao mover o projeto de
+// maquina.
+async function attachSplitMedia(
+  projectDirectory: string,
+  index: number,
+  source: string,
+): Promise<Record<string, unknown>> {
+  const extension = path.extname(source).toLowerCase();
+  const isVideo = ['.mp4', '.mov', '.webm'].includes(extension);
+  const folder = isVideo ? 'clipes' : 'imagens';
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  // Nome achatado e com sufixo se ja existir: nunca sobrescrever um arquivo
+  // que o aluno ja usou em outro trecho.
+  const base = path.basename(source, extension).replace(/[^\w.-]+/gu, '_') || 'midia';
+  let name = `${base}${extension}`;
+  let attempt = 1;
+  while (await statOf(path.join(publicDirectory, folder, name))) {
+    attempt += 1;
+    name = `${base}_${attempt}${extension}`;
+  }
+  await mkdir(path.join(publicDirectory, folder), { recursive: true });
+  await copyFile(source, path.join(publicDirectory, folder, name));
+
+  const file = path.join(publicDirectory, 'edit-data.json');
+  const data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  const result = applyEditOperations(data, [
+    { op: 'set-split-src', index, src: `${folder}/${name}`, kind: isVideo ? 'video' : 'image' },
+  ]);
+  if (!result.ok) throw new Error(`Não consegui aplicar: ${result.reason}.`);
+  const temporary = `${file}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(result.data, null, 2)}\n`);
+  await rename(temporary, file);
+  return result.data;
+}
+
+// O aluno DESCREVE a faixa e o Edvid gera.
+//
+// Este caminho existe porque sem agente conectado ninguem escrevia
+// pedidos.json — e o espaco vazio ficava vazio para sempre, enquanto o
+// formulario prometia "Imagens por IA". O prompt e a unica coisa que faltava,
+// e quem sabe o que quer ver e o aluno: o resto (modelo pelo nivel, proporcao
+// pela faixa, credito, download, silencio no clipe) o aplicativo ja fazia.
+//
+// A duracao e o USO saem do PROPRIO split — a faixa de cima e larga e curta, a
+// de baixo e quase quadrada, e pedir as duas iguais entrega imagem esticada.
+async function generateSplitMedia(
+  projectDirectory: string,
+  index: number,
+  prompt: string,
+): Promise<Record<string, unknown>> {
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const data = JSON.parse(
+    await readFile(path.join(publicDirectory, 'edit-data.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  const splits = Array.isArray(data.splits) ? (data.splits as Record<string, unknown>[]) : [];
+  const item = splits[index];
+  if (!item) throw new Error('Este trecho não existe mais na edição.');
+
+  const isVideo = item.kind === 'video';
+  const uso: ImageUse = item.position === 'bottom' ? 'tela-dividida-base' : 'tela-dividida';
+  const start = Number(item.start);
+  const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+  const segundos = Math.max(2, Math.round(end - start));
+
+  const folder = isVideo ? 'clipes' : 'imagens';
+  const generatedDirectory = path.join(projectDirectory, 'edit', folder);
+  await mkdir(generatedDirectory, { recursive: true });
+  // Nome NOVO a cada pedido. Reaproveitar o nome faria o fulfill achar o
+  // arquivo antigo no disco e devolver "ja existe" sem gerar nada — e quem
+  // pediu de novo porque nao gostou da primeira acharia que a IA o ignorou.
+  const extension = isVideo ? '.mp4' : '.png';
+  let attempt = 1;
+  let arquivo = `faixa-${index + 1}${extension}`;
+  while (await statOf(path.join(generatedDirectory, arquivo))) {
+    attempt += 1;
+    arquivo = `faixa-${index + 1}_${attempt}${extension}`;
+  }
+
+  // A fila continua sendo o pedidos.json: e o mesmo caminho do agente, com o
+  // mesmo tratamento de erro, mesma escolha de modelo e mesmo aviso de custo.
+  // Acrescenta ao que ja estiver la em vez de sobrescrever — um pedido do
+  // agente ainda pendente nao pode sumir por causa de um clique aqui.
+  const requestsFile = path.join(generatedDirectory, 'pedidos.json');
+  const fila = await readFile(requestsFile, 'utf8')
+    .then((raw) => JSON.parse(raw) as unknown)
+    .then((parsed) => (Array.isArray(parsed) ? parsed : []))
+    .catch(() => [] as unknown[]);
+  await writeFile(requestsFile, `${JSON.stringify([
+    ...fila,
+    { arquivo, prompt, uso, ...(isVideo ? { segundos } : {}) },
+  ], null, 2)}\n`);
+
+  const target = path.join(generatedDirectory, arquivo);
+  // Duas rodadas de proposito: se ja houvesse uma geracao em voo para este
+  // projeto, o fulfill devolve a promessa DELA — que leu o arquivo de pedidos
+  // antes do nosso entrar. A segunda chamada pega a fila atualizada.
+  let ultimo: ImageGenState = { status: 'idle' };
+  for (let round = 0; round < 2; round += 1) {
+    ultimo = isVideo
+      ? await fulfillVideoRequests(projectDirectory)
+      : await fulfillImageRequests(projectDirectory);
+    if (await statOf(target)) break;
+    if (ultimo.status === 'error') break;
+  }
+  if (!(await statOf(target))) {
+    // O fulfill ja avisou o motivo no chat (broadcastCodexEvent); aqui a
+    // mensagem e para o botao, e nao pode fingir que deu certo.
+    throw new Error(ultimo.status === 'error' && ultimo.error
+      ? ultimo.error
+      : 'A IA não devolveu o arquivo desta faixa.');
+  }
+  return attachSplitMedia(projectDirectory, index, target);
+}
+
 // Valida a chave da OpenAI antes de entregar ao Codex: o app-server aceita
 // qualquer texto sem checar, e o aluno so descobriria o erro no meio do turno.
 async function validateOpenAiKey(apiKey: string): Promise<void> {
@@ -4850,7 +5034,7 @@ function registerIpcHandlers(): void {
       throw new Error('Abra o projeto antes de aplicar os estilos.');
     }
     if (!input.style) throw new Error('Escolha os estilos antes de aplicar.');
-    await buildPhase2(requestedDirectory, input.style);
+    return buildPhase2(requestedDirectory, input.style);
   });
 
   ipcMain.handle('cleancut:run', (_event, input: { directory?: string }) => {
@@ -5158,37 +5342,24 @@ function registerIpcHandlers(): void {
     });
     const source = picked.filePaths[0];
     if (picked.canceled || !source) return null;
-    const extension = path.extname(source).toLowerCase();
-    const isVideo = ['.mp4', '.mov', '.webm'].includes(extension);
-    const folder = isVideo ? 'clipes' : 'imagens';
-    const publicDirectory = path.join(directory, 'edit', 'remotion', 'public');
-    // Nome achatado e com sufixo se ja existir: nunca sobrescrever um arquivo
-    // que o aluno ja usou em outro trecho.
-    const base = path.basename(source, extension).replace(/[^\w.-]+/gu, '_') || 'midia';
-    let name = `${base}${extension}`;
-    let attempt = 1;
-    while (true) {
-      try {
-        await stat(path.join(publicDirectory, folder, name));
-        attempt += 1;
-        name = `${base}_${attempt}${extension}`;
-      } catch {
-        break;
-      }
+    return attachSplitMedia(directory, index, source);
+  });
+
+  // Mesmo espaco vazio, outra origem: em vez de apontar um arquivo, o aluno
+  // DESCREVE o que quer ver e o Edvid gera. Ver generateSplitMedia.
+  ipcMain.handle('preview:generate-split-media', async (
+    _event,
+    input: { directory?: string; index?: unknown; prompt?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
     }
-    await mkdir(path.join(publicDirectory, folder), { recursive: true });
-    await copyFile(source, path.join(publicDirectory, folder, name));
-    const src = `${folder}/${name}`;
-    const file = path.join(publicDirectory, 'edit-data.json');
-    const data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
-    const result = applyEditOperations(data, [
-      { op: 'set-split-src', index, src, kind: isVideo ? 'video' : 'image' },
-    ]);
-    if (!result.ok) throw new Error(`Não consegui aplicar: ${result.reason}.`);
-    const temporary = `${file}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(result.data, null, 2)}\n`);
-    await rename(temporary, file);
-    return result.data;
+    const index = Number(input.index);
+    if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
+    const prompt = asText(input.prompt).trim();
+    if (!prompt) throw new Error('Escreva o que você quer ver nesta faixa.');
+    return generateSplitMedia(directory, index, prompt);
   });
 
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {

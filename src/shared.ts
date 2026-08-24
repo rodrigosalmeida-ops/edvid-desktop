@@ -107,6 +107,9 @@ export type ProjectSource = {
 
 export type ProjectStyleState = {
   edit: 'limpa' | 'split' | 'split2';
+  // De onde vem a MÍDIA da tela dividida. Opcional na leitura: projetos
+  // salvos antes da 0.30.0 não têm o campo, e o padrão entra na interface.
+  splitMedia?: 'imagem' | 'video' | 'nenhum';
   headline: 'outline' | 'card' | 'realce' | 'misto' | 'none';
   // O TEXTO da headline, escrito pelo aluno. Era a única parte criativa desta
   // etapa que dependia do agente — e ele entregou o exemplo do template
@@ -462,6 +465,13 @@ export type EdvidDesktopApi = {
   ) => Promise<Record<string, unknown>>;
   // Seletor de arquivo para um espaco vazio da tela dividida; null = cancelou.
   pickSplitMedia: (directory: string, index: number) => Promise<Record<string, unknown> | null>;
+  // Mesma faixa, outra origem: o aluno descreve e o Edvid gera. Devolve o
+  // edit-data ja com o src apontado; estoura com o motivo quando nao vem nada.
+  generateSplitMedia: (
+    directory: string,
+    index: number,
+    prompt: string,
+  ) => Promise<Record<string, unknown>>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;
@@ -522,7 +532,13 @@ export type EdvidDesktopApi = {
   onMemberAuthState: (listener: (state: MemberAuthState) => void) => () => void;
   renderPhase2: (directory: string) => Promise<Phase2RenderState>;
   onPhase2RenderState: (listener: (state: Phase2RenderState) => void) => () => void;
-  buildPhase2: (directory: string, style: ProjectStyleState) => Promise<void>;
+  // Devolve o que o APLICATIVO planejou sozinho: quantas janelas de tela
+  // dividida e quantos flashes entraram. A interface precisa do número para
+  // dizer a verdade quando não há agente conectado para preencher as janelas.
+  buildPhase2: (
+    directory: string,
+    style: ProjectStyleState,
+  ) => Promise<{ splits: number; flashes: number }>;
   runCleanCut: (directory: string) => Promise<CleanCutState>;
   applyTimelineRanges: (
     directory: string,
