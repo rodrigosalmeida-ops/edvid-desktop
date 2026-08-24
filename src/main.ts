@@ -31,6 +31,7 @@ import {
   keyProbe,
 } from './ai-catalog';
 import {
+  framingHint,
   geminiAspect,
   imageUse,
   openAiSize,
@@ -4713,6 +4714,24 @@ async function attachSplitMedia(
   return result.data;
 }
 
+// NADA DE TEXTO NA MIDIA GERADA.
+//
+// O primeiro clipe pedido em uso real voltou parecendo uma gravacao de tela
+// cheia de rabiscos que imitavam caracteres chineses. Modelo de video nao sabe
+// desenhar letra: ele produz glifo falso sempre que a cena pede escrita, e
+// b-roll atras de uma legenda karaoke e o pior lugar possivel para isso — o
+// texto de mentira briga com o texto de verdade.
+//
+// O enquadramento tambem entra AQUI no caso do video: o caminho de imagem ja
+// passa pelo promptWithFraming no fulfill, o de video nunca passou por nenhum.
+const SEM_TEXTO = 'No text, no letters, no captions, no subtitles, no watermarks, '
+  + 'no logos and no user interface labels anywhere in the frame.';
+
+function promptDaFaixa(prompt: string, uso: ImageUse, isVideo: boolean): string {
+  const enquadramento = isVideo ? framingHint(uso) : '';
+  return [prompt.trim(), enquadramento, SEM_TEXTO].filter(Boolean).join('\n\n');
+}
+
 // O aluno DESCREVE a faixa e o Edvid gera.
 //
 // Este caminho existe porque sem agente conectado ninguem escrevia
@@ -4767,7 +4786,7 @@ async function generateSplitMedia(
     .catch(() => [] as unknown[]);
   await writeFile(requestsFile, `${JSON.stringify([
     ...fila,
-    { arquivo, prompt, uso, ...(isVideo ? { segundos } : {}) },
+    { arquivo, prompt: promptDaFaixa(prompt, uso, isVideo), uso, ...(isVideo ? { segundos } : {}) },
   ], null, 2)}\n`);
 
   const target = path.join(generatedDirectory, arquivo);

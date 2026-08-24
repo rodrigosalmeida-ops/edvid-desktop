@@ -989,6 +989,9 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 }
 .pick-media-prompt textarea:focus { outline: none; border-color: var(--orange); }
 .pick-media-prompt textarea:disabled { opacity: .6; }
+.pick-media-dica {
+  color: var(--dim); font-size: 11.5px; line-height: 1.35; text-align: center;
+}
 .pick-media-error {
   margin: 0; padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.35;
   color: #ffc9c9; border: 1px solid rgba(255,90,90,.4); background: rgba(40,12,12,.9);

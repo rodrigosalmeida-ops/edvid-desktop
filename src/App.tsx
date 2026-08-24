@@ -2057,6 +2057,11 @@ function EditorWorkspace({
                                 if (event.key === 'Escape') setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null });
                               }}
                             />
+                            {/* O prompt vai para o modelo COMO ESTÁ — o Edvid
+                                não traduz. Vale dizer: os modelos entendem
+                                português, mas foram treinados em inglês e
+                                entregam bem melhor nele. */}
+                            <small className="pick-media-dica">Sai melhor em inglês. O Edvid já pede à IA que não desenhe texto nenhum na cena.</small>
                             {faixaIa.erro && <p className="pick-media-error">{faixaIa.erro}</p>}
                             <div className="pick-media-actions">
                               <button

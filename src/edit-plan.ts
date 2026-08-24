@@ -122,45 +122,66 @@ export function planSplits(input: {
   if (fim - inicio < MIN_JANELA) return [];
 
   const alvo = splitCount(durationSec);
+  const span = fim - inicio;
+
+  // A JANELA E O RESPIRO SE ENCOLHEM QUANDO O VIDEO E CURTO.
+  //
+  // Com os valores fixos (5s de janela + 3s de respiro) um reel de 14s com
+  // headline de 4s so tinha 8,4s uteis: a primeira janela comia 5, o respiro
+  // comia 3, e a segunda nao cabia. Saia UMA janela, jogada na segunda metade
+  // — foi exatamente o que apareceu no uso real. Os valores continuam sendo
+  // teto: em video longo nada muda.
+  const folga = Math.min(FOLGA_ENTRE_JANELAS, span * 0.15);
+  const janelaAlvo = Math.max(
+    MIN_JANELA,
+    Math.min(ALVO_JANELA, (span - (alvo - 1) * folga) / alvo),
+  );
+
   const phrases = phrasesFrom(input.captions).filter((p) => p.end > inicio && p.start < fim);
   const janelas: PlannedSplit[] = [];
   let ultimoFim = -Infinity;
 
   for (let k = 0; k < alvo; k += 1) {
-    const centro = inicio + ((fim - inicio) * (k + 0.5)) / alvo;
-    const piso = Math.max(inicio, ultimoFim + FOLGA_ENTRE_JANELAS);
+    // A janela fica CENTRADA na sua fatia, nao colada no comeco dela: com a
+    // semente no comeco, um video de 60s punha as tres janelas em 4,8s, 24,6s
+    // e 42,2s e deixava os ultimos 14s sem nada.
+    const fatia = span / alvo;
+    const fatiaInicio = inicio + fatia * k + Math.max(0, (fatia - janelaAlvo) / 2);
+    const piso = Math.max(inicio, fatiaInicio, ultimoFim + folga);
     if (fim - piso < MIN_JANELA) break;
 
     let start: number;
     let end: number;
 
     if (phrases.length) {
-      // Semente: a frase que comeca depois do piso e cujo meio esta mais perto
-      // do centro da fatia.
-      let semente = -1;
-      let melhor = Infinity;
-      for (let i = 0; i < phrases.length; i += 1) {
-        if (phrases[i].start < piso) continue;
-        const distancia = Math.abs((phrases[i].start + phrases[i].end) / 2 - centro);
-        if (distancia < melhor) {
-          melhor = distancia;
-          semente = i;
-        }
-      }
+      // Semente: a PRIMEIRA frase que comeca depois do piso.
+      //
+      // Era "a frase cujo meio esta mais perto do centro da fatia", e num reel
+      // de 14s isso empurrava a primeira janela quase 2s para a direita — o
+      // suficiente para a segunda nao caber mais. O piso ja carrega a fatia e
+      // o respiro, entao pegar a primeira depois dele posiciona igual em video
+      // longo e deixa de roubar espaco em video curto.
+      const semente = phrases.findIndex((p) => p.start >= piso);
       if (semente < 0) break;
       start = phrases[semente].start;
       end = phrases[semente].end;
-      // Cresce pelas frases seguintes ate o alvo, sempre parando em fronteira
-      // de frase — nunca no meio de uma palavra.
-      for (let i = semente + 1; i < phrases.length && end - start < ALVO_JANELA; i += 1) {
-        if (phrases[i].end > fim || phrases[i].end - start > MAX_JANELA) break;
-        end = phrases[i].end;
+      // Cresce pelas frases seguintes, sempre parando em fronteira de frase —
+      // nunca no meio de uma palavra. E nao PASSA do alvo: deixar uma frase
+      // longa estourar a janela era o outro lado do mesmo defeito, porque ela
+      // comia o respiro da janela seguinte. Estourar so vale para escapar do
+      // minimo.
+      for (let i = semente + 1; i < phrases.length; i += 1) {
+        const candidato = phrases[i].end;
+        if (candidato > fim || candidato - start > MAX_JANELA) break;
+        if (candidato - start > janelaAlvo && end - start >= MIN_JANELA) break;
+        end = candidato;
+        if (end - start >= janelaAlvo) break;
       }
     } else {
       // Sem transcricao (video sem fala, ou a legenda falhou) o plano ainda
       // existe: fatias iguais. B-roll sobre silencio e um pedido legitimo.
-      start = Math.max(piso, centro - ALVO_JANELA / 2);
-      end = start + ALVO_JANELA;
+      start = piso;
+      end = start + janelaAlvo;
     }
 
     end = Math.min(end, fim, start + MAX_JANELA);

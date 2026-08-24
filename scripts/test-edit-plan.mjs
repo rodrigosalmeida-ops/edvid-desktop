@@ -99,6 +99,36 @@ try {
   // primeiros 20s. A última janela tem de estar na segunda metade do vídeo.
   assert.ok(janelas[janelas.length - 1].start > 47.5, 'as janelas têm de cobrir o vídeo inteiro');
 
+  // --- 3b. Vídeo CURTO: a janela e o respiro encolhem ----------------------
+  // Caso real de uso: reel de 14,02s com headline de 4s. Com os valores fixos
+  // (5s de janela + 3s de respiro) só cabia UMA janela nos 8,4s úteis, e ela
+  // saía jogada na segunda metade — o aluno viu exatamente isso.
+  const curto = [];
+  for (let t = 0.4; t < 13.5; t += 1.6) {
+    for (let w = 0; w < 3; w += 1) {
+      curto.push({ text: `w${w}`, startMs: (t + w * 0.36) * 1000, endMs: (t + w * 0.36 + 0.32) * 1000 });
+    }
+  }
+  const janelasCurtas = planSplits({
+    captions: curto, durationSec: 14.02, hookEndSec: 4, position: 'top', kind: 'video',
+  });
+  assert.equal(janelasCurtas.length, 2, 'um reel de 14s tem de receber as duas janelas');
+  assert.ok(janelasCurtas[0].start >= 4.6, 'a headline continua intocada');
+  assert.ok(janelasCurtas[janelasCurtas.length - 1].end <= 13.02, 'o último segundo continua livre');
+  assert.ok(
+    janelasCurtas.every((j) => j.end - j.start >= 2.4),
+    'nenhuma janela abaixo do mínimo, mesmo espremida',
+  );
+  // Distribuídas, não amontoadas: a segunda começa depois do meio do trecho útil.
+  assert.ok(janelasCurtas[1].start > 8.8, `segunda janela cedo demais: ${janelasCurtas[1].start}`);
+
+  // O encolhimento é TETO, não regra: vídeo longo não muda nada.
+  assert.equal(janelas.length, 5);
+  assert.ok(
+    janelas.every((j) => j.end - j.start <= 5.0001),
+    'em vídeo longo a janela continua no alvo de 5s',
+  );
+
   // --- 4. Casos que não rendem plano ---------------------------------------
   assert.deepEqual(
     planSplits({ captions: roteiro, durationSec: 5, hookEndSec: 4, position: 'top' }),

@@ -1225,6 +1225,28 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.31.3: dois relatos do primeiro uso real da geração por faixa.
+  (1) UMA JANELA SÓ, E JOGADA NO FIM, num reel de 14,02s. A janela (5s) e o
+  respiro (3s) eram absolutos, calibrados em vídeo de 90s: com headline de 4s
+  sobravam 8,4s úteis, a primeira janela comia 5, o respiro comia 3 e a
+  segunda não cabia. Agora os dois são TETO e encolhem com o span (respiro =
+  min(3, span×0,15); janela = span/alvo descontado o respiro). Dois ajustes
+  vieram junto, os dois visíveis no mesmo caso: a semente deixou de ser "a
+  frase mais próxima do CENTRO da fatia" (empurrava a primeira janela ~2s à
+  direita e comia o espaço da segunda) e passou a ser a primeira frase depois
+  do piso; e o crescimento parou de PASSAR do alvo por causa de uma frase
+  longa — estourar só vale para escapar do mínimo. A janela também ficou
+  CENTRADA na fatia em vez de colada no começo: um vídeo de 60s punha tudo em
+  4,8/24,6/42,2 e deixava os últimos 14s vazios; agora é 11,4/31,2/48,8.
+  (2) O CLIPE GERADO VOLTOU EM "CHINÊS" — rabiscos imitando ideogramas numa
+  cena que parecia gravação de tela. Modelo de vídeo não desenha letra: produz
+  glifo falso sempre que a cena pede escrita, e b-roll atrás de legenda
+  karaoke é o pior lugar possível para texto de mentira. O pedido da faixa
+  agora carrega SEM_TEXTO (nada de letra, legenda, marca d'água ou rótulo de
+  interface) e, no caso do vídeo, o enquadramento da faixa — o caminho de
+  imagem já passava pelo promptWithFraming no fulfill, o de vídeo nunca passou
+  por nenhum. O campo do palco avisa que sai melhor em inglês: o Edvid não
+  traduz, e o prompt vai ao modelo como está.
 - 0.31.2: O SELETOR "CONTEÚDO DA FAIXA" MOSTRAVA "CLIPES POR IA" E ESCONDIA
   "IMAGENS POR IA" com o Higgsfield conectado. Os dois botões perguntavam
   coisas DIFERENTES: vídeo olhava o catálogo (existe conta conectada capaz?) e

@@ -63,6 +63,19 @@ try {
   // na timeline" em vez de repetir "estilos aplicados".
   assert.ok(/return \{ splits: splits\.length/u.test(corpoEscrita));
 
+  // --- 1c. A mídia gerada não pode vir escrita ------------------------------
+  // O primeiro clipe pedido em uso real voltou parecendo uma gravação de tela
+  // cheia de rabiscos imitando caracteres chineses: modelo de vídeo não sabe
+  // desenhar letra, e b-roll atrás de uma legenda karaoke é o pior lugar
+  // possível para texto falso.
+  assert.ok(/const SEM_TEXTO = /u.test(source), 'o pedido tem de proibir texto na cena');
+  const faixa = source.slice(source.indexOf('function promptDaFaixa'));
+  const corpoFaixa = faixa.slice(0, faixa.indexOf('\n}'));
+  assert.ok(/SEM_TEXTO/u.test(corpoFaixa));
+  // O caminho de VÍDEO nunca passou por enquadramento nenhum (o de imagem
+  // passa pelo promptWithFraming no fulfill), então ele entra aqui.
+  assert.ok(/isVideo \? framingHint\(uso\)/u.test(corpoFaixa), 'clipe precisa do enquadramento da faixa');
+
   // --- 2. A headline vem da fala de abertura --------------------------------
   const arquivo = path.join(outDir, 'opening.ts');
   const inicio = source.indexOf('export function openingLine');
