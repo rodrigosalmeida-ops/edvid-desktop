@@ -1377,7 +1377,9 @@ Dependências do Fill:
   sufixo anti-colisão e grava set-split-src, que recusa caminho fora de
   public/). QA: ?faixavazia esvazia o primeiro split (=nenhum tira o kind, só
   arquivo; =video pede clipe — o kind é o que decide se o botão de gerar
-  aparece); o stub de escolha usa arquivo EXISTENTE do projeto (src inventado
+  aparece); `?hub=semrole` conecta o hub sem preencher os papéis, que é o
+  estado em que "Imagens por IA" sumia do seletor; o stub de escolha usa
+  arquivo EXISTENTE do projeto (src inventado
   derrubaria o <Img> do Player), e o de geração espera 1,2s e falha de
   propósito com "falhar" no prompt. A checagem de "primeira busca" no
   getLivePreview do QA é feita ANTES do await: a interface chama duas vezes ao
