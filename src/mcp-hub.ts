@@ -340,10 +340,14 @@ export class McpHub {
         throw error;
       });
       await transport.finishAuth(await code);
-      // Reconecta com o token na mao.
-      await client.connect(transport);
-      this.client = client;
-      this.transport = transport;
+      // O transporte da AUTORIZACAO ja foi iniciado pelo primeiro connect e
+      // nao aceita comecar de novo — reconectar nele deu "already started"
+      // em uso real, DEPOIS da pagina de conectado (o token ja estava salvo
+      // pelo finishAuth e o aluno via um erro sobre um login que funcionou).
+      // Fora com ele; a conexao de verdade e a mesma do uso diario, com o
+      // token que acabou de entrar no cofre.
+      await client.close().catch(() => {});
+      await this.ensure();
     } finally {
       server.close();
     }

@@ -1222,6 +1222,16 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.29.2: O LOGIN DO HIGGSFIELD, segunda camada do mesmo defeito. A 0.29.1
+  manteve o servidor de retorno vivo (a página "Higgsfield conectado"
+  apareceu, o finishAuth salvou o token) — e aí o reconectar usava O MESMO
+  transporte que o primeiro connect já tinha iniciado, e o SDK recusa:
+  "StreamableHTTPClientTransport already started". O aluno via um erro sobre
+  um login que tinha FUNCIONADO (token no cofre). Agora o transporte da
+  autorização é descartado depois do finishAuth e a conexão de verdade passa
+  pelo ensure() — o mesmo caminho do uso diário, com transporte novo. A regra
+  que fica: transporte de MCP é de uso único por connect; autorizou, joga
+  fora e conecta de novo.
 - 0.29.1: TRÊS DEFEITOS DE USO REAL. (1) LOGIN DO HIGGSFIELD morria com
   ERR_CONNECTION_REFUSED no retorno do navegador: o UnauthorizedError do SDK
   do MCP NÃO define this.name (conferido no fonte — name fica "Error"), a
