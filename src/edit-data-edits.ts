@@ -18,7 +18,10 @@ export type EditOperation =
   | { op: 'resize'; kind: OverlayKind; index: number; edge: 'start' | 'end'; time: number }
   // O gizmo do palco: pan/zoom/giro do elemento selecionado. Parcial — so os
   // eixos que o mouse mexeu; os demais ficam como estavam.
-  | { op: 'set-transform'; kind: 'splits' | 'inserts'; index: number; transform: ManualTransform };
+  | { op: 'set-transform'; kind: 'splits' | 'inserts'; index: number; transform: ManualTransform }
+  // O aluno apontou o arquivo de um espaco vazio (origem "nenhum"). O src e
+  // RELATIVO a public/ e ja foi copiado para la por quem chama.
+  | { op: 'set-split-src'; index: number; src: string; kind: 'image' | 'video' };
 
 // Os mesmos limites do template (Main.tsx): fora deles a divisa colaria no
 // topo ou no pe do quadro e o recorte do video degeneraria.
@@ -85,6 +88,22 @@ export function applyEditOperation(
     if (Number(item.divider ?? NaN) === divider) return { ok: true, data, changed: false };
     const next = [...splits];
     next[operation.index] = { ...item, divider };
+    return { ok: true, data: { ...data, splits: next }, changed: true };
+  }
+
+  if (operation.op === 'set-split-src') {
+    const splits = listOf(data, 'splits');
+    const item = splits?.[operation.index];
+    if (!splits || !item) return { ok: false, reason: 'essa tela dividida não existe mais' };
+    const src = String(operation.src ?? '').trim();
+    // Relativo a public/, sempre: absoluto ou ../ apontaria para fora do
+    // projeto e o render nao encontraria (ou encontraria o que nao devia).
+    if (!src || src.startsWith('/') || src.includes('..') || /^[a-z]+:/iu.test(src)) {
+      return { ok: false, reason: 'arquivo fora da pasta do projeto' };
+    }
+    if (item.src === src && item.kind === operation.kind) return { ok: true, data, changed: false };
+    const next = [...splits];
+    next[operation.index] = { ...item, src, kind: operation.kind };
     return { ok: true, data: { ...data, splits: next }, changed: true };
   }
 

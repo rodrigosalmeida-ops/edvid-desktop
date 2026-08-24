@@ -231,6 +231,25 @@ try {
   }
   assert.ok(image('regular', { portrait: true }).credits < image('regular').credits);
 
+  // --- 4b. O formato NOVO do catálogo: duração só no parâmetro ---------------
+  // Medido na conta real do aluno: durations/duration_range sumiram do topo e
+  // vivem no parâmetro `duration`. O catálogo inteiro nesse formato tem de
+  // continuar resolvendo — foi a falha da primeira geração real.
+  const soParametro = VIDEO.map((m) => {
+    const { durations, duration_range, ...resto } = m;
+    const parametros = [...(m.parameters ?? [])];
+    if (!parametros.some((p) => p.name === 'duration')) {
+      parametros.push(durations
+        ? { name: 'duration', options: durations, default: durations[0] }
+        : { name: 'duration', min: duration_range.min, max: duration_range.max, default: 5 });
+    }
+    return { ...resto, parameters: parametros };
+  });
+  const novoFormato = resolveGeneration({ hub: 'higgsfield', kind: 'video', tier: 'medio', use: 'tela-cheia', seconds: 4, catalog: soParametro });
+  assert.ok(novoFormato, 'o formato novo tem de resolver');
+  assert.equal(novoFormato.model, 'seedance1_5');
+  assert.equal(novoFormato.duration, 4);
+
   // --- 4. Duração: arredonda para CIMA ---------------------------------------
   // Pedir menos que a janela deixaria um buraco no vídeo.
   const dur = (id, s) => durationFor(VIDEO.find((m) => m.id === id), s);

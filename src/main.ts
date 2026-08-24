@@ -5138,6 +5138,59 @@ function registerIpcHandlers(): void {
     return result.data;
   });
 
+  // O aluno aponta o ARQUIVO de um espaco vazio da tela dividida: abre o
+  // seletor, copia para public/ (imagens/ ou clipes/) e grava o src no split.
+  // Copia, nunca referencia: o render roda no sandbox com public/ como raiz, e
+  // um caminho de fora quebraria ao mover o projeto de maquina.
+  ipcMain.handle('preview:pick-split-media', async (_event, input: { directory?: string; index?: unknown }) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+    }
+    const index = Number(input.index);
+    if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
+    const picked = await dialog.showOpenDialog({
+      title: 'Escolher a mídia da faixa',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Imagens e vídeos', extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'webm'] },
+      ],
+    });
+    const source = picked.filePaths[0];
+    if (picked.canceled || !source) return null;
+    const extension = path.extname(source).toLowerCase();
+    const isVideo = ['.mp4', '.mov', '.webm'].includes(extension);
+    const folder = isVideo ? 'clipes' : 'imagens';
+    const publicDirectory = path.join(directory, 'edit', 'remotion', 'public');
+    // Nome achatado e com sufixo se ja existir: nunca sobrescrever um arquivo
+    // que o aluno ja usou em outro trecho.
+    const base = path.basename(source, extension).replace(/[^\w.-]+/gu, '_') || 'midia';
+    let name = `${base}${extension}`;
+    let attempt = 1;
+    while (true) {
+      try {
+        await stat(path.join(publicDirectory, folder, name));
+        attempt += 1;
+        name = `${base}_${attempt}${extension}`;
+      } catch {
+        break;
+      }
+    }
+    await mkdir(path.join(publicDirectory, folder), { recursive: true });
+    await copyFile(source, path.join(publicDirectory, folder, name));
+    const src = `${folder}/${name}`;
+    const file = path.join(publicDirectory, 'edit-data.json');
+    const data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const result = applyEditOperations(data, [
+      { op: 'set-split-src', index, src, kind: isVideo ? 'video' : 'image' },
+    ]);
+    if (!result.ok) throw new Error(`Não consegui aplicar: ${result.reason}.`);
+    const temporary = `${file}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(result.data, null, 2)}\n`);
+    await rename(temporary, file);
+    return result.data;
+  });
+
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {

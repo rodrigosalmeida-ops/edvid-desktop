@@ -296,6 +296,18 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     // estado a testar.
     // QA da manipulação direta: aplica as MESMAS mutações do main sobre o
     // edit-data em memória — o arrasto na bancada mexe de verdade na prévia.
+    pickSplitMedia: async (_directory, index) => {
+      const { applyEditOperations } = await import('./edit-data-edits');
+      const result = applyEditOperations(qaLiveEditData ?? {}, [
+        // Arquivo que EXISTE no public do projeto da bancada: um src
+        // inventado faria o <Img> falhar e derrubar a composição no QA.
+        { op: 'set-split-src', index, src: 'imagens/edvide_desktop_demo.png', kind: 'image' },
+      ]);
+      if (!result.ok) throw new Error(result.reason);
+      qaLiveEditData = result.data;
+      qaLiveEditado = true;
+      return result.data;
+    },
     applyPreviewEdits: async (_directory, operations) => {
       const { applyEditOperations } = await import('./edit-data-edits');
       const atual = qaLiveEditData ?? {};
@@ -314,8 +326,15 @@ export function createQaBrowserApi(): EdvidDesktopApi {
         return response.json() as Promise<unknown>;
       };
       try {
-        const editData = qaLiveEditData
+        let editData = qaLiveEditData
           ?? ((await grab('edit-data.json')) as Record<string, unknown>);
+        // ?faixavazia esvazia o primeiro split: e o estado da origem
+        // "nenhum", para exercitar o placeholder e o Escolher arquivo.
+        if (!qaLiveEditData && qaSearch().has('faixavazia') && Array.isArray(editData.splits) && editData.splits[0]) {
+          const splits = [...(editData.splits as Array<Record<string, unknown>>)];
+          splits[0] = { ...splits[0], src: '' };
+          editData = { ...editData, splits };
+        }
         qaLiveEditData = editData;
         const [captions, segments, track, cues] = await Promise.all([
           grab('captions.json').catch(() => []),

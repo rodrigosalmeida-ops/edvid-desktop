@@ -263,7 +263,9 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 /* Verde do design system: tracks de imagem e video inseridas pela edicao. */
 .image-chip { border: 1px solid rgba(56,199,124,.36); color: #8fe7b4; background: rgba(56,199,124,.13); }
 .timeline-playhead { position: absolute; top: 27px; bottom: 6px; left: var(--timeline-playhead-left); z-index: 8; width: 1px; background: var(--orange); box-shadow: 0 0 8px rgba(255,119,19,.35); pointer-events: none; }
-.timeline-playhead::before { content: ''; position: absolute; top: 0; left: -4px; width: 9px; height: 7px; border-radius: 2px 2px 5px 5px; background: var(--orange); }
+/* A CABEÇA aceita ponteiro (o traço não): segurar e arrastar faz scrub — é um
+   dos dois únicos jeitos de mover a agulha; o outro é a régua. */
+.timeline-playhead::before { content: ''; position: absolute; top: -2px; left: -7px; width: 15px; height: 12px; border-radius: 3px 3px 6px 6px; background: var(--orange); pointer-events: auto; cursor: ew-resize; }
 .timeline-correction-range { position: absolute; top: 27px; bottom: 6px; left: var(--correction-left); width: max(4px, var(--correction-width)); z-index: 10; border-right: 1px solid rgba(9,181,183,.68); border-left: 1px solid rgba(9,181,183,.68); background: repeating-linear-gradient(135deg, rgba(9,181,183,.13) 0 5px, rgba(9,181,183,.035) 5px 10px); }
 .timeline-correction-range > span { position: absolute; top: 4px; left: 4px; min-width: 14px; height: 14px; display: grid; place-items: center; border-radius: 5px; color: #a8f2f3; background: rgba(7,43,46,.88); font-size: 6.5px; font-weight: 800; }
 .delete-correction { position: absolute; top: 3px; right: 3px; width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid rgba(255,94,115,.38); border-radius: 6px; color: #ff9cab; background: rgba(35,8,13,.94); box-shadow: 0 5px 14px rgba(0,0,0,.32); cursor: pointer; opacity: 0; transform: translateY(-2px); pointer-events: auto; transition: opacity .12s, transform .12s, background .12s; }
@@ -948,3 +950,23 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 }
 .app-splash img { width: 148px; opacity: 0; animation: splash-in .5s ease .1s forwards; }
 @keyframes splash-in { from { opacity: 0; translate: 0 6px; } to { opacity: .92; translate: 0 0; } }
+
+/* --- Origem da mídia da tela dividida + espaço vazio (0.30.0) --------------- */
+.split-media-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.split-media-row > span { font-size: 12px; font-weight: 700; color: var(--dim); }
+.split-media-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.split-media-option {
+  padding: 7px 12px; border-radius: 999px; cursor: pointer; font: inherit;
+  font-size: 12px; font-weight: 600; color: var(--dim);
+  border: 1px solid var(--stroke); background: rgba(255,255,255,.02);
+}
+.split-media-option:hover { color: var(--text); }
+.split-media-option.on { color: #ffd2b0; border-color: rgba(255,119,19,.5); background: rgba(31,17,8,.6); }
+.pick-media {
+  position: absolute; left: 50%; top: 20%; translate: -50% 0; z-index: 8;
+  padding: 9px 14px; border-radius: 10px; cursor: pointer; font: inherit;
+  font-size: 12.5px; font-weight: 800; color: #ffd2b0;
+  border: 1px solid rgba(255,119,19,.55); background: rgba(10,11,14,.88);
+  backdrop-filter: blur(6px);
+}
+.pick-media:hover { background: rgba(56,27,10,.92); }

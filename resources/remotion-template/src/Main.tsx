@@ -578,6 +578,18 @@ const SplitMedia: React.FC<{split: Split; totalFrames: number}> = ({split, total
     // hidden do container da faixa recorta o que sair.
     ...(manual ? {transform: manual} : null),
   };
+  // ESPACO VAZIO e um estado legitimo (origem "nenhum": o aluno aponta o
+  // arquivo depois). staticFile('') estouraria; o placeholder diz o que fazer
+  // e so aparece na previa — um render com faixa vazia e um render que o
+  // aluno pediu assim.
+  if (!split.src) {
+    return (
+      <AbsoluteFill style={{alignItems: 'center', justifyContent: 'center', background: '#101216', border: '2px dashed rgba(255,255,255,0.22)', boxSizing: 'border-box', opacity: Math.min(enter, exit)}}>
+        <div style={{fontFamily, fontWeight: 700, fontSize: 34, color: 'rgba(255,255,255,0.55)'}}>Escolha a mídia desta faixa</div>
+        <div style={{fontFamily, fontWeight: 500, fontSize: 24, color: 'rgba(255,255,255,0.35)', marginTop: 10}}>Selecione o trecho na timeline e aponte o arquivo</div>
+      </AbsoluteFill>
+    );
+  }
   return (
     <>
       <Sfx src="whoosh.mp3" />

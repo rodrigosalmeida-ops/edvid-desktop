@@ -146,8 +146,16 @@ type CaptionStyle =
   | 'classica'
   | 'none';
 
+// De onde vem a MIDIA da tela dividida: imagem gerada por IA, clipe gerado
+// por IA, ou nenhuma — os espacos ficam vazios e o proprio aluno aponta os
+// arquivos depois, selecionando o chip vazio na timeline.
+type SplitMediaSource = 'imagem' | 'video' | 'nenhum';
+
 type StyleSetup = {
   edit: EditStyle;
+  // Opcional na LEITURA (projetos e estados guardados antes da 0.30.0 não têm
+  // o campo); o padrão entra no defaultStyleSetup.
+  splitMedia?: SplitMediaSource;
   headline: HeadlineStyle;
   headlineText: string;
   captions: CaptionStyle;
@@ -202,6 +210,7 @@ const initialAccount: CodexAccountState = {
 
 const defaultStyleSetup: StyleSetup = {
   edit: 'limpa',
+  splitMedia: 'imagem',
   headline: 'outline',
   headlineText: '',
   captions: 'karaoke',
@@ -489,6 +498,7 @@ function EditorWorkspace({
   onApplyTimelineEdits,
   renderStamp,
   onRenderPendingChange,
+  onCutsPendingChange,
 }: {
   workspace: ProjectWorkspace | null;
   style: StyleSetup;
@@ -503,6 +513,9 @@ function EditorWorkspace({
   // renderPending atualizado que esconde o botao Renderizar).
   renderStamp: string;
   onRenderPendingChange: (pending: boolean) => void;
+  // Cortes pendentes na timeline: o Renderizar da barra aplica-os antes de
+  // renderizar — o botao de aplicar deixou de existir.
+  onCutsPendingChange: (pending: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const currentTimeRef = useRef(0);
@@ -714,6 +727,10 @@ function EditorWorkspace({
   // composicao (que le o cut.mp4 antigo) nao sabe mostrar.
   const liveActive = Boolean(liveData) && !mapped;
   liveActiveRef.current = liveActive;
+  useEffect(() => {
+    onCutsPendingChange(dirty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty]);
   const selectedGizmo = useMemo(() => {
     if (!liveActive || !liveData || !selectedElement) return null;
     if (selectedElement.kind !== 'splits' && selectedElement.kind !== 'inserts') return null;
@@ -766,9 +783,12 @@ function EditorWorkspace({
       const start = Number(item.start);
       const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
-      const label = String(item.label ?? '').trim()
-        || (typeof item.src === 'string' ? item.src.split('/').pop() ?? '' : '')
-        || fallback;
+      const semArquivo = kind === 'splits' && String(item.src ?? '').trim() === '';
+      const label = semArquivo
+        ? 'Escolher mídia…'
+        : String(item.label ?? '').trim()
+          || (typeof item.src === 'string' ? item.src.split('/').pop() ?? '' : '')
+          || fallback;
       rows[row].push({ kind, index, start, end, label });
     };
     const list = (value: unknown) => (Array.isArray(value) ? (value as Record<string, unknown>[]) : []);
@@ -831,12 +851,10 @@ function EditorWorkspace({
           overlayDragRef.current = null;
           if (!drag) return;
           if (!drag.moved) {
-            // Clique sem arrasto SELECIONA — e leva a agulha ate o elemento,
-            // senao o gizmo apareceria vazio com o item fora do instante.
+            // Clique sem arrasto SELECIONA — e SO seleciona. A agulha nao se
+            // move (pedido de uso real): navegar e papel da regua e do scrub
+            // na cabeca da agulha, nunca efeito colateral de selecionar.
             setSelectedElement({ kind: chip.kind, index: chip.index });
-            if (currentTimeRef.current < chip.start || currentTimeRef.current >= chip.end) {
-              seekRef.current(chip.start + 0.05);
-            }
             return;
           }
           applyLiveOperation(overlayOperationFor(drag, timeAtPointer(event, event.currentTarget.parentElement)), true);
@@ -1324,13 +1342,27 @@ function EditorWorkspace({
   function beginTimelineSeek(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || trimDragRef.current) return;
     event.currentTarget.focus({ preventScroll: true });
-    event.currentTarget.setPointerCapture(event.pointerId);
-    timelineSeekPointerRef.current = event.pointerId;
     // Clicar no vazio limpa a selecao; clicar num clipe mantem o que o
     // proprio clipe acabou de selecionar.
-    if (!(event.target as HTMLElement).closest('.timeline-clip')) {
+    const target = event.target as HTMLElement;
+    if (!target.closest('.timeline-clip')) {
       setSelectedClipId(null);
     }
+    // A AGULHA so anda pela REGUA ou pela propria cabeca (pedido de uso real
+    // da 0.29: clicar num chip para selecionar tambem movia a agulha, e
+    // selecionar nao e navegar). O corpo das pistas seleciona e arrasta —
+    // nunca faz seek.
+    if (!target.closest('.timeline-ruler') && !target.closest('.timeline-playhead')) {
+      return;
+    }
+    // A captura e para o SCRUB (continuar arrastando fora do elemento); se
+    // falhar, o clique simples ainda tem de posicionar a agulha.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Sem captura o arrasto para na borda; o clique funciona igual.
+    }
+    timelineSeekPointerRef.current = event.pointerId;
     seekTimelineAt(event.clientX, event.currentTarget);
   }
 
@@ -1852,6 +1884,37 @@ function EditorWorkspace({
                       insert a caixa acompanha o cartao. Cada arrasto e a
                       mutacao set-transform — otimista no movimento, disco no
                       soltar, mesma disciplina do resto. */}
+                  {/* Espaço vazio selecionado (origem "nenhum"): o botão de
+                      apontar o arquivo aparece SOBRE a faixa. A cópia entra em
+                      public/ e o src é gravado no split — a prévia troca o
+                      tracejado pela mídia na hora. */}
+                  {(() => {
+                    if (!selectedElement || !('index' in selectedElement) || selectedElement.kind !== 'splits' || !liveData) return null;
+                    const splits = liveData.editData.splits;
+                    const item = Array.isArray(splits) ? (splits as Array<Record<string, unknown>>)[selectedElement.index] : undefined;
+                    if (!item || String(item.src ?? '').trim() !== '') return null;
+                    const start = Number(item.start);
+                    const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+                    if (!(currentTime >= start && currentTime < end)) return null;
+                    return (
+                      <button
+                        type="button"
+                        className="pick-media"
+                        onClick={() => {
+                          if (!liveDirectory) return;
+                          void window.edvidDesktop.pickSplitMedia(liveDirectory, selectedElement.index)
+                            .then((updated) => {
+                              if (updated && liveDataRef.current) {
+                                setLiveData({ ...liveDataRef.current, editData: updated, renderPending: true });
+                              }
+                            })
+                            .catch(() => {});
+                        }}
+                      >
+                        Escolher arquivo…
+                      </button>
+                    );
+                  })()}
                   {selectedGizmo && (() => {
                     const { region, transform: t } = selectedGizmo;
                     const cx = region.x + region.w / 2 + (selectedGizmo.kind === 'inserts' ? t.x : 0);
@@ -2049,17 +2112,14 @@ function EditorWorkspace({
               <Icon name="redo" />
             </button>
           </div>
-          {dirty && (
-            <>
-              {canDiscard && (
-                <button type="button" className="discard-edits" onClick={discardTimelineEdits} title="Voltar ao corte atual sem aplicar">
-                  Descartar
-                </button>
-              )}
-              <button type="button" className="apply-corrections" onClick={() => void onApplyTimelineEdits()} disabled={applyingCorrections} title="Enviar os novos cortes para gerar o render atualizado">
-                {applyingCorrections ? 'Aplicando...' : 'Aplicar ajustes'}
-              </button>
-            </>
+          {/* O "Aplicar ajustes" MORREU (0.30.0): a timeline mostra os cortes
+              em tempo real pelo preview mapeado, e aplicar de verdade virou
+              parte do Renderizar — uma decisão só, no fim, como num editor.
+              Descartar continua: é o único caminho de volta. */}
+          {dirty && canDiscard && (
+            <button type="button" className="discard-edits" onClick={discardTimelineEdits} title="Voltar ao corte atual sem aplicar">
+              Descartar
+            </button>
           )}
           <div className="timeline-time">{formatTimecode(currentTime, fps)} <span>/ {formatTimecode(effectiveDuration, fps)}</span></div>
         </div>
@@ -2281,6 +2341,8 @@ function StyleWorkspace({
   canApply,
   applying,
   runtime,
+  imageAiConnected,
+  videoAiConnected,
 }: {
   style: StyleSetup;
   onChange: (style: StyleSetup) => void;
@@ -2288,6 +2350,8 @@ function StyleWorkspace({
   canApply: boolean;
   applying: boolean;
   runtime: RemotionRuntimeState;
+  imageAiConnected: boolean;
+  videoAiConnected: boolean;
 }) {
   const accentUsed = style.headline === 'realce' || style.headline === 'misto' || style.captions === 'stacked';
   const updateElements = (key: keyof StyleSetup['elements']) => {
@@ -2312,6 +2376,31 @@ function StyleWorkspace({
               </ChoiceCard>
             ))}
           </div>
+          {/* Origem da mídia da tela dividida. Só as opções POSSÍVEIS: IA de
+              imagem/vídeo aparecem quando há conta conectada capaz de gerar;
+              "Nenhuma" existe sempre — os espaços ficam vazios e o aluno
+              aponta os próprios arquivos na timeline. */}
+          {(style.edit === 'split' || style.edit === 'split2') && (
+            <div className="split-media-row">
+              <span>Conteúdo da faixa</span>
+              <div className="split-media-options" role="radiogroup" aria-label="Conteúdo da faixa da tela dividida">
+                {([
+                  ['imagem', 'Imagens por IA', imageAiConnected],
+                  ['video', 'Clipes por IA', videoAiConnected],
+                  ['nenhum', 'Nenhum — eu escolho os arquivos', true],
+                ] as const).filter(([, , available]) => available).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`split-media-option${style.splitMedia === id ? ' on' : ''}`}
+                    onClick={() => onChange({ ...style, splitMedia: id })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="style-group accent-group">
@@ -2530,6 +2619,7 @@ export function App() {
   // reportado pelo EditorWorkspace. O botao vive na barra de abas: renderizar
   // e EXPORTAR, nao um modo de ver.
   const [renderPending, setRenderPending] = useState(false);
+  const [cutsPending, setCutsPending] = useState(false);
   // Muda quando um render termina: o EditorWorkspace re-busca os dados da
   // previa (e o pendente cai sozinho, pela impressao digital).
   const [renderStamp, setRenderStamp] = useState('');
@@ -2780,9 +2870,6 @@ export function App() {
     setJcutApplied(storedChat.jcutApplied);
     setWorkTab('edit');
     setFollowingOutput(true);
-    // Cobre dados da Fase 2 que ficaram prontos com o aplicativo fechado ou
-    // um render interrompido no meio; sem nada novo, volta na hora.
-    requestPhase2Render();
   }
 
   async function reloadProjects() {
@@ -2999,6 +3086,10 @@ export function App() {
     }
   }
 
+  // RENDER SO NO BOTAO (0.30.0, pedido de uso real): antes, todo turno do
+  // agente, abrir projeto, J-Cut e aplicar estilos disparavam o render
+  // completo — o aluno via "Renderizando…" sem ter pedido. Agora a previa ao
+  // vivo mostra tudo e esta funcao so e chamada pelo Renderizar da barra.
   function requestPhase2Render() {
     const directory = activeProjectDirectoryRef.current;
     if (!directory) return;
@@ -3048,10 +3139,7 @@ export function App() {
     const directory = activeProjectDirectoryRef.current;
     if (!directory) return;
     void window.edvidDesktop.syncJcut(directory).then((result) => {
-      if (result?.changed) {
-        void refreshWorkspace();
-        requestPhase2Render();
-      }
+      if (result?.changed) void refreshWorkspace();
     }).catch(() => {});
   }
 
@@ -3353,12 +3441,12 @@ export function App() {
           setMessages((current) => [...current, { id: `error:${event.turnId}`, role: 'system', text: friendlyAiError(event.error ?? '') }]);
         }
         void refreshWorkspace();
-        // Se o turno mudou os dados da Fase 2, o aplicativo renderiza fora do
-        // sandbox — sem dados novos o main devolve na hora, sem custo. As
-        // imagens pedidas em edit/imagens/pedidos.json seguem o mesmo padrão,
-        // e o J-Cut é reaplicado se o agente re-renderizou o corte.
+        // O turno pode ter mudado os dados da Fase 2 — a previa ao vivo
+        // recarrega pelo refreshWorkspace e o botao Renderizar acende pela
+        // impressao digital. RENDER AUTOMATICO NAO EXISTE MAIS: só o botão.
+        // Imagens/clipes pedidos e o J-Cut continuam automáticos — são
+        // gerações de ELEMENTO, não o vídeo inteiro.
         requestJcutSync();
-        requestPhase2Render();
         requestImageFulfillment();
       }
       return;
@@ -3445,14 +3533,11 @@ export function App() {
       setMusicBusy(true);
       void window.edvidDesktop.fulfillMusicRequests(projectDirectory)
         .catch(() => ({ done: 0 }))
-        .then(() => {
-          setMusicBusy(false);
-          return window.edvidDesktop.renderPhase2(projectDirectory);
-        })
+        .then(() => setMusicBusy(false))
         .catch(() => {});
-    } else {
-      void window.edvidDesktop.renderPhase2(projectDirectory).catch(() => {});
     }
+    // Sem render aqui: a previa ao vivo mostra os estilos assim que o
+    // edit-data muda, e exportar e decisao do aluno no botao Renderizar.
     const enabled = Object.entries(style.elements).filter(([, value]) => value).map(([key]) => key).join(', ') || 'nenhum';
     const disabled = Object.entries(style.elements).filter(([, value]) => !value).map(([key]) => key).join(', ') || 'nenhum';
     const prompt = [
@@ -3478,7 +3563,13 @@ export function App() {
       ...(style.edit === 'split' || style.edit === 'split2'
         ? [
             '',
-            'Tela dividida — regra de conteúdo: por padrão, GERE IMAGENS com IA ilustrando o que está sendo dito em cada trecho da fala. Peça as imagens em edit/imagens/pedidos.json com "proporcao": "4:3" (metade de tela é uma faixa larga; imagem 9:16 entra cortada) e use cada arquivo no campo splits do edit-data.json, cobrindo os principais trechos do vídeo com a imagem correspondente ao assunto daquele momento.',
+            // A ORIGEM da mídia é escolha do aluno na aba Estilos: imagem
+            // por IA, clipe por IA, ou nenhuma (espaços que ele preenche).
+            style.splitMedia === 'video'
+              ? 'Tela dividida — regra de conteúdo: GERE CLIPES DE VÍDEO com IA ilustrando o que está sendo dito em cada trecho da fala. Peça os clipes em edit/clipes/pedidos.json com "uso": "tela-dividida" e "segundos" igual à janela de cada trecho, e use cada arquivo no campo splits do edit-data.json com {"kind": "video", "src": "clipes/nome.mp4"}, cobrindo os principais trechos do vídeo.'
+              : style.splitMedia === 'nenhum'
+                ? 'Tela dividida — regra de conteúdo: o aluno vai escolher os próprios arquivos. NÃO gere imagem nem clipe: escreva o campo splits do edit-data.json cobrindo os principais trechos da fala com "src": "" (vazio mesmo) em cada item. O Edvid mostra o espaço vazio na prévia e o aluno aponta o arquivo de cada trecho na timeline.'
+                : 'Tela dividida — regra de conteúdo: por padrão, GERE IMAGENS com IA ilustrando o que está sendo dito em cada trecho da fala. Peça as imagens em edit/imagens/pedidos.json com "proporcao": "4:3" (metade de tela é uma faixa larga; imagem 9:16 entra cortada) e use cada arquivo no campo splits do edit-data.json, cobrindo os principais trechos do vídeo com a imagem correspondente ao assunto daquele momento.',
             `Posição da mídia na divisão: "${style.edit === 'split' ? 'top' : 'bottom'}" (${style.edit === 'split' ? 'imagem em cima, pessoa embaixo' : 'pessoa em cima, imagem embaixo'}).`,
             'NUNCA use o próprio vídeo do aluno como mídia da outra metade da divisão.',
             'Exceção: se a Observação acima indicar outra fonte (por exemplo, "insira as imagens que estão na pasta do projeto"), use a fonte indicada em vez de gerar imagens novas.',
@@ -3544,7 +3635,6 @@ export function App() {
         // aplicado") — falha continua avisando por mensagem.
         setJcutApplied(true);
         await refreshWorkspace();
-        requestPhase2Render();
       } else if (result.error) {
         const failure = result.error;
         setMessages((current) => [...current, { id: `error:${Date.now()}`, role: 'system', text: failure }]);
@@ -4288,23 +4378,32 @@ export function App() {
               {/* Renderizar = exportar. So existe quando o estado atual difere
                   do ultimo render (impressao digital); a previa ja mostra tudo
                   ao vivo, entao nao ha botao nenhum quando nao ha nada novo. */}
-              {(renderPending || phase2Status === 'rendering') && projectDirectory && (
+              {(renderPending || cutsPending || phase2Status === 'rendering') && projectDirectory && (
                 <button
                   type="button"
                   className="render-action"
-                  disabled={phase2Status === 'rendering'}
-                  title="Gera o vídeo final com tudo o que está na prévia"
+                  disabled={phase2Status === 'rendering' || sending}
+                  title={cutsPending
+                    ? 'Aplica os cortes da timeline e gera o vídeo final'
+                    : 'Gera o vídeo final com tudo o que está na prévia'}
                   onClick={() => {
-                    const directory = projectDirectory;
-                    if (!directory) return;
-                    void window.edvidDesktop.renderPhase2(directory).catch(() => {});
+                    // UMA decisao, no fim: cortes pendentes aplicam primeiro
+                    // (viram o novo cut.mp4), e o render vem em seguida. O
+                    // botao de aplicar da timeline deixou de existir.
+                    void (async () => {
+                      if (cutsPending) {
+                        const applied = await applyTimelineEdits();
+                        if (!applied) return;
+                      }
+                      requestPhase2Render();
+                    })();
                   }}
                 >
                   <Icon name="video" />
                   <strong>
                     {phase2Status === 'rendering'
                       ? `Renderizando… ${Math.round((phase2Render.progress ?? 0) * 100)}%`
-                      : 'Renderizar'}
+                      : sending && cutsPending ? 'Aplicando cortes…' : 'Renderizar'}
                   </strong>
                 </button>
               )}
@@ -4315,6 +4414,7 @@ export function App() {
                   workspace={workspace}
                   renderStamp={renderStamp}
                   onRenderPendingChange={setRenderPending}
+                  onCutsPendingChange={setCutsPending}
                   style={style}
                   styleApplied={styleApplied}
                   corrections={corrections}
@@ -4324,7 +4424,7 @@ export function App() {
                   onTimelineModelChange={handleTimelineModelChange}
                   onApplyTimelineEdits={applyTimelineEdits}
                 />
-              ) : <StyleWorkspace style={style} onChange={setStyle} onApply={applyStyleSelection} canApply={canChat} applying={sending} runtime={remotionRuntime} />}
+              ) : <StyleWorkspace style={style} onChange={setStyle} onApply={applyStyleSelection} canApply={canChat} applying={sending} runtime={remotionRuntime} imageAiConnected={Boolean(aiRoles.imageCatalog || aiRoles.image || imageCapable.chatgpt || imageCapable.gemini)} videoAiConnected={AI_CATALOG.some((entry) => entry.capabilities.includes('video') && aiCatalog.connections.some((item) => item.id === entry.id && item.connected))} />}
             </div>
           </section>
         </div>

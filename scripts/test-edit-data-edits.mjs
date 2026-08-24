@@ -127,6 +127,18 @@ try {
   // NaN é recusa.
   assert.equal(applyEditOperation(base(), { op: 'set-transform', kind: 'splits', index: 0, transform: { scale: NaN } }).ok, false);
 
+  // --- 5b. Apontar arquivo num espaço vazio ----------------------------------
+  const vazio = { durationSec: 90, splits: [{ kind: 'image', src: '', start: 4, end: 9 }] };
+  const apontado = applyEditOperation(vazio, { op: 'set-split-src', index: 0, src: 'imagens/minha.png', kind: 'image' });
+  assert.ok(apontado.ok && apontado.changed);
+  assert.equal(apontado.data.splits[0].src, 'imagens/minha.png');
+  const clipe = applyEditOperation(vazio, { op: 'set-split-src', index: 0, src: 'clipes/meu.mp4', kind: 'video' });
+  assert.equal(clipe.data.splits[0].kind, 'video');
+  // Fora da pasta do projeto morre aqui, não no render.
+  for (const ruim of ['/etc/passwd', '../fora.png', 'file:///x.png', '']) {
+    assert.equal(applyEditOperation(vazio, { op: 'set-split-src', index: 0, src: ruim, kind: 'image' }).ok, false, `src "${ruim}" tem de ser recusado`);
+  }
+
   // --- 6. Split ativo no instante -------------------------------------------
   assert.equal(activeSplitIndexAt(base(), 5), 0);
   assert.equal(activeSplitIndexAt(base(), 15), -1);

@@ -460,6 +460,8 @@ export type EdvidDesktopApi = {
     directory: string,
     operations: import('./edit-data-edits').EditOperation[],
   ) => Promise<Record<string, unknown>>;
+  // Seletor de arquivo para um espaco vazio da tela dividida; null = cancelou.
+  pickSplitMedia: (directory: string, index: number) => Promise<Record<string, unknown> | null>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;

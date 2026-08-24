@@ -360,22 +360,30 @@ export class McpHub {
     const client = await this.ensure();
     const result = await client.callTool({ name: tool, arguments: args });
     const blocks = Array.isArray(result.content) ? result.content : [];
-    const text = blocks
+    const texts = blocks
       .filter((block): block is { type: 'text'; text: string } => (
         typeof block === 'object' && block !== null
         && (block as { type?: unknown }).type === 'text'
         && typeof (block as { text?: unknown }).text === 'string'
       ))
-      .map((block) => block.text)
-      .join('\n');
+      .map((block) => block.text);
     if (result.isError) {
-      throw new Error(text || `${HUB_NAME[this.hub]} recusou o pedido.`);
+      throw new Error(texts.join('\n') || `${HUB_NAME[this.hub]} recusou o pedido.`);
     }
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      return text;
+    // O hub responde em VARIOS blocos de texto: o JSON e, junto dele, avisos
+    // soltos (ex.: a lista de "Unlim configs"). Juntar tudo e parsear o
+    // conjunto falhava, a resposta virava string, e quem lia `items` de uma
+    // string via zero modelos — foi o "nenhum modelo do seu plano entrega
+    // video" da primeira geracao real. O JSON de cada bloco vale sozinho.
+    for (const text of texts) {
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        if (typeof parsed === 'object' && parsed !== null) return parsed;
+      } catch {
+        // Bloco de aviso em prosa: segue para o proximo.
+      }
     }
+    return texts.join('\n');
   }
 }
 

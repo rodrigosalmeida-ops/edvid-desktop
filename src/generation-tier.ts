@@ -260,7 +260,17 @@ export function paramsFit(model: HubModel, params: Record<string, ParamValue>): 
 // outro modelo antes de aceitar o corte.
 export function durationFor(model: HubModel, seconds: number): { duration: number; covers: boolean } | null {
   const wanted = Math.max(0, seconds);
-  const list = asArray(model.durations).filter((item): item is number => typeof item === 'number');
+  // O formato MUDOU entre medicoes: primeiro o catalogo trazia durations /
+  // duration_range no topo do modelo; na conta do aluno (medido no token
+  // real, agosto/2026) essas chaves sumiram e a duracao vive so dentro do
+  // PARAMETRO `duration` (options ou min/max). Ler apenas o topo reprovava
+  // todos os candidatos — foi o "nenhum modelo do seu plano entrega video"
+  // da primeira geracao real. As quatro fontes valem, nesta ordem.
+  const parameter = parametersOf(model).find((item) => item.name === 'duration');
+  const list = [
+    ...asArray(model.durations),
+    ...(asArray(model.durations).length ? [] : asArray(parameter?.options)),
+  ].filter((item): item is number => typeof item === 'number');
   if (list.length) {
     const sorted = [...list].sort((a, b) => a - b);
     const exact = sorted.find((item) => item >= wanted);
@@ -268,8 +278,12 @@ export function durationFor(model: HubModel, seconds: number): { duration: numbe
     return { duration, covers: duration >= wanted };
   }
   const range = model.duration_range as { min?: unknown; max?: unknown } | undefined;
-  const min = typeof range?.min === 'number' ? range.min : null;
-  const max = typeof range?.max === 'number' ? range.max : null;
+  const min = typeof range?.min === 'number'
+    ? range.min
+    : typeof parameter?.min === 'number' ? parameter.min : null;
+  const max = typeof range?.max === 'number'
+    ? range.max
+    : typeof parameter?.max === 'number' ? parameter.max : null;
   if (min === null || max === null) return null;
   const duration = Math.min(max, Math.max(min, Math.ceil(wanted)));
   return { duration, covers: duration >= wanted };

@@ -1222,6 +1222,35 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.30.0: QUATRO FRENTES DE USO REAL. (1) A GERAÇÃO PELO HIGGSFIELD estava
+  quebrada por DOIS desvios medidos com o token do aluno: o hub responde em
+  VÁRIOS blocos de texto (JSON + avisos soltos) e juntar tudo antes do parse
+  virava string — quem lia items via zero modelos; e o formato do catálogo
+  MUDOU entre medições: durations/duration_range sumiram do topo e vivem no
+  parâmetro `duration`. durationFor agora lê as quatro fontes; a sonda com a
+  conta real resolve seedance1_5 1080p mudo 12 créditos. Regra: re-sondar o
+  catálogo VIVO a cada sintoma — o de dois dias atrás já era outro.
+  (2) SELECIONAR NÃO NAVEGA: a agulha só anda pela régua ou pelo scrub na
+  própria cabeça (pointer-events na cabeça, none no traço); clique em pista e
+  chip seleciona sem seek. setPointerCapture em try/catch: captura falhar não
+  pode matar o clique.
+  (3) RENDER SÓ NO BOTÃO: morreram os renders automáticos de turno, abrir
+  projeto, J-Cut e aplicar estilos. O Renderizar da barra também APLICA os
+  cortes pendentes antes (o botão "Aplicar ajustes" da timeline morreu;
+  Descartar fica). A cobrança da animação custom pendente mudou para o botão.
+  (4) ORIGEM DA MÍDIA DA TELA DIVIDIDA na aba Estilos: Imagens por IA /
+  Clipes por IA / Nenhum — as opções de IA só aparecem com conta capaz
+  conectada; o prompt de estilos muda conforme a escolha. "Nenhum" gera
+  splits com src:"" — o template mostra placeholder tracejado (staticFile('')
+  estouraria), o chip vira "Escolher mídia…" e o botão no palco abre o
+  seletor (preview:pick-split-media: copia para public/imagens|clipes com
+  sufixo anti-colisão e grava set-split-src, que recusa caminho fora de
+  public/). QA: ?faixavazia esvazia o primeiro split; o stub de escolha usa
+  arquivo EXISTENTE do projeto (src inventado derrubaria o <Img> do Player).
+  Método: o teste27 foi apagado do disco pelo aluno — a bancada agora usa uma
+  CÓPIA em scratchpad com splits injetados, nunca arquivos do aluno; e a
+  escala do screenshot do pane mudou no meio da sessão (0,625→0,804) — medir
+  innerWidth ANTES de cada rodada de cliques reais.
 - 0.29.2: O LOGIN DO HIGGSFIELD, segunda camada do mesmo defeito. A 0.29.1
   manteve o servidor de retorno vivo (a página "Higgsfield conectado"
   apareceu, o finishAuth salvou o token) — e aí o reconectar usava O MESMO
