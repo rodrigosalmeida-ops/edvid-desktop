@@ -5,7 +5,7 @@
 // "apenas modelos gratuitos" mesmo quando isso significa não ter ninguém.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +23,34 @@ try {
 
   const { AI_CATALOG, catalogEntry, chatRoute, keyProbe } =
     await import(pathToFileURL(path.join(outDir, 'ai-catalog.js')).href);
+
+  // --- O seletor de conteúdo da faixa faz UMA pergunta só -------------------
+  // Vídeo olhava o CATÁLOGO (existe conta conectada capaz?) e imagem olhava o
+  // PAPEL (aiRoles.imageCatalog, que só é preenchido quando o aluno escolhe
+  // provedor de imagem nas Configurações). Com o Higgsfield conectado e sem
+  // essa escolha, o seletor mostrava "Clipes por IA" e escondia "Imagens por
+  // IA" — enquanto o main gerava imagem numa boa (hubForRole cai no único hub
+  // conectado). A interface dizia que não dava, e dava.
+  const app = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');
+  assert.ok(
+    /const catalogCapaz = \(capacidade: 'imagem' \| 'video'\)/u.test(app),
+    'as duas capacidades têm de sair da mesma conta',
+  );
+  for (const flag of ['imageAiConnected', 'videoAiConnected']) {
+    const linha = app.slice(app.indexOf(`const ${flag} =`));
+    assert.ok(
+      /catalogCapaz\(/u.test(linha.slice(0, 220)),
+      `${flag} precisa perguntar ao catálogo, como o outro`,
+    );
+  }
+  // E a origem aplicada é a DERIVADA, não a guardada: um efeito corrigindo o
+  // estado perdia a briga com o carregamento do projeto, que regrava o estilo
+  // do disco por cima.
+  assert.ok(/const splitMediaEfetivo/u.test(app), 'a origem da faixa é derivada das contas conectadas');
+  assert.ok(
+    /splitMedia: splitMediaEfetivo \}/u.test(app),
+    'o estilo aplicado tem de carregar a origem efetiva',
+  );
 
   // --- Catálogo bem formado: sem isso a interface mostra badge errado. ---
   const ids = AI_CATALOG.map((e) => e.id);

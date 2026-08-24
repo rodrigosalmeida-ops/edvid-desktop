@@ -147,7 +147,17 @@ const qaSearch = () => new URLSearchParams(window.location.search);
 let qaChatGptConnected = !qaSearch().has('ia') && !qaSearch().has('semchatgpt');
 // Com ?hub o Higgsfield ja atende imagem e video, que e o estado interessante
 // de testar: o seletor com um hub escolhido em vez de vazio.
-const qaHubRole = new URLSearchParams(window.location.search).has('hub') ? 'higgsfield' : null;
+//
+// ?hub=semrole deixa o hub CONECTADO e os papeis VAZIOS — o estado real de
+// quem entra na conta Higgsfield e nunca abre as Configuracoes para escolher
+// provedor de imagem. Foi nesse estado que "Imagens por IA" sumiu do seletor
+// enquanto "Clipes por IA" ficou: os dois botoes perguntavam coisas
+// diferentes. O main sempre soube gerar aqui (hubForRole cai no unico hub
+// conectado); era so a interface que dizia que nao dava.
+const qaHubParam = new URLSearchParams(window.location.search).get('hub');
+const qaHubRole = new URLSearchParams(window.location.search).has('hub') && qaHubParam !== 'semrole'
+  ? 'higgsfield'
+  : null;
 // edit-data vivo da bancada ?aovivo: os arrastos mutam ESTA cópia.
 let qaLiveEditData: Record<string, unknown> | null = null;
 let qaLiveEditado = false;

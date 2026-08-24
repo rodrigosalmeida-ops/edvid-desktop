@@ -1225,6 +1225,27 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.31.2: O SELETOR "CONTEÚDO DA FAIXA" MOSTRAVA "CLIPES POR IA" E ESCONDIA
+  "IMAGENS POR IA" com o Higgsfield conectado. Os dois botões perguntavam
+  coisas DIFERENTES: vídeo olhava o catálogo (existe conta conectada capaz?) e
+  imagem olhava o PAPEL (`aiRoles.imageCatalog`, que só é preenchido quando o
+  aluno escolhe provedor de imagem nas Configurações). Quem entra na conta e
+  nunca abre Configurações ficava sem a opção — enquanto o main gerava imagem
+  numa boa: o `hubForRole` dele já resolve "único hub conectado atende
+  sozinho". A interface dizia que não dava, e dava. As duas agora saem do
+  mesmo `catalogCapaz()`; test:ai-catalog trava a simetria.
+  Segundo defeito, visível no mesmo print: nenhum botão aparecia marcado. O
+  valor guardado (`splitMedia: 'imagem'`) apontava para uma opção que o
+  seletor tinha escondido — e o plano ainda escreveria `kind: "image"` nos
+  espaços, oferecendo no palco um "Gerar imagem" que só podia falhar. A origem
+  virou DERIVADA (`splitMediaEfetivo`), não guardada: cai em "Nenhum" quando
+  não há conta capaz, nunca no outro tipo de geração, que custa mais. A
+  primeira tentativa foi um efeito corrigindo o estado e ele PERDIA a briga —
+  o carregamento do projeto regravava o estilo do disco por cima. Lição
+  repetida: quando a interface e a aplicação precisam concordar, derive das
+  duas pontas em vez de sincronizar dois donos do mesmo valor.
+  QA: `?hub=semrole` deixa o hub conectado e os papéis vazios — é o estado
+  exato do print.
 - 0.31.1: as janelas guardadas de um corte MAIS LONGO ficavam depois do fim do
   vídeo quando o aluno refazia o corte limpo e voltava aos estilos —
   invisíveis no palco e com o chip estourando a timeline. `applySplitPlan`

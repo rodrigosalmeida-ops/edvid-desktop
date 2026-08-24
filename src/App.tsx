@@ -3071,13 +3071,37 @@ export function App() {
   // precisa da mesma resposta que o seletor "Conteúdo da faixa": prometer
   // "descreva e deixe a IA gerar" para quem não tem conta é a mesma mentira
   // que esta versão veio desfazer.
-  const imageAiConnected = Boolean(
-    aiRoles.imageCatalog || aiRoles.image || imageCapable.chatgpt || imageCapable.gemini,
-  );
-  const videoAiConnected = AI_CATALOG.some((entry) => (
-    entry.capabilities.includes('video')
+  // As duas perguntas têm de ser A MESMA pergunta. Eram diferentes: vídeo
+  // olhava o CATÁLOGO (existe conta conectada capaz?) e imagem olhava o PAPEL
+  // (`aiRoles.imageCatalog`, que só é preenchido quando o aluno escolhe um
+  // provedor de imagem nas Configurações). Com o Higgsfield conectado e sem
+  // essa escolha, aparecia "Clipes por IA" e não aparecia "Imagens por IA" —
+  // embora o main gerasse imagem numa boa: o hubForRole dele já resolve "único
+  // hub conectado atende sozinho". A interface dizia que não dava, e dava.
+  const catalogCapaz = (capacidade: 'imagem' | 'video') => AI_CATALOG.some((entry) => (
+    entry.capabilities.includes(capacidade)
     && aiCatalog.connections.some((item) => item.id === entry.id && item.connected)
   ));
+  const imageAiConnected = Boolean(
+    aiRoles.imageCatalog || aiRoles.image || imageCapable.chatgpt || imageCapable.gemini,
+  ) || catalogCapaz('imagem');
+  const videoAiConnected = Boolean(aiRoles.videoCatalog) || catalogCapaz('video');
+  // A ORIGEM ESCOLHIDA TEM DE SER UMA DAS OFERECIDAS. O seletor esconde a
+  // opção sem conta capaz e o valor guardado continuava apontando para ela:
+  // nenhum botão aparecia marcado (foi assim que o defeito acima ficou
+  // visível) e, pior, o plano ainda escreveria `kind: "image"` nos espaços —
+  // o palco ofereceria um "Gerar imagem" que só podia falhar.
+  //
+  // DERIVADO, não guardado. A primeira tentativa foi um efeito corrigindo o
+  // estado, e ele PERDIA a briga: o carregamento do projeto regravava o
+  // estilo do disco por cima. Aqui a interface e a aplicação leem a mesma
+  // conta, sempre. Cai em "Nenhum", a opção que nunca gasta crédito de
+  // surpresa — nunca no outro tipo de geração, que custa mais.
+  const splitMediaEfetivo: NonNullable<StyleSetup['splitMedia']> = style.splitMedia === 'video'
+    ? (videoAiConnected ? 'video' : 'nenhum')
+    : style.splitMedia === 'nenhum'
+      ? 'nenhum'
+      : (imageAiConnected ? 'imagem' : 'nenhum');
   const readyRuntimes = runtimes.filter((runtime) => runtime.available).length;
   const accountLabel = account.account?.type === 'apiKey'
     ? 'Chave de API conectada'
@@ -3873,6 +3897,10 @@ export function App() {
 
   async function applyStyleSelection() {
     if (!projectDirectory) return;
+    // A origem da mídia que a interface MOSTRA é a que vale — ver
+    // splitMediaEfetivo. Aplicar o valor guardado faria o Edvid planejar
+    // "Imagens por IA" enquanto o seletor oferecia só "Nenhum".
+    const escolhas: StyleSetup = { ...style, splitMedia: splitMediaEfetivo };
     // A Fase 2 renderiza no Remotion. O aplicativo prepara o motor e monta o
     // projeto antes de falar com o agente, para ele nunca precisar de rede
     // nem inventar um pipeline proprio.
@@ -3897,17 +3925,17 @@ export function App() {
     // verdade quando não há agente para preencher as janelas.
     let plano = { splits: 0, flashes: 0 };
     try {
-      plano = await window.edvidDesktop.buildPhase2(projectDirectory, style);
+      plano = await window.edvidDesktop.buildPhase2(projectDirectory, escolhas);
     } catch (error) {
       setMessages((current) => [...current, { id: `error:${Date.now()}`, role: 'system', text: errorMessage(error) }]);
       return;
     }
-    localStorage.setItem(styleStorageKey(projectDirectory), JSON.stringify(style));
+    localStorage.setItem(styleStorageKey(projectDirectory), JSON.stringify(escolhas));
     setStyleApplied(true);
     // A trilha, quando escolhida, foi PEDIDA pelo app na montagem. Gerar aqui
     // e o que faltava: numa edição limpa o agente nem é chamado, e antes era
     // ele quem disparava isso.
-    if (style.elements.musicAI) {
+    if (escolhas.elements.musicAI) {
       setMusicBusy(true);
       void window.edvidDesktop.fulfillMusicRequests(projectDirectory)
         .catch(() => ({ done: 0 }))
@@ -3916,19 +3944,19 @@ export function App() {
     }
     // Sem render aqui: a previa ao vivo mostra os estilos assim que o
     // edit-data muda, e exportar e decisao do aluno no botao Renderizar.
-    const enabled = Object.entries(style.elements).filter(([, value]) => value).map(([key]) => key).join(', ') || 'nenhum';
-    const disabled = Object.entries(style.elements).filter(([, value]) => !value).map(([key]) => key).join(', ') || 'nenhum';
+    const enabled = Object.entries(escolhas.elements).filter(([, value]) => value).map(([key]) => key).join(', ') || 'nenhum';
+    const disabled = Object.entries(escolhas.elements).filter(([, value]) => !value).map(([key]) => key).join(', ') || 'nenhum';
     const prompt = [
       'Aplique estas escolhas de estilo na Fase 2 do projeto:',
-      `- Tipo de edição: ${style.edit}`,
-      `- Headline: ${style.headline}${style.headlineText.trim() ? ` (texto já escrito pelo aluno — não mude)` : ''}`,
-      `- Legendas: ${style.captions}`,
-      `- Cor de destaque: ${style.accent}`,
+      `- Tipo de edição: ${escolhas.edit}`,
+      `- Headline: ${escolhas.headline}${escolhas.headlineText.trim() ? ` (texto já escrito pelo aluno — não mude)` : ''}`,
+      `- Legendas: ${escolhas.captions}`,
+      `- Cor de destaque: ${escolhas.accent}`,
       `- Elementos incluídos: ${enabled}`,
       `- Elementos fora: ${disabled}`,
-      `- Observação: ${style.note.trim() || 'nenhuma'}`,
+      `- Observação: ${escolhas.note.trim() || 'nenhuma'}`,
       // Trilha com IA: o Edvid gera fora do sandbox, como as imagens.
-      ...(style.elements.musicAI
+      ...(escolhas.elements.musicAI
         ? [
             '',
             'Trilha sonora: o Edvid já pediu a música, já gerou e já ligou na edição. Não escreva pedidos.json, não copie arquivo e não mexa no campo soundtrack.',
@@ -3938,7 +3966,7 @@ export function App() {
       // duplicou o próprio vídeo nas duas metades). A regra padrão é gerar
       // imagens com IA ilustrando a fala; a Observação pode apontar outra
       // fonte (ex.: imagens da pasta do projeto).
-      ...((style.edit === 'split' || style.edit === 'split2') && plano.splits > 0
+      ...((escolhas.edit === 'split' || escolhas.edit === 'split2') && plano.splits > 0
         ? [
             '',
             // AS JANELAS JÁ EXISTEM. O Edvid as escreve a partir da própria
@@ -3947,9 +3975,9 @@ export function App() {
             // agente conectado elas simplesmente não existiam. O que sobrou
             // para ele é o CONTEÚDO: o que cada imagem ou clipe mostra.
             `Tela dividida: o campo splits do edit-data.json JÁ ESTÁ ESCRITO, com ${plano.splits} ${plano.splits === 1 ? 'janela' : 'janelas'} de tempo e "src": "" em cada uma. NÃO crie, apague, mova nem redimensione janela nenhuma, e não mexa em "position" — o tempo e o layout já estão decididos.`,
-            style.splitMedia === 'video'
+            escolhas.splitMedia === 'video'
               ? 'Sua parte é o CONTEÚDO de cada janela: para cada uma, peça um clipe em edit/clipes/pedidos.json com "uso": "tela-dividida", "segundos" igual à duração daquela janela e um prompt em inglês ilustrando o que está sendo dito NAQUELE trecho da fala. Depois preencha só o "src" da janela correspondente com "clipes/nome.mp4" e "kind": "video".'
-              : style.splitMedia === 'nenhum'
+              : escolhas.splitMedia === 'nenhum'
                 ? 'O aluno vai apontar os próprios arquivos: NÃO gere imagem nem clipe e NÃO preencha "src". Deixe as janelas vazias como estão.'
                 : 'Sua parte é o CONTEÚDO de cada janela: para cada uma, peça uma imagem em edit/imagens/pedidos.json com "uso": "tela-dividida" e um prompt em inglês ilustrando o que está sendo dito NAQUELE trecho da fala. Depois preencha só o "src" da janela correspondente com "imagens/nome.png".',
             'NUNCA use o próprio vídeo do aluno como mídia da outra metade da divisão.',
@@ -3967,7 +3995,7 @@ export function App() {
     // resto — legenda, zoom, cor, trilha, medidas — o Edvid já escreveu, e
     // pedir de novo era o que fazia o agente sobrescrever tudo com um
     // esqueleto vazio.
-    const precisaDoAgente = style.edit !== 'limpa' || style.note.trim().length > 0;
+    const precisaDoAgente = escolhas.edit !== 'limpa' || escolhas.note.trim().length > 0;
     if (!precisaDoAgente || !activeAiConnected) {
       // ESTA MENSAGEM MENTIA DUAS VEZES. Dizia "estou renderizando o vídeo
       // agora" — e desde a prévia ao vivo o render só acontece no botão — e
@@ -3978,18 +4006,18 @@ export function App() {
       const partes = ['Estilos aplicados na edição.'];
       if (plano.splits > 0) {
         const espacos = plano.splits === 1 ? 'um espaço' : `${plano.splits} espaços`;
-        // Só oferece a IA quando existe conta capaz de gerar AQUELE tipo — é
-        // a mesma pergunta que decide o botão no palco.
-        const podeGerar = style.splitMedia === 'video'
-          ? videoAiConnected
-          : style.splitMedia === 'nenhum' ? false : imageAiConnected;
+        // `escolhas.splitMedia` já é a origem EFETIVA: só sobra 'imagem' ou
+        // 'video' quando existe conta capaz de gerar aquele tipo. Prometer a
+        // IA para quem não tem conta é a mesma mentira que esta versão veio
+        // desfazer.
+        const podeGerar = escolhas.splitMedia !== 'nenhum';
         partes.push(podeGerar
           ? `Deixei ${espacos} de tela dividida na timeline: selecione cada um e escolha o arquivo, ou descreva o que quer ver e deixe a IA gerar.`
           : `Deixei ${espacos} de tela dividida na timeline: selecione cada um e aponte o arquivo que vai entrar.`);
       }
       // A observação é a única parte que continua exigindo um agente: é texto
       // livre, e não há como o aplicativo adivinhar o que ela pede.
-      if (style.note.trim() && !activeAiConnected) {
+      if (escolhas.note.trim() && !activeAiConnected) {
         partes.push('A observação que você escreveu ficou de fora: ela precisa de uma IA de chat conectada para virar edição.');
       }
       partes.push('A prévia já mostra tudo — quando quiser o arquivo final, clique em Renderizar.');
@@ -4829,7 +4857,7 @@ export function App() {
                   onTimelineModelChange={handleTimelineModelChange}
                   onApplyTimelineEdits={applyTimelineEdits}
                 />
-              ) : <StyleWorkspace style={style} onChange={setStyle} onApply={applyStyleSelection} canApply={canApplyStyles} applying={sending} runtime={remotionRuntime} imageAiConnected={imageAiConnected} videoAiConnected={videoAiConnected} />}
+              ) : <StyleWorkspace style={{ ...style, splitMedia: splitMediaEfetivo }} onChange={setStyle} onApply={applyStyleSelection} canApply={canApplyStyles} applying={sending} runtime={remotionRuntime} imageAiConnected={imageAiConnected} videoAiConnected={videoAiConnected} />}
             </div>
           </section>
         </div>
