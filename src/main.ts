@@ -78,7 +78,6 @@ import {
   planCutFlashes,
   planSplits,
   type PlanSegment,
-  type PlanWord,
 } from './edit-plan';
 import { previewFrames, previewPlan } from './phase2-preview';
 import {
@@ -2809,10 +2808,9 @@ async function writeEditData(
   style: ProjectStyleState,
   media: {
     width: number; height: number; fps: number; durationSec: number; opening: string[];
-    // A fala e as juncoes do corte entram AQUI porque e aqui que o `previous`
-    // ja esta lido: o plano de tela dividida precisa saber se o projeto ja tem
-    // janelas, e o de flash precisa saber onde a headline termina.
-    captions: readonly PlanWord[];
+    // Os blocos do corte entram AQUI porque e aqui que o `previous` ja esta
+    // lido: o plano precisa saber que midia o projeto ja tem para carregar
+    // cada arquivo para a janela nova que cobre o lugar dele.
     segments: readonly PlanSegment[];
   },
 ): Promise<{ splits: number; flashes: number }> {
@@ -2855,7 +2853,10 @@ async function writeEditData(
     previous: Array.isArray(previous.splits) ? (previous.splits as Record<string, unknown>[]) : [],
     durationSec: media.durationSec,
     planned: planSplits({
-      captions: media.captions,
+      // Os BLOCOS DO CORTE mandam no tempo: um espaco em cada tomada, para o
+      // aluno podar. Era a fala fatiada em partes iguais, e num reel de 14s
+      // isso entregou uma janela so, caida entre dois blocos.
+      segments: media.segments,
       durationSec: media.durationSec,
       hookEndSec: hookEnabled ? hookEndSec : 0,
       position: style.edit === 'split' ? 'top' : 'bottom',
@@ -3064,7 +3065,7 @@ async function buildPhase2(
     })
     .catch(() => [] as PlanSegment[]);
   return writeEditData(publicDirectory, style, {
-    width, height, fps, durationSec, opening: openingLine(captions), captions, segments,
+    width, height, fps, durationSec, opening: openingLine(captions), segments,
   });
 }
 

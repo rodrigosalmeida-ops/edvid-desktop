@@ -1225,6 +1225,28 @@ Dependências do Fill:
   — só a tag datada é imutável; e o n7.1 já saiu de linha por lá, por
   isso o compartilhado compila da fonte. Validação real pendente (seção
   14).
+- 0.31.4: A TELA DIVIDIDA PASSOU A SEGUIR O CORTE, UM ESPAÇO POR TOMADA. O
+  desenho anterior adivinhava — fatiava o vídeo e escolhia uma frase no meio de
+  cada fatia — e em uso real entregou UMA janela num reel de 14s, caída entre
+  dois blocos. Fala e fronteira de corte são coisas diferentes: o bloco do EDL
+  já É a decisão de ritmo, e é nele que uma troca de layout lê como intenção.
+  Agora `planSplits` recebe o `segments.json` (a mesma lista que o template usa
+  no zoom por corte e que a timeline mostra como "Bloco NN") e emite um espaço
+  por bloco, sem teto de quantidade — espaço vazio não gasta crédito, e podar é
+  do aluno. Bloco abaixo de 1,5s não vira espaço (o fade sozinho come 0,43s) e
+  bloco inteiro debaixo da headline também não; o que só começa ali entra
+  aparado.
+  E o motivo de a 0.31.3 não ter mudado NADA no projeto do aluno: o
+  `applySplitPlan` preservava as janelas existentes sempre que havia alguma
+  ("elas mandam no tempo"), então a janela mal posicionada gravada por uma
+  versão anterior sobreviveu a todo "Salvar e aplicar" seguinte e as correções
+  do plano nunca chegaram lá. Agora reaplicar REPLANEJA e o que não pode sumir
+  é o trabalho: cada arquivo já apontado viaja para a janela que cobre o lugar
+  dele, com o `transform` junto; arquivo sem janela vira órfão preservado em
+  vez de sumir calado; e sem plano nenhum (segments.json ilegível) o que existe
+  fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
+  medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
+  sobreposição e deixava vazia a que encaixava por 2,87s.
 - 0.31.3: dois relatos do primeiro uso real da geração por faixa.
   (1) UMA JANELA SÓ, E JOGADA NO FIM, num reel de 14,02s. A janela (5s) e o
   respiro (3s) eram absolutos, calibrados em vídeo de 90s: com headline de 4s

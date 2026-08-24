@@ -2,10 +2,13 @@
 //
 // O defeito que originou o módulo: escolher "Tela dividida" sem agente
 // conectado gravava `splits: []` e o chat respondia "Estilos aplicados". A
-// edição saía limpa e nada na interface dizia isso. Aqui as janelas nascem da
-// própria fala, e o teste trava as propriedades que fazem elas serem
-// editáveis de verdade — fronteira de frase, respiro entre uma e outra, e
-// nunca em cima da headline nem do fim do vídeo.
+// edição saía limpa e nada na interface dizia isso.
+//
+// O primeiro desenho adivinhava as janelas fatiando a fala, e em uso real
+// entregou UMA janela num reel de 14s, caída entre dois blocos. Agora o CORTE
+// manda: um espaço por tomada, para o aluno podar. Aqui ficam travadas as duas
+// coisas que isso exige — o espaço acompanhando a borda do bloco, e a mídia já
+// apontada viajando para a janela nova em vez de sumir no replanejamento.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -23,165 +26,151 @@ try {
     '--target', 'es2022', '--module', 'es2022', '--moduleResolution', 'bundler',
     '--skipLibCheck', '--outDir', outDir,
   ], { stdio: 'inherit' });
-  const { applySplitPlan, phrasesFrom, planCutFlashes, planSplits, splitCount } = await import(
+  const { applySplitPlan, planCutFlashes, planSplits } = await import(
     pathToFileURL(path.join(outDir, 'edit-plan.js')).href
   );
 
-  // --- 1. Quantas janelas ---------------------------------------------------
-  // Uma a cada 18s, entre 2 e 6. Mais conservador que o zoom (uma a cada 12s)
-  // porque cada janela destas pode virar um clipe pago.
-  assert.equal(splitCount(10), 2, 'vídeo curto ainda merece duas janelas');
-  assert.equal(splitCount(30), 2);
-  assert.equal(splitCount(60), 3);
-  assert.equal(splitCount(95), 5);
-  assert.equal(splitCount(600), 6, 'o teto existe para não torrar crédito');
-
-  // --- 2. Frases pelo silêncio ---------------------------------------------
-  // Dentro de uma frase as palavras encostam; a respirada passa de 0,42s.
-  const fala = (pares) => pares.map(([s, e], i) => ({ text: `p${i}`, startMs: s * 1000, endMs: e * 1000 }));
-  const frases = phrasesFrom(fala([[0, 0.4], [0.45, 0.9], [1.6, 2.0], [2.05, 2.4]]));
-  assert.equal(frases.length, 2, 'a pausa de 0,7s separa duas frases');
-  assert.deepEqual(frases[0], { start: 0, end: 0.9 });
-  assert.deepEqual(frases[1], { start: 1.6, end: 2.4 });
-
-  // Fala corrida sem respirada não pode virar uma frase única de 20s: a janela
-  // inteira caberia dentro dela e o plano perderia toda a granularidade.
-  const corrida = phrasesFrom(fala(
-    Array.from({ length: 40 }, (_, i) => [i * 0.5, i * 0.5 + 0.45]),
-  ));
-  assert.ok(corrida.length > 1, 'fala corrida tem de quebrar mesmo sem pausa');
-  assert.ok(corrida.every((f) => f.end - f.start <= 8.0001), 'nenhuma frase passa do teto');
-
-  // --- 3. As janelas de tela dividida --------------------------------------
-  // Fala sintética de 95s no mesmo formato do captions.json da Fase 2: frases
-  // de ~2,2s com respirada de 0,6s entre elas.
-  const roteiro = [];
-  for (let t = 0.5; t < 94; t += 2.8) {
-    for (let w = 0; w < 5; w += 1) {
-      roteiro.push({ text: `w${w}`, startMs: (t + w * 0.44) * 1000, endMs: (t + w * 0.44 + 0.4) * 1000 });
-    }
-  }
+  // --- 1. Uma janela por CORTE ---------------------------------------------
+  // O caso real que derrubou o desenho anterior: reel de 14,02s, headline de
+  // 4s, quatro blocos no corte. O plano por fatias entregou UMA janela, caída
+  // entre dois blocos. Agora o corte manda: um espaço por tomada.
+  const blocos = [
+    { start: 0, dur: 4.2 },      // inteiro debaixo da headline
+    { start: 4.2, dur: 6.3 },
+    { start: 10.5, dur: 3.0 },
+    { start: 13.5, dur: 0.52 },  // curto demais para a mídia aparecer
+  ];
   const janelas = planSplits({
-    captions: roteiro, durationSec: 95, hookEndSec: 4, position: 'top', kind: 'image',
+    segments: blocos, durationSec: 14.02, hookEndSec: 4, position: 'top', kind: 'image',
   });
-
-  assert.equal(janelas.length, 5, 'um vídeo de 95s pede cinco janelas');
-  assert.ok(janelas.every((j) => j.src === ''), 'a janela nasce VAZIA — quem preenche é o aluno ou a IA');
+  assert.equal(janelas.length, 2, 'os dois blocos aproveitáveis viram espaço');
+  assert.deepEqual(
+    janelas.map((j) => [j.start, j.end]),
+    [[4.6, 10.5], [10.5, 13.5]],
+    'cada espaço acompanha as bordas do bloco',
+  );
+  assert.ok(janelas.every((j) => j.src === ''), 'o espaço nasce VAZIO — quem preenche é o aluno ou a IA');
   assert.ok(janelas.every((j) => j.kind === 'image'), 'o kind acompanha a escolha do formulário');
   assert.ok(janelas.every((j) => j.position === 'top'), 'a posição vem do tipo de edição');
 
-  // Nunca por baixo da headline, nunca em cima do fim.
-  assert.ok(janelas[0].start >= 4.6, `a primeira janela respeita a headline (${janelas[0].start})`);
-  assert.ok(janelas.every((j) => j.end <= 94), 'nenhuma janela invade o último segundo');
+  // O bloco que só COMEÇA debaixo da headline entra aparado, não sumido.
+  assert.equal(janelas[0].start, 4.6, 'o espaço começa depois da headline');
 
-  // Duração dentro da faixa utilizável.
-  for (const j of janelas) {
-    const dur = j.end - j.start;
-    assert.ok(dur >= 2.4 && dur <= 8.0001, `janela de ${dur.toFixed(2)}s fora da faixa`);
-  }
-
-  // Respiro entre uma e outra: sem isto o apresentador nunca volta a tela
-  // cheia e a divisa lê como erro de render, não como intenção.
-  for (let i = 1; i < janelas.length; i += 1) {
-    const folga = janelas[i].start - janelas[i - 1].end;
-    assert.ok(folga >= 3, `folga de ${folga.toFixed(2)}s entre as janelas ${i - 1} e ${i}`);
-  }
-
-  // Fronteira de FRASE, nunca no meio de uma palavra.
-  const inicios = new Set(phrasesFrom(roteiro).map((f) => Math.round(f.start * 1000)));
-  const fins = new Set(phrasesFrom(roteiro).map((f) => Math.round(f.end * 1000)));
-  for (const j of janelas) {
-    assert.ok(inicios.has(Math.round(j.start * 1000)), `janela começa fora de frase: ${j.start}`);
-    assert.ok(fins.has(Math.round(j.end * 1000)), `janela termina fora de frase: ${j.end}`);
-  }
-
-  // Distribuição: o primeiro rascunho era guloso e empilhava tudo nos
-  // primeiros 20s. A última janela tem de estar na segunda metade do vídeo.
-  assert.ok(janelas[janelas.length - 1].start > 47.5, 'as janelas têm de cobrir o vídeo inteiro');
-
-  // --- 3b. Vídeo CURTO: a janela e o respiro encolhem ----------------------
-  // Caso real de uso: reel de 14,02s com headline de 4s. Com os valores fixos
-  // (5s de janela + 3s de respiro) só cabia UMA janela nos 8,4s úteis, e ela
-  // saía jogada na segunda metade — o aluno viu exatamente isso.
-  const curto = [];
-  for (let t = 0.4; t < 13.5; t += 1.6) {
-    for (let w = 0; w < 3; w += 1) {
-      curto.push({ text: `w${w}`, startMs: (t + w * 0.36) * 1000, endMs: (t + w * 0.36 + 0.32) * 1000 });
-    }
-  }
-  const janelasCurtas = planSplits({
-    captions: curto, durationSec: 14.02, hookEndSec: 4, position: 'top', kind: 'video',
-  });
-  assert.equal(janelasCurtas.length, 2, 'um reel de 14s tem de receber as duas janelas');
-  assert.ok(janelasCurtas[0].start >= 4.6, 'a headline continua intocada');
-  assert.ok(janelasCurtas[janelasCurtas.length - 1].end <= 13.02, 'o último segundo continua livre');
-  assert.ok(
-    janelasCurtas.every((j) => j.end - j.start >= 2.4),
-    'nenhuma janela abaixo do mínimo, mesmo espremida',
-  );
-  // Distribuídas, não amontoadas: a segunda começa depois do meio do trecho útil.
-  assert.ok(janelasCurtas[1].start > 8.8, `segunda janela cedo demais: ${janelasCurtas[1].start}`);
-
-  // O encolhimento é TETO, não regra: vídeo longo não muda nada.
-  assert.equal(janelas.length, 5);
-  assert.ok(
-    janelas.every((j) => j.end - j.start <= 5.0001),
-    'em vídeo longo a janela continua no alvo de 5s',
-  );
-
-  // --- 4. Casos que não rendem plano ---------------------------------------
+  // Blocos curtos não viram espaço em lugar nenhum: abaixo do mínimo o fade
+  // come a mídia inteira e a divisa lê como falha de render.
   assert.deepEqual(
-    planSplits({ captions: roteiro, durationSec: 5, hookEndSec: 4, position: 'top' }),
+    planSplits({
+      segments: [{ start: 0, dur: 1.2 }, { start: 1.2, dur: 1.4 }],
+      durationSec: 3, hookEndSec: 0, position: 'top',
+    }),
     [],
-    'sem espaço útil depois da headline, não há tela dividida',
   );
-  const semKind = planSplits({ captions: roteiro, durationSec: 60, hookEndSec: 0, position: 'bottom' });
-  assert.ok(semKind.length > 0);
-  assert.ok(semKind.every((j) => !('kind' in j)), 'origem "nenhum" não grava kind — o espaço não oferece IA');
-  assert.ok(semKind.every((j) => j.position === 'bottom'));
 
-  // Sem transcrição o plano ainda existe: b-roll sobre silêncio é legítimo.
-  const mudo = planSplits({ captions: [], durationSec: 60, hookEndSec: 4, position: 'top' });
-  assert.equal(mudo.length, 3, 'vídeo sem fala ainda recebe as janelas por fatias iguais');
-  assert.ok(mudo.every((j) => j.end - j.start >= 2.4));
-  for (let i = 1; i < mudo.length; i += 1) {
-    assert.ok(mudo[i].start - mudo[i - 1].end >= 3, 'o respiro vale também sem fala');
-  }
+  // Sem teto de quantidade: espaço vazio não gasta crédito, e o número de
+  // blocos é a edição que o aluno já aprovou no corte limpo.
+  const muitos = planSplits({
+    segments: Array.from({ length: 12 }, (_, i) => ({ start: i * 5, dur: 5 })),
+    durationSec: 60, hookEndSec: 0, position: 'bottom',
+  });
+  assert.equal(muitos.length, 12, 'doze cortes, doze espaços');
+  assert.ok(muitos.every((j) => !('kind' in j)), 'origem "nenhum" não grava kind — o espaço não oferece IA');
+  assert.ok(muitos.every((j) => j.position === 'bottom'));
 
-  // --- 5. O plano encontrando o que já existe ------------------------------
-  // Reaplicar estilos não pode apagar trabalho, mas também não pode ignorar o
-  // formulário. As janelas mandam no tempo; o formulário manda no layout.
+  // Nada de janela passando do fim do vídeo, mesmo com bloco mal medido.
+  const estourado = planSplits({
+    segments: [{ start: 0, dur: 99 }], durationSec: 10, hookEndSec: 0, position: 'top',
+  });
+  assert.deepEqual(estourado.map((j) => j.end), [10]);
+
+  assert.deepEqual(planSplits({ segments: [], durationSec: 30, hookEndSec: 0, position: 'top' }), []);
+  assert.deepEqual(planSplits({ segments: blocos, durationSec: 0, hookEndSec: 0, position: 'top' }), []);
+
+  // --- 2. Reaplicar REPLANEJA, e a mídia viaja junto -----------------------
+  // A primeira versão preservava as janelas existentes, e isso saiu pela
+  // culatra em uso real: uma janela mal posicionada de uma versão anterior
+  // sobreviveu a todo "Salvar e aplicar" seguinte, e as correções do plano
+  // nunca chegaram ao projeto do aluno.
   const jaExistem = [
-    { src: 'imagens/a.png', kind: 'image', start: 6, end: 11, position: 'top' },
+    { src: 'imagens/a.png', kind: 'image', start: 6, end: 11, position: 'top',
+      transform: { x: 0.1, scale: 1.2 } },
     { src: '', kind: 'image', start: 20, end: 25, position: 'top' },
   ];
   const virado = applySplitPlan({
     edit: 'split2', splitMedia: 'video', previous: jaExistem, planned: janelas,
   });
-  assert.equal(virado.length, 2, 'as janelas existentes mandam no tempo');
-  assert.equal(virado[0].start, 6, 'nenhuma janela foi replanejada');
+  assert.equal(virado.length, 2, 'o corte manda no tempo: sai o plano, não o que estava lá');
+  assert.deepEqual(virado.map((j) => [j.start, j.end]), [[4.6, 10.5], [10.5, 13.5]]);
   assert.ok(virado.every((j) => j.position === 'bottom'), 'trocar o tipo de edição vira a montagem inteira');
+  // O arquivo viaja para a janela que cobre o lugar dele (6–11 cai dentro de
+  // 4,6–10,5), com o enquadramento manual junto.
+  assert.equal(virado[0].src, 'imagens/a.png', 'o trabalho do aluno não pode sumir no replanejamento');
   assert.equal(virado[0].kind, 'image', 'espaço com arquivo mantém o kind do arquivo');
-  assert.equal(virado[0].src, 'imagens/a.png', 'e mantém o arquivo');
-  assert.equal(virado[1].kind, 'video', 'espaço vazio segue a nova escolha do formulário');
+  assert.deepEqual(virado[0].transform, { x: 0.1, scale: 1.2 }, 'o pan ajustado à mão viaja junto');
+  assert.equal(virado[1].src, '', 'a segunda janela nasce vazia');
+  assert.equal(virado[1].kind, 'video', 'espaço vazio segue a escolha do formulário');
 
-  // "Nenhum" tira o kind do espaço vazio: sem ele o botão de gerar não aparece.
-  const semIa = applySplitPlan({
+  // O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela. Medido na
+  // bancada: percorrendo em ordem, a primeira janela abocanhava a imagem com
+  // 0,63s de sobreposição e deixava vazia a janela seguinte, onde a mesma
+  // imagem encaixava por 2,87s.
+  const disputa = applySplitPlan({
+    edit: 'split',
+    splitMedia: 'imagem',
+    previous: [{ src: 'imagens/cena.png', start: 9.5, end: 13, position: 'top' }],
+    planned: [
+      { src: '', start: 5.33, end: 10.13, position: 'top' },
+      { src: '', start: 10.13, end: 13.73, position: 'top' },
+    ],
+  });
+  assert.deepEqual(
+    disputa.map((j) => j.src),
+    ['', 'imagens/cena.png'],
+    'a mídia fica na janela onde ela mais aparecia',
+  );
+
+  // Cada arquivo é herdado UMA vez: duas mídias no mesmo lugar não podem
+  // acabar na mesma janela e sumir uma.
+  const duas = applySplitPlan({
+    edit: 'split',
+    splitMedia: 'imagem',
+    previous: [
+      { src: 'imagens/a.png', start: 5, end: 9, position: 'top' },
+      { src: 'imagens/b.png', start: 11, end: 13, position: 'top' },
+    ],
+    planned: janelas,
+  });
+  assert.deepEqual(duas.map((j) => j.src), ['imagens/a.png', 'imagens/b.png']);
+
+  // Mídia que não encontra janela nenhuma NÃO SOME — o corte mudou embaixo
+  // dela, e apagar calado seria perder trabalho.
+  const orfa = applySplitPlan({
+    edit: 'split',
+    splitMedia: 'imagem',
+    previous: [{ src: 'imagens/orfa.png', start: 40, end: 44, position: 'top' }],
+    planned: janelas,
+    durationSec: 60,
+  });
+  assert.equal(orfa.length, 3, 'a órfã entra além das janelas do plano');
+  assert.deepEqual(orfa.map((j) => j.start), [4.6, 10.5, 40], 'e na ordem do tempo');
+
+  // Sem plano nenhum (segments.json ilegível), o que existe FICA: replanejar
+  // para o vazio apagaria a edição inteira por causa de um arquivo quebrado.
+  const semPlano = applySplitPlan({
     edit: 'split', splitMedia: 'nenhum', previous: jaExistem, planned: [],
   });
-  assert.ok(!('kind' in semIa[1]), 'espaço vazio sem origem de IA não guarda kind');
-  assert.equal(semIa[0].kind, 'image', 'o arquivo já apontado continua sendo imagem');
+  assert.equal(semPlano.length, 2);
+  assert.ok(!('kind' in semPlano[1]), 'espaço vazio sem origem de IA não guarda kind');
+  assert.equal(semPlano[0].kind, 'image', 'o arquivo já apontado continua sendo imagem');
 
-  // Projeto novo: entra o plano.
+  // Projeto novo: entra o plano puro.
   const doZero = applySplitPlan({
     edit: 'split', splitMedia: 'imagem', previous: [], planned: janelas,
   });
   assert.equal(doZero.length, janelas.length);
   assert.ok(doZero.every((j) => j.src === '' && j.kind === 'image'));
 
-  // Corte refeito e mais curto: as janelas do corte antigo não podem ficar
-  // depois do fim do vídeo — invisíveis no palco e com o chip estourando a
-  // timeline. A que atravessa o fim é cortada; a que ficou toda fora, sai.
+  // Corte refeito e mais curto: nada pode ficar depois do fim do vídeo —
+  // invisível no palco e com o chip estourando a timeline.
   const encurtado = applySplitPlan({
     edit: 'split', splitMedia: 'imagem', previous: jaExistem, planned: [], durationSec: 9,
   });
@@ -190,7 +179,7 @@ try {
   assert.deepEqual(
     applySplitPlan({ edit: 'split', splitMedia: 'imagem', previous: jaExistem, planned: [], durationSec: 7 }),
     [],
-    'sobrando menos que a janela mínima, não sobra janela',
+    'sobrando menos que o bloco mínimo, não sobra janela',
   );
 
   // "Limpa" apaga as janelas: o template não olha o editType, então deixá-las
@@ -201,7 +190,7 @@ try {
     'edição limpa é uma afirmação sobre o resultado',
   );
 
-  // --- 6. Flashes de transição ---------------------------------------------
+  // --- 3. Flashes de transição ---------------------------------------------
   const segments = [
     { start: 0, dur: 3 }, { start: 3, dur: 2.5 }, { start: 5.5, dur: 0.6 },
     { start: 6.1, dur: 4 }, { start: 10.1, dur: 5 },
