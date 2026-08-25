@@ -58,6 +58,9 @@ jobs:
           npm run test:edit-data-edits
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Patch TorchCodec build path for hosted Windows
+        run: node scripts/editai-ci-fix-torchcodec-windows.mjs
+
       - name: Build upstream Windows x64 installer
         shell: powershell
         run: |
