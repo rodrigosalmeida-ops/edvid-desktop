@@ -148,10 +148,11 @@ try {
   // Um token de prévia autoriza o public/ INTEIRO de um projeto. Esta guarda é
   // o que impede o token de virar leitura arbitrária do disco: tudo que escapa
   // da raiz morre aqui, e o teste enumera os jeitos de escapar.
-  const raiz = '/proj/edit/remotion/public';
-  assert.equal(resolvePreviewPath(raiz, ['cut.mp4']), `${raiz}/cut.mp4`);
-  assert.equal(resolvePreviewPath(raiz, ['fonts', 'fonts.css']), `${raiz}/fonts/fonts.css`);
-  assert.equal(resolvePreviewPath(raiz, ['imagens', 'arte%20final.png']), `${raiz}/imagens/arte final.png`);
+  // Use a raiz nativa da plataforma: resolvePreviewPath devolve caminhos do SO.
+  const raiz = path.resolve(path.parse(process.cwd()).root, 'proj', 'edit', 'remotion', 'public');
+  assert.equal(resolvePreviewPath(raiz, ['cut.mp4']), path.join(raiz, 'cut.mp4'));
+  assert.equal(resolvePreviewPath(raiz, ['fonts', 'fonts.css']), path.join(raiz, 'fonts', 'fonts.css'));
+  assert.equal(resolvePreviewPath(raiz, ['imagens', 'arte%20final.png']), path.join(raiz, 'imagens', 'arte final.png'));
   for (const [nome, segmentos] of [
     ['ponto-ponto', ['..', 'edit-data.json']],
     ['ponto-ponto no meio', ['imagens', '..', '..', 'src', 'CustomGraphics.tsx']],
