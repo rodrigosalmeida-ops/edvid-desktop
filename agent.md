@@ -1247,6 +1247,18 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.7: O PALCO PRETO DO WINDOWS, RESOLVIDO POR ESPECIFICAÇÃO — e provado
+  com uma linha de Node antes do conserto. Em file:// COM LETRA DE DRIVE, uma
+  URL absoluta de caminho PRESERVA o drive (URL Standard, estado "file"):
+  new URL('/edvid-preview/tok/cut.mp4', 'file:///C:/Users/.../index.html')
+  → file:///C:/edvid-preview/tok/cut.mp4. O filtro do webRequest registrava
+  'file:///edvid-preview/*', que NÃO casa com a forma com drive: o
+  redirecionamento para edvid-media:// nunca disparava no Windows, o Chromium
+  procurava C:\edvid-preview\ no disco e NENHUMA mídia nem fonte da prévia
+  chegava — palco preto inteiro, com a UI normal em volta. No mac não há
+  drive na URL, e por isso três rodadas de teste aqui nunca reproduziram.
+  Conserto: terceiro padrão 'file:///*edvid-preview/*' (o * casa o "C:"); o
+  handler já achava o marcador por indexOf e serve as duas formas.
 - 0.33.6: RODADA DO WINDOWS — três relatos de um testador em 0.31.2, e a
   pergunta do instalador clássico.
   (1) "versÃƒÂ£o" NAS LEGENDAS E TEXTOS: mojibake clássico de dupla

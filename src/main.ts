@@ -6322,7 +6322,15 @@ void app.whenReady().then(async () => {
   // com file:// (regra do Chromium), dai o segundo filtro para o app
   // empacotado, que carrega o renderer por file://.
   session.defaultSession.webRequest.onBeforeRequest(
-    { urls: ['*://*/edvid-preview/*', 'file:///edvid-preview/*'] },
+    // O terceiro padrao e o WINDOWS: em file:// com letra de drive, uma URL
+    // absoluta de caminho PRESERVA o drive (URL Standard, estado "file") —
+    // /edvid-preview/x contra file:///C:/Users/... resolve para
+    // file:///C:/edvid-preview/x, que o segundo padrao nao casa. Era o palco
+    // preto inteiro do Windows: sem redirecionamento, o Chromium procurava
+    // C:\edvid-preview\ no disco e nada de midia nem fonte chegava. Provado
+    // com new URL() antes de escrever isto; no mac nao ha drive e por isso
+    // nunca reproduziu aqui.
+    { urls: ['*://*/edvid-preview/*', 'file:///edvid-preview/*', 'file:///*edvid-preview/*'] },
     (details, callback) => {
       const marker = details.url.indexOf('/edvid-preview/');
       if (marker < 0) return callback({});
