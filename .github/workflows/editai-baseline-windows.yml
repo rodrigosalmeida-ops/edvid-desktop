@@ -8,11 +8,14 @@ on:
 
 permissions:
   contents: read
+  attestations: read
 
 jobs:
   baseline-windows:
     runs-on: windows-latest
     timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout exact branch
@@ -31,6 +34,7 @@ jobs:
           if ($pkg.version -ne '0.33.7') { throw "Expected Edvid 0.33.7 baseline, found $($pkg.version)" }
           Write-Host "Baseline version: $($pkg.version)"
           git rev-parse HEAD
+          gh auth status
 
       - name: Install dependencies
         run: npm ci
