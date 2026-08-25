@@ -1,0 +1,99 @@
+name: EDIT AI Baseline Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - editai-v1
+    paths:
+      - '.github/workflows/editai-baseline-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-windows:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Confirm upstream baseline
+        shell: powershell
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '0.33.7') { throw "Expected Edvid 0.33.7 baseline, found $($pkg.version)" }
+          Write-Host "Baseline version: $($pkg.version)"
+          git rev-parse HEAD
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Core regression tests
+        shell: powershell
+        run: |
+          npm run test:timeline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:media
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:helpers
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:clean-cut
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:phase2-data
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:edit-data-edits
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build upstream Windows x64 installer
+        shell: powershell
+        run: |
+          npm run make
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Inspect Squirrel artifacts
+        shell: powershell
+        run: |
+          $root = Join-Path $PWD 'out/make/squirrel.windows/x64'
+          if (-not (Test-Path $root)) { throw "Squirrel output missing: $root" }
+          $setup = Get-ChildItem $root -Recurse -Filter '*Setup.exe' | Select-Object -First 1
+          $releases = Get-ChildItem $root -Recurse -Filter 'RELEASES' | Select-Object -First 1
+          $nupkg = Get-ChildItem $root -Recurse -Filter '*.nupkg' | Select-Object -First 1
+          if (-not $setup) { throw 'Setup.exe not generated' }
+          if (-not $releases) { throw 'RELEASES not generated' }
+          if (-not $nupkg) { throw '.nupkg not generated' }
+          $report = [ordered]@{
+            schemaVersion = 1
+            generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+            baseline = '0.33.7'
+            commit = (git rev-parse HEAD).Trim()
+            setup = $setup.FullName
+            setupSha256 = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            setupBytes = $setup.Length
+            nupkg = $nupkg.FullName
+            releases = $releases.FullName
+          }
+          $report | ConvertTo-Json -Depth 5 | Set-Content out/editai-baseline-windows.json -Encoding UTF8
+          Get-Content out/editai-baseline-windows.json
+
+      - name: Upload baseline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editai-baseline-windows-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            out/make/squirrel.windows/x64/**
+            out/editai-baseline-windows.json
