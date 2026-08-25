@@ -186,6 +186,83 @@ try {
   // Apagar de novo não muda nada — o chamador sabe que não precisa gravar.
   assert.equal(applyEditOperation(semHeadline.data, { op: 'disable', kind: 'hook' }).changed, false);
 
+  // --- 5e. Tesoura no elemento selecionado ----------------------------------
+  // Recortar com um elemento selecionado parte SO ele: uma mídia vira duas
+  // mídias, com o mesmo arquivo e a janela repartida na agulha.
+  const cortado = applyEditOperation(base(), { op: 'split-at', kind: 'splits', index: 0, time: 6.5 });
+  assert.ok(cortado.ok && cortado.changed);
+  assert.equal(cortado.data.splits.length, 2, 'uma mídia recortada vira duas');
+  assert.deepEqual(
+    cortado.data.splits.map((s) => [s.start, s.end]),
+    [[4, 6.5], [6.5, 9]],
+    'as duas metades encostam exatamente na agulha',
+  );
+  assert.ok(cortado.data.splits.every((s) => s.src === 'a.png' && s.kind === 'image' && s.position === 'top'),
+    'as duas metades herdam arquivo, tipo e layout');
+  // behind guarda {start, dur}: o recorte respeita o formato do próprio item.
+  const cortadoBehind = applyEditOperation(base(), { op: 'split-at', kind: 'behind', index: 0, time: 32 });
+  assert.ok(cortadoBehind.ok);
+  assert.deepEqual(
+    cortadoBehind.data.behind.map((b) => [b.start, b.dur]),
+    [[30, 2], [32, 3]],
+    'behind continua em {start, dur} depois do corte',
+  );
+  // Fora da janela (ou colado na ponta) a tesoura não corta este item.
+  for (const t of [3, 4.05, 8.99, 20]) {
+    const fora = applyEditOperation(base(), { op: 'split-at', kind: 'splits', index: 0, time: t });
+    assert.ok(!fora.ok, `a tesoura não devia cortar em ${t}`);
+  }
+
+  // --- 5f. Trim da legenda e da headline ------------------------------------
+  // As duas faixas não tinham janela no arquivo: a legenda valia o vídeo
+  // inteiro e a headline sempre começava no quadro 0. O campo nasce no
+  // primeiro arrasto da ponta.
+  const janelaLegenda = applyEditOperation(base(), { op: 'set-caption-window', start: 3, end: 40 });
+  assert.ok(janelaLegenda.ok && janelaLegenda.changed);
+  assert.deepEqual(
+    [janelaLegenda.data.captions.startSec, janelaLegenda.data.captions.endSec],
+    [3, 40],
+  );
+  // Arrastar só uma ponta preserva a outra.
+  const soFim = applyEditOperations(janelaLegenda.data, [{ op: 'set-caption-window', end: 30 }]);
+  assert.ok(soFim.ok);
+  assert.deepEqual([soFim.data.captions.startSec, soFim.data.captions.endSec], [3, 30]);
+  // A headline mantém o resto do objeto (texto, estilo, enabled).
+  const janelaTexto = applyEditOperation(base(), { op: 'set-headline-window', start: 1, end: 5 });
+  assert.ok(janelaTexto.ok);
+  assert.equal(janelaTexto.data.hook.enabled, true, 'o trim não pode desligar a headline');
+  assert.deepEqual(janelaTexto.data.hook.lines, ['x'], 'nem perder o texto');
+  assert.deepEqual([janelaTexto.data.hook.startSec, janelaTexto.data.hook.endSec], [1, 5]);
+  // Janela invertida ou curta demais não passa.
+  assert.ok(!applyEditOperation(base(), { op: 'set-caption-window', start: 10, end: 10.05 }).ok);
+
+  // --- 5g. Todo movimento cai em QUADRO -------------------------------------
+  // A timeline mede em segundos fracionários; o template converte para quadro
+  // com Math.round. Sem arredondar aqui, duas pontas que o aluno encostou na
+  // tela gravam números diferentes e nunca encostam de verdade.
+  const emQuadro = applyEditOperations(
+    base(),
+    [{ op: 'move', kind: 'splits', index: 0, start: 4.4831 }],
+    { fps: 30 },
+  );
+  assert.ok(emQuadro.ok);
+  assert.equal(emQuadro.data.splits[0].start, 4.467, '4,4831s cai no quadro 134 (4,4667s)');
+  assert.equal(emQuadro.data.splits[0].end, 9.467, 'e a duração é preservada');
+  const trimQuadro = applyEditOperations(
+    base(),
+    [{ op: 'resize', kind: 'splits', index: 0, edge: 'end', time: 8.008 }],
+    { fps: 30 },
+  );
+  assert.ok(trimQuadro.ok);
+  assert.equal(trimQuadro.data.splits[0].end, 8, '8,008s cai no quadro 240 — exatamente 8s');
+  // Sem fps declarado, o próprio arquivo responde.
+  const comFpsNoArquivo = applyEditOperations(
+    { ...base(), fps: 30 },
+    [{ op: 'split-at', kind: 'splits', index: 0, time: 6.51 }],
+  );
+  assert.ok(comFpsNoArquivo.ok);
+  assert.equal(comFpsNoArquivo.data.splits[0].end, 6.5, 'o fps do edit-data vale quando ninguém passa outro');
+
   // --- 6. Split ativo no instante -------------------------------------------
   assert.equal(activeSplitIndexAt(base(), 5), 0);
   assert.equal(activeSplitIndexAt(base(), 15), -1);

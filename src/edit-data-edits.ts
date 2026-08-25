@@ -30,6 +30,16 @@ export type EditOperation =
   | { op: 'set-caption-layout'; paddingBottom?: number; fontSize?: number }
   | { op: 'set-headline-layout'; paddingTop?: number; maxFontPx?: number }
   | { op: 'set-headline-text'; text: string }
+  // TRIM das duas faixas de texto. Elas nao tem janela propria no arquivo por
+  // padrao — a legenda vale o video inteiro e a headline sempre comecava no
+  // quadro 0 —, entao o campo nasce aqui na primeira vez que o aluno arrasta
+  // a ponta. O template le os dois como opcionais.
+  | { op: 'set-caption-window'; start?: number; end?: number }
+  | { op: 'set-headline-window'; start?: number; end?: number }
+  // A TESOURA COM UM ELEMENTO SELECIONADO parte SO ele: uma midia vira duas
+  // midias, cada uma com metade da janela e o mesmo arquivo. Sem selecao a
+  // tesoura continua cortando a tomada, como sempre.
+  | { op: 'split-at'; kind: OverlayKind; index: number; time: number }
   // Apagar o que foi selecionado. Legenda e headline nao somem do arquivo:
   // viram enabled:false, que e reversivel e o que o template entende.
   | { op: 'remove'; kind: OverlayKind; index: number }
@@ -117,6 +127,57 @@ export function applyEditOperation(
     const next = [...splits];
     next[operation.index] = { ...item, src, kind: operation.kind };
     return { ok: true, data: { ...data, splits: next }, changed: true };
+  }
+
+  if (operation.op === 'split-at') {
+    const items = listOf(data, operation.kind);
+    const item = items?.[operation.index];
+    if (!items || !item) return { ok: false, reason: 'esse item não existe mais' };
+    const window = windowOf(item);
+    if (!window) return { ok: false, reason: 'esse item não tem janela de tempo' };
+    const time = Number(operation.time);
+    if (!Number.isFinite(time)) return { ok: false, reason: 'posição ilegível' };
+    // As DUAS metades precisam sobreviver: cortar a 1 quadro da ponta deixaria
+    // um item que nem chega a aparecer e que o aluno teria de cacar para
+    // apagar. Fora da janela, a tesoura simplesmente nao corta este item.
+    if (time - window.start < MIN_WINDOW || window.end - time < MIN_WINDOW) {
+      return { ok: false, reason: 'a agulha está fora deste elemento' };
+    }
+    const next = [...items];
+    next.splice(
+      operation.index,
+      1,
+      writeWindow(item, window.start, time),
+      writeWindow(item, time, window.end),
+    );
+    return { ok: true, data: { ...data, [operation.kind]: next }, changed: true };
+  }
+
+  if (operation.op === 'set-caption-window' || operation.op === 'set-headline-window') {
+    const campo = operation.op === 'set-caption-window' ? 'captions' : 'hook';
+    const before = (data[campo] ?? {}) as Item;
+    const inicioAtual = Number(before.startSec);
+    const fimAtual = Number(before.endSec);
+    const inicio = operation.start === undefined
+      ? (Number.isFinite(inicioAtual) ? inicioAtual : 0)
+      : Number(operation.start);
+    const fim = operation.end === undefined
+      ? (Number.isFinite(fimAtual) ? fimAtual : durationSec)
+      : Number(operation.end);
+    if (!Number.isFinite(inicio) || !Number.isFinite(fim)) {
+      return { ok: false, reason: 'janela ilegível' };
+    }
+    const start = clamp(inicio, 0, Math.max(0, (durationSec || fim) - MIN_WINDOW));
+    const end = clamp(fim, start + MIN_WINDOW, durationSec || fim);
+    if (end - start < MIN_WINDOW) return { ok: false, reason: 'janela curta demais' };
+    if (Number(before.startSec ?? 0) === round3(start) && Number(before.endSec ?? NaN) === round3(end)) {
+      return { ok: true, data, changed: false };
+    }
+    return {
+      ok: true,
+      data: { ...data, [campo]: { ...before, startSec: round3(start), endSec: round3(end) } },
+      changed: true,
+    };
   }
 
   if (operation.op === 'set-transform') {
@@ -249,13 +310,50 @@ export function applyEditOperation(
   return { ok: true, data: { ...data, [operation.kind]: next }, changed: true };
 }
 
+// TODO MOVIMENTO CAI EM QUADRO.
+//
+// A timeline media em segundos fracionarios (a fracao horizontal do mouse na
+// pista), e o template converte para quadro com Math.round: um corte em
+// 3,4831s e um corte em 3,4667s desenham o MESMO quadro, mas gravam numeros
+// diferentes no arquivo e a ponta do elemento nunca encosta de verdade na do
+// vizinho. Arredondar aqui, na camada que grava, faz o que o aluno ve na
+// timeline ser exatamente o que o render desenha.
+function paraQuadro(time: number, fps: number): number {
+  return Math.round(time * fps) / fps;
+}
+
+function emQuadros(operation: EditOperation, fps: number): EditOperation {
+  if (!Number.isFinite(fps) || fps <= 0) return operation;
+  const q = (value: number) => paraQuadro(value, fps);
+  switch (operation.op) {
+    case 'move':
+      return { ...operation, start: q(operation.start) };
+    case 'resize':
+      return { ...operation, time: q(operation.time) };
+    case 'split-at':
+      return { ...operation, time: q(operation.time) };
+    case 'set-caption-window':
+    case 'set-headline-window':
+      return {
+        ...operation,
+        ...(operation.start === undefined ? {} : { start: q(operation.start) }),
+        ...(operation.end === undefined ? {} : { end: q(operation.end) }),
+      };
+    default:
+      return operation;
+  }
+}
+
 export function applyEditOperations(
   data: Record<string, unknown>,
   operations: readonly EditOperation[],
+  options?: { fps?: number },
 ): EditResult {
   let current = data;
   let changed = false;
-  for (const operation of operations) {
+  const fps = Number(options?.fps ?? current.fps);
+  for (const bruta of operations) {
+    const operation = emQuadros(bruta, fps);
     const result = applyEditOperation(current, operation);
     if (!result.ok) return result;
     current = result.data;

@@ -89,7 +89,10 @@ export type EditData = {
   durationSec: number;
   camera: {enabled: boolean; zooms: number[]; pushIn: number; targetX: number; targetY: number};
   hook: {
-    enabled: boolean; endSec: number; lines: string[]; logo: string | null; sign: string | null;
+    // `startSec` (padrao 0) existe para o trim da faixa Texto na timeline do
+    // Edvid: ate a 0.31.4 a headline SEMPRE comecava no quadro 0 e so a ponta
+    // direita era ajustavel.
+    enabled: boolean; startSec?: number; endSec: number; lines: string[]; logo: string | null; sign: string | null;
     // `text` is preferred over `lines`: the headline is ALWAYS re-broken into
     // exactly two balanced lines and the size fitted to them (see twoLines /
     // fitHeadline). Anything in `lines` is joined back into one string first.
@@ -112,6 +115,11 @@ export type EditData = {
   };
   captions: {
     enabled: boolean;
+    // Janela da faixa inteira (padrao: o video todo), para o trim na timeline.
+    // As palavras continuam com o tempo delas; isto so recorta QUANDO a faixa
+    // aparece.
+    startSec?: number;
+    endSec?: number;
     fontSize: number;
     maxWords: number;
     safeWidth: number;
@@ -163,16 +171,39 @@ export const useEditData = (): EditData => useProjectData().editData as unknown 
 // CaptionShell e o CustomGraphics compensam (VIDEO_LAG). `splits` vem de quem
 // chama (D.splits ?? []): funcao de modulo nao pode usar hook.
 export const activeSplitAt = (splits: readonly Split[], globalFrame: number, fps: number): Split | null =>
-  splits.find(
-    (s) => globalFrame >= Math.round(s.start * fps) + 1 && globalFrame < Math.round(s.end * fps) + 1,
-  ) ?? null;
+  splits.find((s) => {
+    const inicio = Math.round(s.start * fps);
+    // O +1 e o lag do video — MENOS no quadro 0, onde nao ha quadro anterior
+    // para atrasar. Com ele, uma tela dividida que comeca junto com o video
+    // ficava um quadro fora: o reel abria em tela cheia e a divisa entrava
+    // depois, que foi o "o primeiro frame ja devia estar dividido" do uso real.
+    const de = inicio === 0 ? 0 : inicio + 1;
+    return globalFrame >= de && globalFrame < Math.round(s.end * fps) + 1;
+  }) ?? null;
 
 // Cor de destaque padrao do Edvid, usada quando o edit-data.json nao traz uma.
 // Antes ela estava literal dentro de cada estilo, e a escolha do usuario na
 // aba Estilos era silenciosamente ignorada no render.
 export const EDVID_ACCENT = '#ff5200';
 
+// ENTRADA NO PRIMEIRO QUADRO: nao existe.
+//
+// Um elemento que comeca junto com o video nao "entra" — ele JA ESTA la. Animar
+// a entrada no quadro 0 faz o video abrir meio vazio e se montar sozinho na
+// frente de quem assiste, e a primeira imagem de um reel e a que segura a
+// pessoa. Vale so para o inicio: quem entra no meio continua entrando, porque
+// ali a animacao marca a troca.
+const entrada = (frame: number, quadros: number, noInicio: boolean): number =>
+  (noInicio
+    ? 1
+    : interpolate(frame, [0, quadros], [0, 1], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.out(Easing.cubic),
+    }));
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
 const clamp01 = (v: number) => clamp(v, 0, 1);
 
 // A DIVISA NAO FICA NO MEIO. Meio a meio come metade do apresentador e o
@@ -303,9 +334,9 @@ export const DynamicVideo: React.FC<{src?: string; frameOffset?: number; transpa
 // so the element sits behind it). The matte is a ProRes 4444 alpha .mov from
 // person_matte.py, one file per window, frame 0 = window start. Elements anchor
 // to the TOP of the frame (a centered element hides behind the torso).
-const BehindImageEl: React.FC<{src: string; totalFrames: number}> = ({src, totalFrames}) => {
+const BehindImageEl: React.FC<{src: string; totalFrames: number; noInicio?: boolean}> = ({src, totalFrames, noInicio}) => {
   const f = useCurrentFrame();
-  const enter = interpolate(f, [0, 9], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+  const enter = entrada(f, 9, Boolean(noInicio));
   const exit = interpolate(f, [totalFrames - 8, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const op = Math.min(enter, exit);
   const grow = interpolate(f, [0, totalFrames], [1, 1.08], {extrapolateRight: 'clamp'});
@@ -356,7 +387,7 @@ const BehindSubject: React.FC = () => {
         return (
           <Sequence key={i} from={from} durationInFrames={duration} layout="none">
             {b.kind === 'image' ? (
-              <BehindImageEl src={b.src} totalFrames={duration} />
+              <BehindImageEl src={b.src} totalFrames={duration} noInicio={from === 0} />
             ) : (
               <BehindWordsEl words={b.words} startSec={b.start} totalFrames={duration} />
             )}
@@ -519,9 +550,9 @@ export const CARD_W = 780;
 export const CARD_H = 500;
 export const CARD_TOP = 90;
 
-const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'; transform?: ManualTransform}> = ({src, totalFrames, kind, transform}) => {
+const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'; transform?: ManualTransform; noInicio?: boolean}> = ({src, totalFrames, kind, transform, noInicio}) => {
   const frame = useCurrentFrame();
-  const enter = interpolate(frame, [0, 9], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+  const enter = entrada(frame, 9, Boolean(noInicio));
   const exit = interpolate(frame, [totalFrames - 7, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const opacity = Math.min(enter, exit);
   // dynamic zoom: the image itself grows slowly while on screen (Ken-Burns)
@@ -554,7 +585,7 @@ const Inserts: React.FC = () => {
         const duration = Math.round((it.end - it.start) * fps);
         return (
           <Sequence key={i} from={from} durationInFrames={duration} layout="none">
-            <InsertCard src={it.src} kind={it.kind} transform={it.transform} totalFrames={duration} />
+            <InsertCard src={it.src} kind={it.kind} transform={it.transform} totalFrames={duration} noInicio={from === 0} />
           </Sequence>
         );
       })}
@@ -566,10 +597,10 @@ const Inserts: React.FC = () => {
 // A base do video NAO some: durante um split ela encolhe para a faixa oposta,
 // mostrando um recorte vertical do quadro original (splitGeometry manda na
 // divisa). A midia entra com fade curto.
-const SplitMedia: React.FC<{split: Split; totalFrames: number}> = ({split, totalFrames}) => {
+const SplitMedia: React.FC<{split: Split; totalFrames: number; noInicio?: boolean}> = ({split, totalFrames, noInicio}) => {
   const f = useCurrentFrame();
   const {width, height} = useVideoConfig();
-  const enter = interpolate(f, [0, 7], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+  const enter = entrada(f, 7, Boolean(noInicio));
   const exit = interpolate(f, [totalFrames - 6, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const manual = manualTransformCss(split.transform, width, height);
   const style: React.CSSProperties = {
@@ -616,7 +647,7 @@ const BaseWithSplits: React.FC = () => {
     <AbsoluteFill style={{backgroundColor: 'black'}}>
       <div style={{position: 'absolute', left: 0, width, height: g.mediaHeight, top: g.mediaTop, overflow: 'hidden'}}>
         <Sequence from={from} durationInFrames={duration} layout="none">
-          <SplitMedia split={s} totalFrames={duration} />
+          <SplitMedia split={s} totalFrames={duration} noInicio={from === 0} />
         </Sequence>
       </div>
       <div style={{position: 'absolute', left: 0, width, height: g.videoHeight, top: g.videoTop, overflow: 'hidden'}}>
@@ -711,11 +742,11 @@ function fitHeadline(lines: [string, string], s: HlStyle): number {
   return size;
 }
 
-const HookInner: React.FC<{totalFrames: number}> = ({totalFrames}) => {
+const HookInner: React.FC<{totalFrames: number; noInicio?: boolean}> = ({totalFrames, noInicio}) => {
   const f = useCurrentFrame();
   const D = useEditData();
   const H = D.hook;
-  const enter = interpolate(f, [0, 8], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+  const enter = entrada(f, 8, Boolean(noInicio));
   const exit = interpolate(f, [totalFrames - 9, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const op = Math.min(enter, exit);
   const y = interpolate(enter, [0, 1], [24, 0]);
@@ -827,10 +858,11 @@ const HookInner: React.FC<{totalFrames: number}> = ({totalFrames}) => {
 const HookIntro: React.FC = () => {
   const {fps} = useVideoConfig();
   const D = useEditData();
-  const dur = Math.round(D.hook.endSec * fps);
+  const from = Math.max(0, Math.round((D.hook.startSec ?? 0) * fps));
+  const dur = Math.max(1, Math.round(D.hook.endSec * fps) - from);
   return (
-    <Sequence from={0} durationInFrames={dur} layout="none">
-      <HookInner totalFrames={dur} />
+    <Sequence from={from} durationInFrames={dur} layout="none">
+      <HookInner totalFrames={dur} noInicio={from === 0} />
     </Sequence>
   );
 };
@@ -860,6 +892,28 @@ const PrerenderedGraphics: React.FC<{layers: GraphicLayer[]}> = ({layers}) => {
   );
 };
 
+// A FAIXA DE LEGENDA inteira dentro de uma janela.
+//
+// Recortar aqui, e nao dentro de cada estilo, e o que torna o trim da faixa
+// Texto/Legendas possivel sem tocar em Karaoke, Stacked, Scatter e nas quatro
+// variantes simples — sete lugares para a mesma decisao. As palavras seguem
+// com o tempo delas; isto so diz QUANDO a faixa existe.
+const CaptionWindow: React.FC<{children: React.ReactNode}> = ({children}) => {
+  const {fps, durationInFrames} = useVideoConfig();
+  const D = useEditData();
+  const inicio = Number(D.captions.startSec);
+  const fim = Number(D.captions.endSec);
+  const temJanela = (Number.isFinite(inicio) && inicio > 0) || Number.isFinite(fim);
+  if (!temJanela) return <>{children}</>;
+  const from = Number.isFinite(inicio) ? Math.max(0, Math.round(inicio * fps)) : 0;
+  const ate = Number.isFinite(fim) ? Math.round(fim * fps) : durationInFrames;
+  return (
+    <Sequence from={from} durationInFrames={Math.max(1, ate - from)} layout="none">
+      {children}
+    </Sequence>
+  );
+};
+
 // ============ MAIN ============
 export const Main: React.FC = () => {
   const D = useEditData();
@@ -873,13 +927,17 @@ export const Main: React.FC = () => {
       {graphicLayers?.length ? <PrerenderedGraphics layers={graphicLayers} /> : <CustomGraphics />}
       {D.hook.enabled ? <HookIntro /> : null}
       {D.captions.enabled
-        ? D.captions.style === 'stacked'
-          ? <StackedCaptions />
-          : D.captions.style === 'scatter'
-            ? <ScatterCaptions />
-            : SIMPLE_VARIANTS[D.captions.style as string]
-              ? <SimpleCaptions variant={D.captions.style as string} />
-              : <Karaoke />
+        ? (
+          <CaptionWindow>
+            {D.captions.style === 'stacked'
+              ? <StackedCaptions />
+              : D.captions.style === 'scatter'
+                ? <ScatterCaptions />
+                : SIMPLE_VARIANTS[D.captions.style as string]
+                  ? <SimpleCaptions variant={D.captions.style as string} />
+                  : <Karaoke />}
+          </CaptionWindow>
+        )
         : null}
     </AbsoluteFill>
   );

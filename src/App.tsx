@@ -567,7 +567,10 @@ function EditorWorkspace({
   }, [liveData?.renderPending]);
   const overlayDragRef = useRef<{
     kind: OverlayKind; index: number; mode: 'move' | 'start' | 'end';
-    grabOffset: number; moved: boolean;
+    // A duracao viaja no arrasto porque o encaixe olha as DUAS pontas do
+    // elemento: grudar so pela ponta que o mouse segura deixa a outra a um
+    // quadro do vizinho, que e exatamente o buraco que o aluno ve no render.
+    grabOffset: number; dur: number; moved: boolean;
   } | null>(null);
   // SELECAO UNIVERSAL: tudo na timeline e selecionavel. Elementos com corpo
   // no quadro (splits, inserts) ganham o gizmo no palco — mover, tamanho e
@@ -626,8 +629,11 @@ function EditorWorkspace({
     if (!atual) return;
     // Otimista: a mesma mutacao do main roda aqui para o quadro responder ao
     // mouse; o disco so e tocado no soltar.
-    import('./edit-data-edits').then(({ applyEditOperation }) => {
-      const result = applyEditOperation(atual.editData, operation);
+    // applyEditOperations (plural) e nao applyEditOperation: e a versao que
+    // arredonda para quadro, e o otimista TEM de decidir igual ao disco —
+    // senao o elemento anda um pouco no arrasto e pula ao soltar.
+    import('./edit-data-edits').then(({ applyEditOperations }) => {
+      const result = applyEditOperations(atual.editData, [operation]);
       if (!result.ok || !liveDataRef.current) return;
       if (result.changed) {
         setLiveData({ ...liveDataRef.current, editData: result.data });
@@ -891,6 +897,26 @@ function EditorWorkspace({
     return rows;
   }, [liveActive, liveData]);
 
+  // --- FAIXAS DE TEXTO: legenda e headline tambem tem trim ------------------
+  // Nenhuma das duas tinha janela no arquivo. A legenda valia o video inteiro
+  // (chip decorativo em left:2%/width:96%, sem relacao com tempo nenhum) e a
+  // headline sempre comecava no quadro 0, com so o fim ajustavel pelo hook.
+  // Agora as pontas arrastam de verdade e o campo nasce no primeiro arrasto.
+  const faixaTextoDragRef = useRef<{ kind: 'captions' | 'headline'; edge: 'start' | 'end'; moved: boolean } | null>(null);
+
+  const textWindow = (kind: 'captions' | 'headline'): { start: number; end: number } => {
+    const d = liveData?.editData as Record<string, unknown> | undefined;
+    const alvo = (kind === 'captions' ? d?.captions : d?.hook) as Record<string, unknown> | undefined;
+    const inicio = Number(alvo?.startSec);
+    const fim = Number(alvo?.endSec);
+    return {
+      start: Number.isFinite(inicio) ? inicio : 0,
+      // Sem fim declarado a legenda vale o video inteiro; a headline sem
+      // endSec cai no mesmo padrao do template.
+      end: Number.isFinite(fim) ? fim : (kind === 'headline' ? 4 : effectiveDuration),
+    };
+  };
+
   // Tempo sob o ponteiro, medido na pista do proprio chip: a pista cobre a
   // duracao inteira, entao a fracao horizontal E o tempo.
   const timeAtPointer = (event: { clientX: number }, lane: HTMLElement | null): number => {
@@ -900,10 +926,108 @@ function EditorWorkspace({
     return ((event.clientX - rect.left) / rect.width) * effectiveDuration;
   };
 
-  const overlayOperationFor = (drag: NonNullable<typeof overlayDragRef.current>, time: number): EditOperation =>
-    drag.mode === 'move'
-      ? { op: 'move', kind: drag.kind, index: drag.index, start: time - drag.grabOffset }
-      : { op: 'resize', kind: drag.kind, index: drag.index, edge: drag.mode, time };
+  // --- ENCAIXE (sticky) e QUADRO --------------------------------------------
+  // Duas regras que andam juntas. O quadro e a verdade do render: a timeline
+  // mede em segundos fracionarios e o template converte com Math.round, entao
+  // sem arredondar duas pontas que o aluno encostou na tela gravam numeros
+  // diferentes e nunca encostam de verdade. O encaixe e o que torna encostar
+  // POSSIVEL com o mouse: sem ele, acertar a juncao de um corte exige uma
+  // precisao de meio pixel.
+  const emQuadro = (time: number): number => {
+    const fps = liveFpsRef.current || 30;
+    return Math.round(time * fps) / fps;
+  };
+
+  // As bordas que o aluno VE sao as que grudam: comeco e fim do video, as
+  // juncoes do corte, as pontas dos outros elementos e a agulha.
+  const pontosDeEncaixe = (excluir?: { kind: OverlayKind; index: number }): number[] => {
+    const pontos: number[] = [0, currentTime];
+    if (effectiveDuration > 0) pontos.push(effectiveDuration);
+    const segmentos = (liveData?.segments as { segments?: { start?: unknown; dur?: unknown }[] } | undefined)?.segments;
+    for (const segmento of segmentos ?? []) {
+      const inicio = Number(segmento.start);
+      const dur = Number(segmento.dur);
+      if (!Number.isFinite(inicio)) continue;
+      pontos.push(inicio);
+      if (Number.isFinite(dur)) pontos.push(inicio + dur);
+    }
+    for (const linha of [liveChips?.animations, liveChips?.images, liveChips?.videos]) {
+      for (const chip of linha ?? []) {
+        if (excluir && chip.kind === excluir.kind && chip.index === excluir.index) continue;
+        pontos.push(chip.start, chip.end);
+      }
+    }
+    return pontos.filter((ponto) => Number.isFinite(ponto));
+  };
+
+  // 8px: mais que isso e a ponta gruda quando o aluno queria parar perto dela;
+  // menos e impossivel de acertar com o mouse.
+  const toleranciaDeEncaixe = (lane: HTMLElement | null): number => {
+    const largura = lane?.getBoundingClientRect().width ?? 0;
+    if (largura <= 0 || effectiveDuration <= 0) return 0;
+    return (8 / largura) * effectiveDuration;
+  };
+
+  const encaixarPonta = (
+    time: number,
+    lane: HTMLElement | null,
+    excluir?: { kind: OverlayKind; index: number },
+  ): number => {
+    let melhor = time;
+    let menor = toleranciaDeEncaixe(lane);
+    for (const ponto of pontosDeEncaixe(excluir)) {
+      const distancia = Math.abs(ponto - time);
+      if (distancia <= menor) {
+        menor = distancia;
+        melhor = ponto;
+      }
+    }
+    return emQuadro(melhor);
+  };
+
+  // No MOVIMENTO as duas pontas procuram encaixe e vence a que precisa do
+  // menor empurrao — o elemento inteiro desliza junto.
+  const encaixarMovimento = (
+    start: number,
+    dur: number,
+    lane: HTMLElement | null,
+    excluir?: { kind: OverlayKind; index: number },
+  ): number => {
+    let ajuste = 0;
+    let menor = toleranciaDeEncaixe(lane);
+    for (const ponto of pontosDeEncaixe(excluir)) {
+      for (const borda of [start, start + dur]) {
+        const distancia = Math.abs(ponto - borda);
+        if (distancia <= menor) {
+          menor = distancia;
+          ajuste = ponto - borda;
+        }
+      }
+    }
+    return emQuadro(start + ajuste);
+  };
+
+  const overlayOperationFor = (
+    drag: NonNullable<typeof overlayDragRef.current>,
+    event: { clientX: number },
+    lane: HTMLElement | null,
+  ): EditOperation => {
+    const bruto = timeAtPointer(event, lane);
+    return drag.mode === 'move'
+      ? {
+        op: 'move',
+        kind: drag.kind,
+        index: drag.index,
+        start: encaixarMovimento(bruto - drag.grabOffset, drag.dur, lane, drag),
+      }
+      : {
+        op: 'resize',
+        kind: drag.kind,
+        index: drag.index,
+        edge: drag.mode,
+        time: encaixarPonta(bruto, lane, drag),
+      };
+  };
 
   const renderLiveChip = (chip: LiveChip, className: string) => {
     const EDGE_PX = 9;
@@ -928,6 +1052,7 @@ function EditorWorkspace({
             index: chip.index,
             mode,
             grabOffset: timeAtPointer(event, alvo.parentElement) - chip.start,
+            dur: chip.end - chip.start,
             moved: false,
           };
           alvo.setPointerCapture(event.pointerId);
@@ -936,7 +1061,7 @@ function EditorWorkspace({
           const drag = overlayDragRef.current;
           if (!drag) return;
           drag.moved = true;
-          applyLiveOperation(overlayOperationFor(drag, timeAtPointer(event, event.currentTarget.parentElement)), false);
+          applyLiveOperation(overlayOperationFor(drag, event, event.currentTarget.parentElement), false);
         }}
         onPointerUp={(event) => {
           const drag = overlayDragRef.current;
@@ -949,12 +1074,82 @@ function EditorWorkspace({
             setSelectedElement({ kind: chip.kind, index: chip.index });
             return;
           }
-          applyLiveOperation(overlayOperationFor(drag, timeAtPointer(event, event.currentTarget.parentElement)), true);
+          applyLiveOperation(overlayOperationFor(drag, event, event.currentTarget.parentElement), true);
         }}
         onPointerCancel={() => { overlayDragRef.current = null; }}
       >
         {chip.label}
       </div>
+    );
+  };
+
+  const renderTextChip = (
+    kind: 'captions' | 'headline',
+    label: string,
+    className: string,
+    estatico: React.CSSProperties,
+  ) => {
+    const selecionado = selectedElement?.kind === kind;
+    // Sem previa ao vivo nao ha edit-data para gravar: o chip volta a ser o
+    // decorativo de antes, que ao menos seleciona.
+    if (!liveActive) {
+      return (
+        <div
+          className={`timeline-chip ${className} selectable${selecionado ? ' selected' : ''}`}
+          style={estatico}
+          onClick={() => setSelectedElement({ kind })}
+        >{label}</div>
+      );
+    }
+    const janela = textWindow(kind);
+    const operacaoFor = (edge: 'start' | 'end', time: number): EditOperation => (
+      kind === 'captions'
+        ? { op: 'set-caption-window', [edge]: time } as EditOperation
+        : { op: 'set-headline-window', [edge]: time } as EditOperation
+    );
+    const EDGE_PX = 9;
+    return (
+      <div
+        className={`timeline-chip ${className} editable${selecionado ? ' selected' : ''}`}
+        style={{
+          left: `${effectiveDuration > 0 ? (janela.start / effectiveDuration) * 100 : 0}%`,
+          width: `${effectiveDuration > 0 ? Math.max(1.5, ((janela.end - janela.start) / effectiveDuration) * 100) : 0}%`,
+        }}
+        title={`${label} · ${formatTime(janela.end - janela.start)} — as pontas ajustam quando a faixa aparece`}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const alvo = event.currentTarget;
+          const rect = alvo.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          // So as PONTAS arrastam. O meio seleciona: mover a faixa inteira
+          // deslocaria a legenda para longe das palavras que ela legenda.
+          const edge = x <= EDGE_PX ? 'start' : x >= rect.width - EDGE_PX ? 'end' : null;
+          if (!edge) {
+            setSelectedElement({ kind });
+            return;
+          }
+          faixaTextoDragRef.current = { kind, edge, moved: false };
+          alvo.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const drag = faixaTextoDragRef.current;
+          if (!drag) return;
+          drag.moved = true;
+          const lane = event.currentTarget.parentElement;
+          applyLiveOperation(operacaoFor(drag.edge, encaixarPonta(timeAtPointer(event, lane), lane)), false);
+        }}
+        onPointerUp={(event) => {
+          const drag = faixaTextoDragRef.current;
+          faixaTextoDragRef.current = null;
+          if (!drag) return;
+          setSelectedElement({ kind });
+          if (!drag.moved) return;
+          const lane = event.currentTarget.parentElement;
+          applyLiveOperation(operacaoFor(drag.edge, encaixarPonta(timeAtPointer(event, lane), lane)), true);
+        }}
+        onPointerCancel={() => { faixaTextoDragRef.current = null; }}
+      >{label}</div>
     );
   };
 
@@ -1452,7 +1647,25 @@ function EditorWorkspace({
     const laneEndPadding = 0;
     const laneWidth = Math.max(1, rect.width - laneStart - laneEndPadding);
     const pointer = clientX - rect.left - laneStart;
-    seek((Math.max(0, Math.min(pointer, laneWidth)) / laneWidth) * effectiveDuration);
+    const bruto = (Math.max(0, Math.min(pointer, laneWidth)) / laneWidth) * effectiveDuration;
+    // A AGULHA GRUDA NAS PONTAS dos elementos e nas juncoes do corte. E o que
+    // torna "parar exatamente onde a midia comeca" um gesto, e nao uma
+    // pontaria — e a tesoura por elemento depende disso para cortar onde o
+    // aluno esta vendo que vai cortar.
+    if (!liveActive) {
+      seek(bruto);
+      return;
+    }
+    let melhor = bruto;
+    let menor = laneWidth > 0 ? (8 / laneWidth) * effectiveDuration : 0;
+    for (const ponto of pontosDeEncaixe()) {
+      const distancia = Math.abs(ponto - bruto);
+      if (distancia <= menor) {
+        menor = distancia;
+        melhor = ponto;
+      }
+    }
+    seek(emQuadro(melhor));
   }
 
   function beginTimelineSeek(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1463,6 +1676,22 @@ function EditorWorkspace({
     const target = event.target as HTMLElement;
     if (!target.closest('.timeline-clip')) {
       setSelectedClipId(null);
+    }
+    // Clicar no VAZIO da timeline desseleciona. Sem isto a unica saida da
+    // selecao era selecionar outra coisa, e o gizmo ficava no palco enquanto o
+    // aluno tentava so mexer a agulha.
+    //
+    // Os CONTROLES ficam de fora. A tesoura vive dentro desta area, e o
+    // pointerdown dela chegava aqui antes do clique: a selecao era limpa e o
+    // corte que devia partir o elemento partia a tomada inteira. Medido na
+    // bancada — o take foi de 3 para 8 clipes com uma midia selecionada.
+    // A REGUA e a AGULHA tambem ficam de fora: posicionar a agulha e parte de
+    // mirar o corte no elemento selecionado, nao um jeito de largar a selecao.
+    // Com a regua limpando, o fluxo "seleciona a midia, leva a agulha ate o
+    // ponto, corta" era impossivel — media na bancada, a tomada e que era
+    // cortada.
+    if (!target.closest('.timeline-chip, button, .timeline-ruler, .timeline-playhead')) {
+      setSelectedElement(null);
     }
     // A AGULHA so anda pela REGUA ou pela propria cabeca (pedido de uso real
     // da 0.29: clicar num chip para selecionar tambem movia a agulha, e
@@ -1589,7 +1818,34 @@ function EditorWorkspace({
     }
   }
 
+  // A agulha esta DENTRO do elemento selecionado com folga para as duas
+  // metades? E o que decide se a tesoura corta o elemento ou a tomada.
+  const cortavelNaAgulha = (() => {
+    if (!liveActive || !selectedElement || !('index' in selectedElement)) return false;
+    const lista = (liveData?.editData as Record<string, unknown> | undefined)?.[selectedElement.kind];
+    const item = Array.isArray(lista) ? (lista as Record<string, unknown>[])[selectedElement.index] : undefined;
+    if (!item) return false;
+    const start = Number(item.start);
+    const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+    return currentTime - start >= 0.2 && end - currentTime >= 0.2;
+  })();
+
   function razorAtPlayhead() {
+    // COM ELEMENTO SELECIONADO a tesoura corta SO ele: uma midia vira duas
+    // midias, com o mesmo arquivo. Cortar a tomada inteira quando o aluno tem
+    // uma imagem selecionada era o comportamento errado — ele estava olhando
+    // para a imagem.
+    if (cortavelNaAgulha && selectedElement && 'index' in selectedElement) {
+      applyLiveOperation(
+        { op: 'split-at', kind: selectedElement.kind, index: selectedElement.index, time: currentTimeRef.current },
+        true,
+      );
+      return;
+    }
+    // Elemento selecionado que a agulha nao alcanca: nao corta NADA. Cair na
+    // tomada aqui seria cortar o que ele nao esta olhando.
+    if (liveActive && selectedElement) return;
     const current = modelRef.current;
     if (!current) return;
     const next = razorAtTime(current, currentTimeRef.current);
@@ -1665,10 +1921,15 @@ function EditorWorkspace({
       [...snapCandidateTimes(drag.baseModel, excludeIds), currentTimeRef.current],
       8 * drag.secondsPerPixel,
     );
+    // O trim da tomada ja grudava; o que faltava era cair em QUADRO. Sem isto
+    // a ponta parava em 3,4831s, o corte real acontecia no quadro 104 e o
+    // numero guardado nunca era o que o render usava.
+    const fpsDoCorte = drag.baseModel.fps || 30;
+    const emQuadro = Math.round(snapped * fpsDoCorte) / fpsDoCorte;
     delta = Math.max(
       allowed.min,
       Math.min(
-        drag.edge === 'start' ? snapped - baseClip.timelineStart : snapped - clipEnd(baseClip),
+        drag.edge === 'start' ? emQuadro - baseClip.timelineStart : emQuadro - clipEnd(baseClip),
         allowed.max,
       ),
     );
@@ -1941,7 +2202,19 @@ function EditorWorkspace({
       <section className="preview-section">
         <div className={`video-stage ${orientation}`}>
           {media && liveActive ? (
-            <div className="live-stage" style={{ aspectRatio: `${media.width} / ${media.height}` }}>
+            <div
+              className="live-stage"
+              style={{ aspectRatio: `${media.width} / ${media.height}` }}
+              onPointerDownCapture={(event) => {
+                // Clicar FORA do elemento no palco desseleciona, igual ao vazio
+                // da timeline. Em captura porque o Player engole o pointerdown
+                // no clickToPlay — sem isso o clique no vídeo tocava e a
+                // seleção continuava pendurada.
+                const alvo = event.target as HTMLElement;
+                if (alvo.closest('.stage-gizmo, .pick-media-box, .headline-editor')) return;
+                setSelectedElement(null);
+              }}
+            >
               {liveData
                 ? (
                   <>
@@ -2504,22 +2777,17 @@ function EditorWorkspace({
                 headline a tirava do palco e ela continuava na timeline. */}
             {phase === 2 && style.captions !== 'none' && captionsEnabled && (
               <TimelineTrack icon="captions" label="Legendas" tone="teal">
-                <div
-                  className={`timeline-chip captions-chip selectable${selectedElement?.kind === 'captions' ? ' selected' : ''}`}
-                  style={{ left: '2%', width: '96%' }}
-                  onClick={() => setSelectedElement({ kind: 'captions' })}
-                >Legendas</div>
+                {renderTextChip('captions', 'Legendas', 'captions-chip', { left: '2%', width: '96%' })}
               </TimelineTrack>
             )}
             {phase === 2 && style.headline !== 'none' && headlineEnabled && (
               <TimelineTrack icon="text" label="Texto" tone="orange">
-                <div
-                  className={`timeline-chip headline-chip selectable${selectedElement?.kind === 'headline' ? ' selected' : ''}`}
-                  onClick={() => setSelectedElement({ kind: 'headline' })}
-                  style={{ width: overlays?.hookEnd && effectiveDuration > 0 ? `${Math.min(100, (overlays.hookEnd / effectiveDuration) * 100)}%` : '31%' }}
-                >
-                  Headline · {style.headline}
-                </div>
+                {renderTextChip(
+                  'headline',
+                  `Headline · ${style.headline}`,
+                  'headline-chip',
+                  { width: overlays?.hookEnd && effectiveDuration > 0 ? `${Math.min(100, (overlays.hookEnd / effectiveDuration) * 100)}%` : '31%' },
+                )}
               </TimelineTrack>
             )}
             {(liveChips ? liveChips.animations.length > 0 : Boolean(overlays && overlays.animations.length > 0)) && (
@@ -2641,7 +2909,15 @@ function EditorWorkspace({
           <div className="marker-controls">
             <button type="button" className={`marker-button ${markIn !== null ? 'active' : ''}`} onClick={setInPoint} disabled={!media || dirty} title={dirty ? 'Aplique ou descarte as edições antes de marcar correções' : 'Marcar início da correção (I ou M)'}>IN</button>
             <button type="button" className="marker-button" onClick={setOutPoint} disabled={!media || dirty || markIn === null || currentTime <= markIn} title={dirty ? 'Aplique ou descarte as edições antes de marcar correções' : 'Marcar fim da correção (O ou M)'}>OUT</button>
-            <button type="button" className="marker-button razor" onClick={razorAtPlayhead} disabled={!model} title="Dividir o take na agulha (C)"><Icon name="scissors" /></button>
+            <button
+              type="button"
+              className="marker-button razor"
+              onClick={razorAtPlayhead}
+              disabled={!model || (liveActive && Boolean(selectedElement) && !cortavelNaAgulha)}
+              title={liveActive && selectedElement
+                ? 'Recortar o elemento selecionado na agulha (C)'
+                : 'Dividir o take na agulha (C)'}
+            ><Icon name="scissors" /></button>
             {corrections.length > 0 && !dirty && <span className="correction-count">{corrections.length} {corrections.length === 1 ? 'marcação' : 'marcações'}</span>}
           </div>
           <div className="transport-center">

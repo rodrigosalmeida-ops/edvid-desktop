@@ -1247,6 +1247,52 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.32.0: REFINO DA TIMELINE — seis pedidos de uso real, e o fio comum é que a
+  interface precisava concordar com o render.
+  (1) TUDO CAI EM QUADRO. A timeline mede em segundos fracionários (a fração
+  horizontal do mouse) e o template converte com Math.round: 3,4831s e 3,4667s
+  desenham o MESMO quadro mas gravam números diferentes, e duas pontas que o
+  aluno encostou na tela nunca encostavam de verdade. `applyEditOperations`
+  ganhou `{fps}` (na falta, lê `fps` do próprio edit-data) e arredonda move,
+  resize, split-at e as janelas de texto. O trim da tomada arredonda no mesmo
+  gesto. O caminho OTIMISTA passou a usar a mesma função plural do disco —
+  antes usava `applyEditOperation` (singular, sem arredondar) e o elemento
+  andava um pouco no arrasto e pulava ao soltar.
+  (2) STICKY. As bordas que o aluno vê grudam: começo e fim do vídeo, junções
+  do corte, pontas dos outros elementos e a agulha, com 8px de tolerância. No
+  MOVIMENTO as duas pontas procuram encaixe e vence a que precisa do menor
+  empurrão — grudar só pela ponta que o mouse segura deixa a outra a um quadro
+  do vizinho. A agulha também gruda: sem isso, "parar exatamente onde a mídia
+  começa" é pontaria, e a tesoura por elemento depende disso.
+  (3) TRIM EM LEGENDA E HEADLINE. Nenhuma das duas tinha janela: a legenda era
+  um chip decorativo em left:2%/width:96% sem relação com tempo nenhum, e a
+  headline sempre começava no quadro 0. Agora `captions.startSec/endSec` e
+  `hook.startSec` existem (opcionais, o campo nasce no primeiro arrasto) e o
+  template recorta a faixa inteira num `CaptionWindow` — um lugar em vez dos
+  sete estilos de legenda. Só as PONTAS arrastam; o meio seleciona, porque
+  mover a faixa afastaria a legenda das palavras que ela legenda.
+  (4) TESOURA POR ELEMENTO. Com um elemento selecionado a tesoura parte SÓ ele
+  (`split-at`): uma mídia vira duas mídias com o mesmo arquivo, `behind`
+  continua em {start,dur}. Sem seleção, corta a tomada como sempre. Com um
+  elemento selecionado que a agulha não alcança, o botão fica DESABILITADO em
+  vez de cortar a tomada por baixo — o aluno está olhando para o elemento.
+  (5) CLICAR FORA DESSELECIONA — no vazio das pistas e no palco (em captura,
+  senão o clickToPlay do Player engole o evento). Dois ajustes vieram da
+  bancada: os BOTÕES ficam de fora (o pointerdown da própria tesoura limpava a
+  seleção antes do clique, e o corte partia a tomada — medido, 3 clipes viraram
+  8), e a RÉGUA e a AGULHA também (posicionar a agulha é parte de mirar o
+  corte, não um jeito de largar a seleção; com ela limpando, o fluxo
+  "seleciona, leva a agulha, corta" era impossível).
+  (6) O PRIMEIRO QUADRO JÁ ESTÁ MONTADO. Headline, tela dividida, insert e
+  behind não animam a entrada quando começam junto com o vídeo (`entrada()`
+  com `noInicio`): o reel abria meio vazio e se montava na frente de quem
+  assiste. Faltava ainda uma coisa que só apareceu medindo: `activeSplitAt`
+  compensa o lag do vídeo com +1 quadro, e no quadro 0 não há quadro anterior
+  para atrasar — uma tela dividida começando em 0 ficava um quadro fora e o
+  vídeo abria em tela cheia. O +1 agora vale a partir do quadro 1.
+  Método: os arrastos foram medidos com PointerEvent sintético completo
+  (down/move/up) porque a escala do screenshot do painel mudou de novo no meio
+  da sessão — coordenada de screenshot não é medida confiável para clique.
 - 0.31.3: dois relatos do primeiro uso real da geração por faixa.
   (1) UMA JANELA SÓ, E JOGADA NO FIM, num reel de 14,02s. A janela (5s) e o
   respiro (3s) eram absolutos, calibrados em vídeo de 90s: com headline de 4s
