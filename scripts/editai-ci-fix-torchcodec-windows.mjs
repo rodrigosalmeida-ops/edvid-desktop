@@ -21,7 +21,7 @@ replaceRequired(
 
 replaceRequired(
   "  await mkdir(buildDirectory, { recursive: true });\n\n  const winConfigureFlags = [",
-  "  await mkdir(buildDirectory, { recursive: true });\n  // Build from a verified source COPY. Out-of-tree FFmpeg configure writes an\n  // absolute MSYS /d/... source include into Makefile; a native/MinGW make can\n  // then fail to resolve it on hosted Windows runners. An in-tree build keeps\n  // SRC_PATH local while preserving the signed source tree untouched.\n  await cp(source, buildDirectory, { recursive: true });\n\n  const winConfigureFlags = [",
+  "  await mkdir(buildDirectory, { recursive: true });\n  // Build from a verified source COPY. Out-of-tree FFmpeg configure writes an\n  // absolute MSYS /d/... source include into Makefile; the hosted Windows\n  // runner can then fail to resolve it. An in-tree build keeps SRC_PATH local\n  // while preserving the signed source tree untouched.\n  await cp(source, buildDirectory, { recursive: true });\n\n  const winConfigureFlags = [",
   'copy verified FFmpeg source into build tree',
 );
 
@@ -31,11 +31,9 @@ replaceRequired(
   'in-tree configure invocation',
 );
 
-replaceRequired(
-  '  runBash(`make -j${jobs}`, buildDirectory);\n  runBash(\'make install\', buildDirectory);',
-  '  runBash(`/usr/bin/make.exe -j${jobs}`, buildDirectory);\n  runBash(\'/usr/bin/make.exe install\', buildDirectory);',
-  'MSYS2 make invocation',
-);
+// Keep the original `make` resolution. It already exists on windows-latest;
+// the earlier failure came from the out-of-tree /d/... source path, not from
+// the make executable itself.
 
 await writeFile(target, source, 'utf8');
 console.log('[EDIT AI CI] TorchCodec Windows build path patched for hosted runner.');
