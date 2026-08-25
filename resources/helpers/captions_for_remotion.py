@@ -113,12 +113,13 @@ def main() -> None:
         caps = captions_from_transcript(args.transcript.resolve())
     elif args.edl:
         edl_path = args.edl.resolve()
-        caps = build_captions(json.loads(edl_path.read_text()), edl_path.parent)
+        caps = build_captions(json.loads(edl_path.read_text(encoding="utf-8")), edl_path.parent)
     else:
         ap.error("provide --transcript <cut.json> or an edl.json")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(caps, ensure_ascii=False, indent=2), encoding="utf-8")
+
     print(f"{args.output} — {len(caps)} word captions")
 
 

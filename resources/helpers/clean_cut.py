@@ -382,7 +382,7 @@ def main() -> int:
         "retakes_ranges": retake_spans,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+    args.output.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     removed = max(0.0, original_total - kept_total)
     percent = (removed / original_total * 100) if original_total else 0.0

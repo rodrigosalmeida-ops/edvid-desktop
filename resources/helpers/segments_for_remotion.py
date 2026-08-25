@@ -92,7 +92,7 @@ def from_clips(clips: list[Path], forced_fps: float | None) -> list[dict]:
 
 
 def from_edl(edl_path: Path, fps: float | None) -> list[dict]:
-    edl = json.loads(edl_path.read_text())
+    edl = json.loads(edl_path.read_text(encoding="utf-8"))
     ranges = edl.get("ranges") or []
     if not ranges:
         raise SystemExit(f"{edl_path} nao tem ranges")
@@ -139,7 +139,7 @@ def main() -> None:
         ap.error("informe os clipes por corte ou --edl")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"segments": segments}, indent=2) + "\n")
+    args.output.write_text(json.dumps({"segments": segments}, indent=2) + "\n", encoding="utf-8")
     total = segments[-1]["start"] + segments[-1]["dur"]
     print(f"{args.output} — {len(segments)} cortes, {total:.3f}s ({origem})")
 

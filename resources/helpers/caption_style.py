@@ -291,6 +291,7 @@ def main() -> None:
     cues = build_cues(words)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(cues, ensure_ascii=False), encoding="utf-8")
+
     solos = sum(1 for c in cues if c["preset"] != "STACK_MIXED")
     circled = sum(1 for c in cues if c["preset"] == "SOLO_OUTLINE")
     print(f"{args.output} — {len(cues)} cues ({solos} solo, {circled} circled) from {len(words)} words")

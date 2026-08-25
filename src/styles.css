@@ -859,6 +859,9 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   border: 1px solid var(--stroke); color: #c8cfd9; font-size: 11px; line-height: 1.4;
   backdrop-filter: blur(6px);
 }
+.live-preview-note.erro {
+  color: #ffc9c9; border-color: rgba(255,90,90,.45); background: rgba(40,12,12,.88);
+}
 
 /* --- Manipulação direta (0.28.0) -------------------------------------------
    Chip editável: o cursor diz o que cada região faz. As pontas têm alças

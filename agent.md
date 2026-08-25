@@ -1247,6 +1247,34 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.6: RODADA DO WINDOWS — três relatos de um testador em 0.31.2, e a
+  pergunta do instalador clássico.
+  (1) "versÃƒÂ£o" NAS LEGENDAS E TEXTOS: mojibake clássico de dupla
+  codificação. A transcrição sai em UTF-8; no Windows o encoding padrão de
+  arquivo do Python é cp1252, e os helpers liam com read_text() SEM declarar
+  encoding — "ã" (C3 A3) virava "Ã£" e era regravado como UTF-8 → "ÃƒÂ£".
+  Duas defesas: encoding="utf-8" explícito em TODO read_text/write_text dos
+  helpers, e PYTHONUTF8=1 + PYTHONIOENCODING no agentToolsEnvironment (cobre
+  também o que roda DENTRO do whisperx). Legendas já geradas com mojibake não
+  se consertam sozinhas: refazer o corte limpo regrava certo.
+  (2) "PREPARANDO O MOTOR DE RENDER" DEMORADÍSSIMO no meio da edição: o
+  modelo do Whisper baixava na primeira transcrição e o motor de render
+  (node_modules + navegador) no primeiro "Salvar e aplicar". Agora o boot
+  pré-aquece TUDO em segundo plano, serializado: pacote de runtimes → modelo
+  do Whisper → motor de render. Erro fica em silêncio (o caminho sob demanda
+  continua existindo e mostra o erro na hora certa). Sobre o INSTALADOR
+  clássico (pergunta do relato): Squirrel.Windows é o que dá o OTA do canal
+  win32/RELEASES; trocar por wizard NSIS/MSI significaria migrar todo o
+  update. E instalar as dependências NO instalador não resolve o problema
+  real: o pacote de runtimes muda de versão sem release do app. A resposta é
+  o pré-aquecimento no boot — nada baixa no meio da edição.
+  (3) PALCO PRETO no Windows sem nenhuma pista: um <video> que falha não
+  derruba a composição — só não desenha. O LivePreview ganhou um ouvinte de
+  captura de erro de mídia (video/img/audio) que vira aviso vermelho com o
+  NOME do arquivo que falhou. Mesmo movimento do diagnóstico da geração: a
+  próxima foto do problema diz a causa (o protocolo edvid-media/preview foi
+  auditado e é são em win32 — path.resolve/sep; sem a mensagem não dá para
+  saber se o caso do testador é mídia, fonte ou outra coisa).
 - 0.33.5: O ÚLTIMO QUADRO DO DESCOMPASSO — no passo a passo, a cena da base
   trocava no quadro N e a tela dividida só soltava no N+1 (três prints). Quem
   estava fora era a PRÉVIA, não o render: o VIDEO_LAG foi MEDIDO no render (o

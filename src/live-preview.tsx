@@ -36,6 +36,31 @@ function loadComposition(): Promise<CompositionModule> {
   return compositionPromise;
 }
 
+// PALCO PRETO NAO PODE SER SILENCIOSO. Num relato do Windows o Player montou
+// e ficou preto — sem erro, sem placeholder, sem pista. Um <video> que falha
+// em carregar nao derruba a composicao: ele so nao desenha. Este ouvinte de
+// captura escuta o erro de QUALQUER midia dentro do palco e o transforma numa
+// mensagem com o endereco que falhou — e o mesmo movimento do diagnostico da
+// geracao: a proxima foto do problema diz a causa.
+function useMediaErrorWatch(onError: (message: string) => void): React.RefObject<HTMLDivElement | null> {
+  const holder = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const alvo = holder.current;
+    if (!alvo) return;
+    const ouvir = (event: Event) => {
+      const el = event.target as HTMLElement | null;
+      if (!el || (el.tagName !== 'VIDEO' && el.tagName !== 'IMG' && el.tagName !== 'AUDIO')) return;
+      const src = el.getAttribute('src') ?? '';
+      // O ultimo pedaco identifica o arquivo sem vazar token inteiro.
+      const nome = src.split('/').slice(-1)[0]?.split('#')[0] || src.slice(0, 80);
+      onError(`não consegui carregar a mídia "${nome}" — o palco ficaria preto sem este aviso.`);
+    };
+    alvo.addEventListener('error', ouvir, true);
+    return () => alvo.removeEventListener('error', ouvir, true);
+  }, [onError]);
+  return holder;
+}
+
 export function LivePreview({
   data,
   playerRef,
@@ -51,8 +76,10 @@ export function LivePreview({
   controls?: boolean;
 }) {
   const [composition, setComposition] = useState<CompositionModule | null>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const innerRef = useRef<PlayerRef | null>(null);
   const readyNotified = useRef(false);
+  const errorWatchRef = useMediaErrorWatch(setMediaError);
 
   useEffect(() => {
     // A base PRECEDE o import — ver o cabecalho. Trocar de projeto atualiza a
@@ -109,6 +136,7 @@ export function LivePreview({
     // previa tocaria o projeto de EXEMPLO — o mesmo defeito da primeira
     // rodada da bancada (24 fps e 30s de dados de amostra sobre o video real).
     <ProjectDataProvider value={value}>
+      <div ref={errorWatchRef} style={{ display: 'contents' }}>
       <Player
         ref={(playerRef ?? innerRef) as React.Ref<PlayerRef>}
         component={Main}
@@ -128,6 +156,12 @@ export function LivePreview({
           </div>
         )}
       />
+      </div>
+      {mediaError && (
+        <div className="live-preview-note erro">
+          {mediaError}
+        </div>
+      )}
       {/* Grafico sob medida ainda preparando: dizer e melhor que sumir — sem o
           aviso, a animacao que o aluno acabou de pedir parece ter sido
           ignorada. */}

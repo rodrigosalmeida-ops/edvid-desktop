@@ -15,7 +15,7 @@ from pathlib import Path
 
 def read_words(transcript_path: Path) -> list[dict]:
     """Devolve [{text, start, end}] em segundos, seja qual for o formato."""
-    data = json.loads(Path(transcript_path).read_text())
+    data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
 
     raw: list[dict] = []
     if isinstance(data.get("words"), list):
@@ -58,7 +58,7 @@ def read_segments(transcript_path: Path) -> list[dict]:
     olhar a FRASE, que e o que o proprio transcritor ja agrupa. Sem segmentos
     no arquivo, agrupa as palavras por intervalo longo.
     """
-    data = json.loads(Path(transcript_path).read_text())
+    data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
     segments = data.get("segments")
     out: list[dict] = []
     if isinstance(segments, list):

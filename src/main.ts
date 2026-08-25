@@ -3238,6 +3238,12 @@ function agentToolsEnvironment(): NodeJS.ProcessEnv {
     PATH: runtimePath,
     PYTHONDONTWRITEBYTECODE: '1',
     PYTHONNOUSERSITE: '1',
+    // UTF-8 SEMPRE, em todo processo Python. No Windows o encoding padrao de
+    // arquivo e cp1252: um helper que le a transcricao (UTF-8) sem declarar
+    // encoding transforma "versão" em "versÃƒÂ£o" — visto num render real. O
+    // modo UTF-8 do Python cobre tambem o que roda DENTRO do whisperx.
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
     // Lidos pelo sitecustomize acima para restaurar a ordem do PATH dentro do
     // Python, mesmo quando o shell de login do macOS reordenou tudo.
     EDVID_TOOL_DIRS: toolDirectories.join(path.delimiter),
@@ -6233,8 +6239,20 @@ void app.whenReady().then(async () => {
     .then(async () => broadcastCatalog(catalogStateFrom(await readStoredCatalog())))
     .catch(() => {});
   // O download do pacote de ferramentas comeca imediatamente, antes mesmo do
-  // login: no primeiro boot ele e o caminho critico de tudo.
-  void ensureRuntimePack();
+  // login: no primeiro boot ele e o caminho critico de tudo. Na sequencia,
+  // AINDA EM SEGUNDO PLANO, o modelo do Whisper e o motor de render — os dois
+  // downloads que antes so comecavam quando o aluno chegava neles (o modelo na
+  // primeira transcricao, o motor no primeiro "Salvar e aplicar", que no
+  // Windows virou "extremamente demorado" em relato real). Instalar tudo no
+  // instalador nao da: o pacote muda de versao sem release do app. O que da e
+  // nunca deixar o download para o meio da edicao. Serializado para nao
+  // disputar banda; erro fica em silencio — o caminho sob demanda continua
+  // existindo e mostra o erro na hora certa.
+  void ensureRuntimePack().then(async (pack) => {
+    if (pack.status !== 'ready') return;
+    await ensureWhisperModel().catch(() => {});
+    await ensureRemotionRuntime().catch(() => {});
+  });
   // Provedor de IA escolhido e, para provedores ja conectados, o motor fica
   // pronto em segundo plano antes da primeira mensagem.
   void loadAppSettings().then(async () => {
