@@ -1247,6 +1247,21 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.5: O ÚLTIMO QUADRO DO DESCOMPASSO — no passo a passo, a cena da base
+  trocava no quadro N e a tela dividida só soltava no N+1 (três prints). Quem
+  estava fora era a PRÉVIA, não o render: o VIDEO_LAG foi MEDIDO no render (o
+  OffthreadVideo desenha o corte um quadro atrasado) e TODOS os overlays
+  seguem essa convenção com +1 — mas o <video> da prévia, parado, mostra o
+  quadro exato, um quadro ADIANTADO em relação à convenção. Conserto: na
+  prévia (getRemotionEnvironment().isRendering false) a base do DynamicVideo
+  atrasa UM quadro — Sequence [0,1) congela o quadro 0, Sequence [1,∞) mostra
+  f-1 — e prévia e render passam a desenhar o MESMO filme, fronteira a
+  fronteira. Medido na bancada: composição no quadro 180, base em 179;
+  quadro 0 mostra 0. O render não muda em nada (o ramo isRendering é o
+  original). O caminho LEGADO (SplitFrame do CustomGraphics, pré-0.30) desenha
+  a própria cópia da base sem o atraso — fica como está: o render dele é a
+  verdade e não mudou, e mexer no timing do legado arriscaria projetos velhos
+  por um quadro de prévia.
 - 0.33.4: TRÊS AJUSTES FINOS DO MESMO CORTE (a geração de vídeo passou a
   funcionar de ponta a ponta na 0.33.3; estes são os vizinhos do corte).
   (1) A AGULHA NÃO COINCIDIA COM A BORDA DO CHIP: o round3 (milissegundos)
