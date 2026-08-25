@@ -58,8 +58,8 @@ jobs:
           npm run test:edit-data-edits
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Patch TorchCodec build path for hosted Windows
-        run: node scripts/editai-ci-fix-torchcodec-windows.mjs
+      - name: Stage verified FFmpeg 7.1 LGPL shared runtime for TorchCodec
+        run: node scripts/editai-ci-stage-torchcodec-prebuilt.mjs
 
       - name: Build upstream Windows x64 installer
         shell: powershell
