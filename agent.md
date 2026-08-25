@@ -1247,6 +1247,30 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.2: O MISTÉRIO DA GERAÇÃO RESOLVIDO POR MEDIÇÃO — o diagnóstico da
+  0.33.1 disse "fora do catálogo do plano" para TODOS os candidatos, e uma
+  sonda com o token do próprio app (o cofre OAuth vive em
+  ~/Library/Application Support/Edvid/mcp/higgsfield.json; fetch direto no
+  endpoint, resposta SSE) mostrou por quê: O CATÁLOGO DO MCP É RECORTADO POR
+  PLANO. O plano do aluno lista SÓ 11 modelos de imagem e 6 de vídeo
+  (has_more:false) — nada de nano_banana*, seedream*, seedance, wan. A minha
+  conexão lista ~33: TESTAR NA MINHA CONTA NUNCA REPRODUZIRIA. A fixture do
+  plano real está congelada em scripts/fixtures/catalogo-plano-basico-2026-08
+  .json e o test:generation-tier trava as promessas contra ela.
+  As duas políticas que saíram da medição:
+  (1) IMAGEM SOBE DE NÍVEL SOZINHA quando nada do nível (ou abaixo) existe no
+  plano — subida ordenada POR CRÉDITO (o mais barato que atende, não o
+  primeiro da tabela; teto natural ~7 créditos). No plano do aluno resolve o
+  cinematic_studio_2_5 (~2 créditos, 2k, 3:2).
+  (2) VÍDEO NUNCA SOBE SOZINHO (30-45 créditos é decisão do aluno), mas a
+  recusa aponta a saída: o plan() testa os níveis maiores e a mensagem diz
+  "seu plano tem o cinematic_studio_3_0 (~40 créditos por clipe) — mude o
+  nível de vídeo para Extremo em Configurações → Conexões de IA". Verificado
+  contra o catálogo real: Extremo resolve 1080p + mudo + 4:3 na faixa.
+  Também: o seletor de chat do composer mostrava "ChatGPT" com a conta
+  desconectada e nenhum agente ativo — agora mostra "Nenhuma" (relato com
+  print). Lição da rodada: o diagnóstico na mensagem de erro pagou o custo em
+  UMA ida (três versões de tentativa cega antes dele).
 - 0.33.1: quatro retornos do teste real da 0.33.0.
   (1) GERAÇÃO AINDA FALHANDO para imagem E vídeo com "nenhum modelo do seu
   plano entrega". O catálogo não estava vazio (a mensagem seria outra), então

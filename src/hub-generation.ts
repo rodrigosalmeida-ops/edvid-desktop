@@ -16,6 +16,8 @@ import {
   type HubModel,
   resolveGeneration,
   type ResolvedGeneration,
+  TIER_LABEL,
+  TIERS,
 } from './generation-tier';
 import type { ImageUse } from './image-format';
 import type { McpHub } from './mcp-hub';
@@ -181,6 +183,24 @@ export class HubGeneration {
         catalog,
       }, reasons);
       if (!resolved) {
+        // VIDEO nao sobe de nivel sozinho (30-45 creditos), mas a recusa tem
+        // de apontar a saida: se um nivel MAIOR resolve no plano do aluno, a
+        // mensagem diz qual modelo, quanto custa e onde mudar. Medido no plano
+        // real: so o Cinema Studio 3.0 (Extremo, ~40 creditos) existia, e o
+        // aluno nao tinha como adivinhar isso de "nenhum modelo entrega".
+        if (kind === 'video') {
+          for (const acima of TIERS.slice(TIERS.indexOf(tier) + 1)) {
+            const maior = resolveGeneration({
+              hub: this.hub.hub, kind, tier: acima, use: item.use,
+              seconds: item.seconds, portrait: item.portrait, catalog,
+            });
+            if (maior) {
+              throw new Error(
+                `seu plano não tem modelo de vídeo no nível ${TIER_LABEL[tier]}. Ele oferece o ${maior.model}${maior.credits ? ` (~${Math.round(maior.credits)} créditos por clipe)` : ''} — mude o nível de vídeo para ${TIER_LABEL[acima]} em Configurações → Conexões de IA para usá-lo.`,
+              );
+            }
+          }
+        }
         // A mensagem carrega o DIAGNOSTICO: qual porta barrou cada candidato
         // do nivel pedido. "Nenhum modelo do seu plano entrega" sem prova
         // custou dois dias de idas e vindas com o aluno.

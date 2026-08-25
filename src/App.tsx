@@ -5199,10 +5199,18 @@ export function App() {
                       switchAiProvider(value as AiProvider);
                     }}
                   >
+                    {/* Sem NENHUM agente conectado, o selecionado aparece
+                        como "Nenhuma": mostrar "ChatGPT" com a conta
+                        desconectada dizia que havia um agente quando nao
+                        havia — relato com print. A opcao continua na lista
+                        (desabilitada) so quando ha o que escolher. */}
+                    {!activeAiConnected && (
+                      <option value={aiProvider} disabled>Nenhuma</option>
+                    )}
                     {(['chatgpt', 'claude', 'gemini'] as AiProvider[])
-                      .filter((provider) => aiConnected[provider] || provider === aiProvider)
+                      .filter((provider) => aiConnected[provider])
                       .map((provider) => (
-                        <option key={provider} value={provider} disabled={!aiConnected[provider]}>
+                        <option key={provider} value={provider}>
                           {provider === 'chatgpt' ? 'ChatGPT' : provider === 'claude' ? 'Claude' : 'Gemini'}
                         </option>
                       ))}

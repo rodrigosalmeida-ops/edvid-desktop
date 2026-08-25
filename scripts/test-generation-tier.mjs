@@ -368,6 +368,32 @@ try {
   }, motivosProporcao);
   assert.ok(motivosProporcao.some((m) => /sem lista de proporções/.test(m)));
 
+  // --- O PLANO REAL de um aluno (fixture medida em 25/08/2026) --------------
+  // 11 modelos de imagem, 6 de video, e NENHUM candidato do Regular/Medio
+  // presente. Foi o "nenhum modelo do seu plano entrega" que atravessou tres
+  // versoes: o plano nao e o meu, e o teste manual na minha conta nunca ia
+  // reproduzir. A fixture trava as duas promessas: imagem SOBE de nivel
+  // sozinha (ate 7 creditos), video NUNCA sobe — quem chama orienta.
+  const planoReal = JSON.parse(readFileSync(
+    path.join(projectRoot, 'scripts', 'fixtures', 'catalogo-plano-basico-2026-08.json'), 'utf8'));
+  const imagemPlanoReal = resolveGeneration({
+    hub: 'higgsfield', kind: 'imagem', tier: 'medio', use: 'tela-dividida', catalog: planoReal.imagem,
+  });
+  assert.ok(imagemPlanoReal, 'o plano basico TEM de gerar imagem');
+  assert.equal(imagemPlanoReal.model, 'cinematic_studio_2_5', 'a subida escolhe o mais barato que atende');
+  assert.equal(imagemPlanoReal.tier, 'medio', 'o nivel mostrado continua o pedido — o preco e que manda');
+  const videoPlanoReal = resolveGeneration({
+    hub: 'higgsfield', kind: 'video', tier: 'medio', use: 'tela-dividida', seconds: 5, catalog: planoReal.video,
+  });
+  assert.equal(videoPlanoReal, null, 'video NAO sobe sozinho: 40 creditos e decisao do aluno');
+  const videoExtremoReal = resolveGeneration({
+    hub: 'higgsfield', kind: 'video', tier: 'extremo', use: 'tela-dividida', seconds: 5, catalog: planoReal.video,
+  });
+  assert.ok(videoExtremoReal, 'no Extremo o plano basico gera');
+  assert.equal(videoExtremoReal.model, 'cinematic_studio_3_0');
+  assert.equal(videoExtremoReal.params.resolution, '1080p');
+  assert.equal(videoExtremoReal.params.generate_audio, false, 'mudo continua garantido');
+
   console.log('test:generation-tier ok — vídeo sempre 1080p 9:16 e mudo, imagem nunca em 4k, e o nível desce mas nunca sobe.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });

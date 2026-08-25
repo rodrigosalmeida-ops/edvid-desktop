@@ -440,6 +440,26 @@ export function resolveGeneration(
       }
     }
   }
+
+  // ULTIMO RECURSO, so para IMAGEM: subir de nivel. Medido no plano real de um
+  // aluno (agosto/2026): o MCP dele lista SO 11 modelos de imagem, e nenhum
+  // candidato do Regular/Medio esta entre eles — mas o cinematic_studio_2_5
+  // (nivel Extremo, ~2 creditos) esta. "Nunca sobe" existe para proteger o
+  // bolso, e imagem custa no maximo 7 creditos — subir aqui e mais barato que
+  // muitos cliques de video. Os candidatos de cima entram ORDENADOS POR
+  // CREDITO, para a subida escolher o mais barato que atende, nao o primeiro
+  // da tabela. VIDEO continua nunca subindo sozinho: la a subida e 30-45
+  // creditos, e quem decide gastar isso e o aluno (quem chama usa o proximo
+  // nivel para ORIENTAR, nao para gastar).
+  if (request.kind === 'imagem') {
+    const acima = TIERS.slice(start + 1)
+      .flatMap((tier) => table.imagem[tier])
+      .sort((a, b) => (a.credits ?? Infinity) - (b.credits ?? Infinity));
+    for (const candidate of acima) {
+      const resolved = tryCandidate(candidate, request, byId, false, true);
+      if (resolved) return { ...resolved, tier: request.tier };
+    }
+  }
   return null;
 }
 
