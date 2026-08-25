@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -62,6 +62,20 @@ async function montarProjetoComAnimacao(destination) {
 }
 
 try {
+
+// --- O id do bundle vive em DOIS lugares -----------------------------------
+// O forge empacota com `appBundleId` e o main procura a atualização já baixada
+// em ~/Library/Caches/<id>.ShipIt. Se os dois se separarem, o Edvid deixa de
+// achar a versão que ele mesmo baixou e o botão de reiniciar nunca aparece —
+// que foi o defeito da 0.32.0 vista do lado do aluno.
+{
+  const forge = readFileSync(path.join(projectRoot, 'forge.config.ts'), 'utf8');
+  const main = readFileSync(path.join(projectRoot, 'src', 'main.ts'), 'utf8');
+  const doForge = /appBundleId: '([^']+)'/u.exec(forge)?.[1];
+  const doMain = /const APP_BUNDLE_ID = '([^']+)'/u.exec(main)?.[1];
+  assert.ok(doForge, 'forge.config.ts precisa declarar appBundleId');
+  assert.equal(doMain, doForge, 'o id do bundle do main tem de ser o do forge');
+}
   // 1) Comportamento ANTIGO: o trabalho do agente é apagado.
   const antigo = path.join(work, 'antigo');
   await montarProjetoComAnimacao(antigo);

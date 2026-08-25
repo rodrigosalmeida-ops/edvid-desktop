@@ -1247,6 +1247,29 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.32.1: "NÃO ESTOU RECEBENDO A ATUALIZAÇÃO" — e a atualização estava no
+  disco. O Squirrel.Mac baixa, arma o ShipIt e espera o processo SAIR para
+  trocar o bundle; no macOS fechar a janela não encerra o app (o
+  `window-all-closed` não chama quit no darwin, e está certo). Quem nunca dá
+  Cmd+Q fica com a versão nova parada em
+  `~/Library/Caches/com.creatorfactory.edvid.ShipIt/update.*/Edvid.app` para
+  sempre — e pior, na abertura seguinte o `checkForUpdates` não acha nada novo
+  (o download já foi feito), o `update-downloaded` não dispara de novo e o
+  botão "Atualizar · Reiniciar" NUNCA MAIS aparece. Preso na versão velha com
+  a nova ao lado. Medido no caso real: 0.32.0 baixada às 00:28, app seguindo
+  na 0.31.4 nove horas depois, ShipItState.plist pendente e o
+  ShipIt_stderr.log parando em "Detected this as an install request".
+  Conserto: no boot e na checagem manual o app olha o cache do ShipIt e, se
+  achar bundle de versão diferente da que está rodando, já marca `ready` com
+  aquela versão — o botão volta a aparecer em toda abertura até a troca
+  acontecer. O id do bundle vive em dois lugares (forge.config appBundleId e
+  main APP_BUNDLE_ID) e test:scaffold falha se separarem, porque separados o
+  app deixa de achar o que ele mesmo baixou.
+  De quebra, o `on('error')` do autoUpdater parou de engolir tudo em silêncio:
+  agora vai para o log. Um "não estou recebendo" sem nenhum rastro custou uma
+  investigação inteira no cache do Squirrel.
+  Nota: o conserto só vale a partir de quem JÁ está na 0.32.1 — o pulo até ela
+  ainda depende de encerrar o app de verdade.
 - 0.32.0: REFINO DA TIMELINE — seis pedidos de uso real, e o fio comum é que a
   interface precisava concordar com o render.
   (1) TUDO CAI EM QUADRO. A timeline mede em segundos fracionários (a fração

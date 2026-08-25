@@ -5985,6 +5985,44 @@ function broadcastAppUpdateState(state: AppUpdateState): void {
   }
 }
 
+// O MESMO id do forge.config.ts (appBundleId). O Squirrel.Mac nomeia a pasta
+// de cache dele a partir daqui, e e nela que a versao baixada fica esperando.
+const APP_BUNDLE_ID = 'com.creatorfactory.edvid';
+
+/**
+ * A versao que JA ESTA BAIXADA e esperando o app encerrar.
+ *
+ * O Squirrel.Mac baixa a atualizacao, arma o ShipIt e espera o processo sair
+ * para trocar o bundle. No macOS fechar a janela NAO encerra o app — e se o
+ * aluno nunca da Cmd+Q, a troca nunca acontece. Pior: na abertura seguinte o
+ * `checkForUpdates` nao acha nada novo (o download ja foi feito), o evento
+ * `update-downloaded` nao dispara de novo e o botao de reiniciar nunca mais
+ * aparece. O aluno fica preso na versao velha com a nova ja no disco.
+ *
+ * Foi exatamente o que aconteceu com a 0.32.0: baixada as 00:28, parada em
+ * cache, e o app seguiu na 0.31.4 sem nada na tela dizendo o porque.
+ */
+async function stagedUpdateVersion(): Promise<string | null> {
+  if (process.platform !== 'darwin') return null;
+  const cache = path.join(
+    app.getPath('home'), 'Library', 'Caches', `${APP_BUNDLE_ID}.ShipIt`,
+  );
+  try {
+    const entradas = await readdir(cache);
+    for (const entrada of entradas) {
+      if (!entrada.startsWith('update.')) continue;
+      const plist = path.join(cache, entrada, `${app.getName()}.app`, 'Contents', 'Info.plist');
+      const bruto = await readFile(plist, 'utf8').catch(() => '');
+      // Info.plist e XML: a versao vem na chave CFBundleShortVersionString.
+      const versao = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/u.exec(bruto);
+      if (versao?.[1] && versao[1] !== app.getVersion()) return versao[1];
+    }
+  } catch {
+    // Sem pasta de cache do ShipIt: nada baixado, nada a oferecer.
+  }
+  return null;
+}
+
 function setupAutoUpdate(): void {
   if (!app.isPackaged || !UPDATE_FEED_URL) return;
   try {
@@ -6003,11 +6041,21 @@ function setupAutoUpdate(): void {
   autoUpdater.on('update-downloaded', (_event, _notes, releaseName) => {
     broadcastAppUpdateState({ status: 'ready', version: asText(releaseName) || undefined });
   });
-  autoUpdater.on('error', () => {
-    // Sem rede ou build sem assinatura de producao: seguimos em silencio e a
-    // proxima checagem tenta de novo.
+  autoUpdater.on('error', (error: unknown) => {
+    // Em silencio para o aluno (a proxima checagem tenta de novo), mas NAO em
+    // silencio no log: "nao estou recebendo a atualizacao" sem nenhum rastro
+    // custou uma investigacao inteira no cache do ShipIt.
+    console.warn('Atualizacao automatica falhou:', error instanceof Error ? error.message : error);
   });
   const check = () => {
+    // Antes de perguntar ao feed: ja tem versao baixada esperando? Se tem, o
+    // botao de reiniciar precisa aparecer AGORA — o Squirrel nao vai avisar de
+    // novo sobre um download que ele ja fez.
+    void stagedUpdateVersion().then((versao) => {
+      if (versao && appUpdateState.status !== 'ready') {
+        broadcastAppUpdateState({ status: 'ready', version: versao });
+      }
+    }).catch(() => {});
     try {
       autoUpdater.checkForUpdates();
     } catch {
@@ -6028,6 +6076,12 @@ ipcMain.handle('update:install', () => {
 // o autoUpdater nao roda, entao devolve o estado atual sem tentar.
 ipcMain.handle('update:check', async () => {
   if (!app.isPackaged) return appUpdateState;
+  // Mesma pergunta do boot: o que ja esta no disco conta como pronto.
+  const baixada = await stagedUpdateVersion().catch(() => null);
+  if (baixada && appUpdateState.status !== 'ready') {
+    broadcastAppUpdateState({ status: 'ready', version: baixada });
+    return appUpdateState;
+  }
   try {
     autoUpdater.checkForUpdates();
     // O resultado chega pelos eventos do autoUpdater; espera curta para o
