@@ -77,6 +77,7 @@ import type {
 } from './shared';
 import { AI_CATALOG, catalogEntry, type AiCatalogEntry } from './ai-catalog';
 import { LivePreview, type PlayerRef } from './live-preview';
+import { notify, onToast, type ToastData } from './notify';
 import { activeSplitIndexAt, type EditOperation, type OverlayKind } from './edit-data-edits';
 import { SPLIT_DIVIDER } from './image-format';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
@@ -172,6 +173,7 @@ type StyleSetup = {
 
 type IconName =
   | 'add'
+  | 'alert'
   | 'arrowDown'
   | 'captions'
   | 'chat'
@@ -252,6 +254,7 @@ const captionStyles: Array<{ id: CaptionStyle; name: string; kind: string }> = [
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
     add: <path d="M8 2.3v11.4M2.3 8h11.4" />,
+    alert: <><path d="M8 2 14.6 13.6H1.4z" /><path d="M8 6.6v3" /><path d="M8 11.8v.01" /></>,
     arrowDown: <path d="m3.2 6 4.8 4.7L12.8 6" />,
     captions: <><rect x="1.5" y="3" width="13" height="10" rx="2.2" /><path d="M4 8.5h3M9 8.5h3" /></>,
     chat: <path d="M2 2.5h12v8.6H7l-3.7 2.4.9-2.4H2z" />,
@@ -2307,7 +2310,9 @@ function EditorWorkspace({
   return (
     <div className={`editor-workspace ${orientation}`}>
       <section className="preview-section">
-        <div className={`video-stage ${orientation}`}>
+        {/* --live-ar alimenta os width em cqw/cqh do CSS: prévia ao vivo e
+            vídeo cru se encaixam nos DOIS eixos do palco, sem nunca cortar. */}
+        <div className={`video-stage ${orientation}`} style={{ '--live-ar': String(media ? media.width / Math.max(1, media.height) : 1) } as React.CSSProperties}>
           {media && liveActive ? (
             <div
               className="live-stage"
@@ -2403,16 +2408,21 @@ function EditorWorkspace({
                       const texto = faixaIa.texto.trim();
                       if (!liveDirectory || !texto || faixaIa.gerando) return;
                       setFaixaIa((atual) => ({ ...atual, gerando: true, erro: null }));
-                      void window.edvidDesktop.generateSplitMedia(liveDirectory, indice, texto, faixaIa.tipo)
+                      const tipoPedido = faixaIa.tipo;
+                      void window.edvidDesktop.generateSplitMedia(liveDirectory, indice, texto, tipoPedido)
                         .then((updated) => {
                           guardar(updated);
                           setFaixaIa({ aberto: null, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null });
+                          // Geração leva de segundos a minutos e o aluno sai
+                          // da frente: o sino avisa que a mídia entrou.
+                          notify('ok', tipoPedido === 'video' ? 'Clipe gerado' : 'Imagem gerada', 'A mídia já está na faixa e na prévia.');
                         })
                         .catch((error: unknown) => {
                           // O erro fica NO CAMPO, com o texto preservado: a
                           // geração pode ter falhado por rede ou crédito, e
                           // reescrever o pedido do zero seria castigo duplo.
                           setFaixaIa((atual) => ({ ...atual, gerando: false, erro: errorMessage(error) }));
+                          notify('erro', tipoPedido === 'video' ? 'A geração do clipe falhou' : 'A geração da imagem falhou', errorMessage(error));
                         });
                     };
                     const sugerir = () => {
@@ -3466,6 +3476,19 @@ export function App() {
   useEffect(() => {
     if (phase2Status === 'ready') setRenderStamp(String(Date.now()));
   }, [phase2Status]);
+  // Fim de tarefa (0.34.0): a pilha de toasts do sino. O som e a notificação
+  // do sistema saem no notify() (src/notify.ts); aqui só a parte visual.
+  // Cada aviso vive 7s ou até o clique; a pilha guarda no máximo 4.
+  const [toasts, setToasts] = useState<ToastData[]>([]);
+  useEffect(() => onToast((toast) => {
+    setToasts((current) => [...current.slice(-3), toast]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((item) => item.id !== toast.id));
+    }, 7000);
+  }), []);
+  // Quando o turno começou: só turnos LONGOS tocam o sino no sucesso — quem
+  // espera 10s+ já saiu da frente; resposta rápida não precisa de fanfarra.
+  const turnStartedAtRef = useRef(0);
   const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ status: 'idle' });
   const [memberAuth, setMemberAuth] = useState<MemberAuthState>({ status: 'unconfigured' });
   // O gate so decide DEPOIS da primeira resposta real: antes dela (e durante
@@ -4056,9 +4079,11 @@ export function App() {
     if (state.status === 'ready' && previous === 'rendering') {
       // Um render novo terminou; recarrega o workspace para o preview trocar
       // para o resultado estilizado.
+      notify('ok', 'Render concluído', 'O vídeo final está pronto — a prévia já mostra o resultado.');
       void refreshWorkspace();
     }
     if (state.status === 'error' && previous !== 'error' && state.error) {
+      notify('erro', 'O render falhou', state.error);
       setMessages((current) => [...current, {
         id: `error:${Date.now()}`,
         role: 'system',
@@ -4301,10 +4326,19 @@ export function App() {
     }
     if (event.type === 'turn-state') {
       if (event.status === 'started') {
+        turnStartedAtRef.current = Date.now();
         setActiveTurn({ threadId: event.threadId, turnId: event.turnId });
       } else {
         setActiveTurn(null);
         setSending(false);
+        // O SINO DA CASA: falha avisa sempre (o motivo já está no chat);
+        // sucesso só quando o turno foi longo o bastante para o aluno ter
+        // saído da frente. Interrupção foi o aluno — não toca nada.
+        if (event.status === 'failed' || event.error) {
+          notify('erro', 'A tarefa do chat falhou', 'O motivo está no chat.');
+        } else if (event.status === 'completed' && Date.now() - turnStartedAtRef.current >= 10_000) {
+          notify('ok', 'O Edvid terminou', 'A tarefa pedida no chat foi concluída.');
+        }
         // Limite de uso: o erro cru do provedor (em inglês) nunca chega ao
         // aluno. Com outro chat conectado, troca o preferencial sozinha e
         // avisa — mas nunca reenvia a mensagem, para não executar uma edição
@@ -5753,6 +5787,29 @@ export function App() {
               )}
             </div>
           </section>
+        </div>
+      )}
+
+      {/* Fim de tarefa: os toasts do sino (src/notify.ts). Clicar fecha. */}
+      {toasts.length > 0 && (
+        <div className="toast-stack" role="status" aria-live="polite">
+          {toasts.map((toast) => (
+            <button
+              key={toast.id}
+              type="button"
+              // task-toast, não .toast: o CSS da marca (preview-base) já tem um
+              // .toast fixo centralizado e as regras vazavam para cá.
+              className={`task-toast ${toast.kind}`}
+              title="Fechar aviso"
+              onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}
+            >
+              <span className="toast-icon"><Icon name={toast.kind === 'ok' ? 'check' : 'alert'} /></span>
+              <span className="toast-copy">
+                <strong>{toast.title}</strong>
+                {toast.body && <small>{toast.body}</small>}
+              </span>
+            </button>
+          ))}
         </div>
       )}
     </div>

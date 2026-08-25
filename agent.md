@@ -1247,6 +1247,35 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.34.0: O PALCO HORIZONTAL MANDA NO ESPAÇO, ABAS FINAS E O SINO DE FIM DE
+  TAREFA — três pedidos do uso real com projeto 16:9.
+  (1) PALCO: as linhas do editor horizontal inverteram — palco minmax(0,1fr),
+  timeline minmax(178px, 32%) com rolagem vertical quando houver mais faixas
+  (o .timeline-scroll sempre foi overflow:auto; faltava a seção ser baixa o
+  bastante para ele agir). E o vídeo estourava o palco na vertical mesmo com
+  max-height:100%: o palco é um grid de TRILHA IMPLÍCITA, e porcentagem de
+  filho contra trilha auto é indefinida — o clamp vira none (medido na
+  bancada CDP: vídeo de 526px num palco de 474, fundo cortado). O remédio:
+  .video-stage virou container-type:size e o vídeo cru e a .live-stage medem
+  width: min(100cqw, 100cqh × --live-ar), publicado pelo App no palco —
+  contido nos DOIS eixos, sem o teto fixo de 760px. Bônus estrutural: a caixa
+  da prévia agora COINCIDE com a área desenhada também no horizontal (antes
+  era 100% de largura com altura capada, e todo overlay — gizmo, véu, divisa
+  — mediria contra geometria inexistente). Medida final da bancada: 810×456
+  num palco de 953×474, AR 1,778 exato, dentroDoPalco=true.
+  (2) ABAS: .work-tabs de 62px para 42px (ícone + rótulo não pediam mais) e o
+  Renderizar compacto junto — os ~20px que sobraram foram para o palco.
+  (3) SINO (src/notify.ts): toast + som quando uma tarefa termina — fim de
+  turno do chat (sucesso só com 10s+ de duração, porque resposta rápida com o
+  aluno olhando não pede fanfarra; falha sempre; interrupção nunca), render
+  pronto/falho, imagem/clipe da faixa gerado/falho. Som sintetizado na hora
+  por WebAudio (quinta ascendente no ok, terça menor descendente no erro),
+  sem arquivo de áudio no bundle; com a janela em segundo plano o aviso vira
+  também Notification do sistema, silenciosa, porque o sino já tocou. O toast
+  se chama .task-toast porque o CSS da marca (preview-base) já tem um .toast
+  fixo e centralizado — com o nome antigo os dois avisos da bancada empilharam
+  um sobre o outro no centro da tela (foto). test-notify guarda a colisão de
+  nome, os cq do palco e os ganchos do sino.
 - 0.33.7: O PALCO PRETO DO WINDOWS, RESOLVIDO POR ESPECIFICAÇÃO — e provado
   com uma linha de Node antes do conserto. Em file:// COM LETRA DE DRIVE, uma
   URL absoluta de caminho PRESERVA o drive (URL Standard, estado "file"):
