@@ -39,7 +39,7 @@ try {
     const file = path.join(outDir, arquivo);
     writeFileSync(file, readFileSync(file, 'utf8').replace(de, para));
   }
-  const { allTerminal, jobsFrom, resultsFrom } = await import(
+  const { allTerminal, jobsFrom, resultsFrom, presetDeclinesFrom } = await import(
     pathToFileURL(path.join(outDir, 'hub-generation.js')).href
   );
 
@@ -131,6 +131,22 @@ try {
   // Sem índice declarado, cai na posição — nunca em zero para todos.
   const sem_indice = resultsFrom({ jobs: [{ status: 'completed', url: 'https://a/1.png' }, { status: 'completed', url: 'https://a/2.png' }] });
   assert.deepEqual(sem_indice.map((item) => item.index), [0, 1]);
+
+  // --- Recusa de PRESET: o hub pergunta, o Edvid responde nao ---------------
+  // Mensagem REAL do erro (plano do aluno, 25/08/2026): o hub recomendou o
+  // preset "IN THE DARK" em vez de submeter, e pediu reenvio com
+  // declined_preset_id. Zero jobs abertos, zero creditos gastos — a resposta
+  // certa e reenviar recusando, nunca aceitar um preset que mudaria o
+  // resultado por baixo do aluno.
+  const mensagemReal = 'Submitted 0/1 video generations. - index 0: submission_failed — Preset "IN THE DARK" was recommended instead of submitting a job. Retry this index with declined_preset_id=24bae836-2c4a-48e0-89b6-49fcc0b21612.';
+  const declines = presetDeclinesFrom(mensagemReal);
+  assert.deepEqual(declines, [{ index: 0, declinedPresetId: '24bae836-2c4a-48e0-89b6-49fcc0b21612' }]);
+  // Tambem na forma estruturada, e sem falso positivo em resposta normal.
+  assert.deepEqual(
+    presetDeclinesFrom({ results: [{ index: 2, error: 'Retry this index with declined_preset_id=aaaabbbb-cccc-dddd-eeee-ffff00001111' }] }),
+    [{ index: 2, declinedPresetId: 'aaaabbbb-cccc-dddd-eeee-ffff00001111' }],
+  );
+  assert.deepEqual(presetDeclinesFrom({ jobs: [{ index: 0, job_id: 'j1' }] }), []);
 
   console.log('test:hub-generation ok — endereço achado em qualquer campo, e job concluído sem arquivo vira erro escrito.');
 } finally {

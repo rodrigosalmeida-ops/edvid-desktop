@@ -60,6 +60,24 @@ export function jobsFrom(response: unknown): HubJob[] {
   return jobs;
 }
 
+// O hub as vezes NAO SUBMETE e recomenda um PRESET no lugar ("Preset \"IN THE
+// DARK\" was recommended instead of submitting a job. Retry this index with
+// declined_preset_id=<uuid>"). E uma pergunta interativa — e a resposta do
+// Edvid e sempre NAO: o pedido do aluno e deterministico, preset mudaria o
+// resultado por baixo dele. Este leitor puxa o par indice/uuid do texto do
+// erro OU de uma resposta estruturada, e o submit reenvia UMA vez com o
+// declined_preset_id que o proprio hub pediu.
+export function presetDeclinesFrom(source: unknown): Array<{ index: number; declinedPresetId: string }> {
+  const texto = typeof source === 'string' ? source : JSON.stringify(source ?? '');
+  const declines: Array<{ index: number; declinedPresetId: string }> = [];
+  // \D{1,4}: no texto humano vem "index 0:", na forma JSON vem '"index":2'.
+  const padrao = /index\D{1,4}(\d+)[\s\S]{0,240}?declined_preset_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/giu;
+  for (const encontrado of texto.matchAll(padrao)) {
+    declines.push({ index: Number(encontrado[1]), declinedPresetId: encontrado[2] });
+  }
+  return declines;
+}
+
 export function allTerminal(response: unknown): boolean {
   const root = asRecord(response);
   return root.all_terminal === true;
@@ -241,10 +259,43 @@ export class HubGeneration {
     const jobs: HubJob[] = [];
     for (let start = 0; start < planned.length; start += BATCH_LIMIT) {
       const slice = planned.slice(start, start + BATCH_LIMIT);
-      const response = await this.hub.call(tool, {
-        requests: slice.map(({ item, resolved }) => HubGeneration.requestFor(item, resolved, kind)),
+      const pedir = (extras: Map<number, string>) => this.hub.call(tool, {
+        requests: slice.map(({ item, resolved }) => {
+          const base = HubGeneration.requestFor(item, resolved, kind);
+          const declinado = extras.get(item.index);
+          if (!declinado) return base;
+          return {
+            ...base,
+            params: { ...(base.params as Record<string, unknown>), declined_preset_id: declinado },
+          };
+        }),
       });
-      const submitted = jobsFrom(response);
+
+      let response: unknown;
+      let declines: Array<{ index: number; declinedPresetId: string }> = [];
+      try {
+        response = await pedir(new Map());
+        declines = presetDeclinesFrom(response);
+      } catch (error) {
+        // A recomendacao de preset chega como ERRO do MCP (isError + texto):
+        // "Preset X was recommended instead of submitting a job. Retry this
+        // index with declined_preset_id=<uuid>". Nada foi cobrado (0
+        // submetidos) — recusar o preset e reenviar E a resposta certa.
+        declines = presetDeclinesFrom(error instanceof Error ? error.message : String(error));
+        if (!declines.length) throw error;
+        response = null;
+      }
+
+      let submitted = response ? jobsFrom(response) : [];
+      if (declines.length) {
+        const extras = new Map(declines.map((d) => {
+          // O indice do hub e relativo ao LOTE; o nosso e o do item.
+          const item = slice[d.index]?.item;
+          return [item ? item.index : d.index, d.declinedPresetId] as const;
+        }));
+        const retry = await pedir(extras);
+        submitted = jobsFrom(retry);
+      }
       if (!submitted.length) {
         throw new Error(`${this.hub.hub} aceitou o pedido mas não abriu nenhuma geração.`);
       }

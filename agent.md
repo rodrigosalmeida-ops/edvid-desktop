@@ -1247,6 +1247,18 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.3: O HUB RECOMENDA PRESET EM VEZ DE SUBMETER — e o vídeo parava aí.
+  Mensagem real do plano do aluno: 'Preset "IN THE DARK" was recommended
+  instead of submitting a job. Retry this index with declined_preset_id=
+  <uuid>'. É uma pergunta interativa do MCP (mesma família do unlim_choice), e
+  a resposta do Edvid é sempre NÃO: o pedido do aluno é determinístico e um
+  preset mudaria o resultado por baixo dele. `presetDeclinesFrom` extrai o par
+  índice/uuid do texto do erro (a recomendação chega como isError, o call()
+  lança) OU da forma estruturada — o regex aceita "index 0:" e '"index":2' — e
+  o submit reenvia UMA vez com declined_preset_id no params. Zero submetidos =
+  zero cobrado, então o reenvio não arrisca crédito. A imagem do mesmo teste
+  GEROU (primeira geração de imagem bem-sucedida no plano do aluno, via subida
+  de nível da 0.33.2).
 - 0.33.2: O MISTÉRIO DA GERAÇÃO RESOLVIDO POR MEDIÇÃO — o diagnóstico da
   0.33.1 disse "fora do catálogo do plano" para TODOS os candidatos, e uma
   sonda com o token do próprio app (o cofre OAuth vive em
