@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const target = path.join(root, 'scripts', 'build-ffmpeg-torchcodec.mjs');
-let source = await readFile(target, 'utf8');
+let source = (await readFile(target, 'utf8')).replaceAll('\r\n', '\n');
 
 function replaceRequired(before, after, label) {
   if (!source.includes(before)) {
