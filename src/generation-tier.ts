@@ -326,7 +326,14 @@ function tryCandidate(
   if (!model) return null;
   if (!paramsFit(model, candidate.params)) return null;
 
-  const options = asArray(model.aspect_ratios).filter((item): item is string => typeof item === 'string');
+  // O formato do catalogo JA MUDOU uma vez debaixo de nos (a duracao migrou
+  // para dentro de `parameters` — ver durationFor). A proporcao ganha a mesma
+  // tolerancia: primeiro o campo proprio, depois um parametro aspect_ratio.
+  const topo = asArray(model.aspect_ratios).filter((item): item is string => typeof item === 'string');
+  const options = topo.length
+    ? topo
+    : asArray(parametersOf(model).find((item) => item.name === 'aspect_ratio')?.options)
+      .filter((item): item is string => typeof item === 'string');
   // Sem controle de proporcao nao da para prometer 9:16 — e a promessa de
   // proporcao e a que o aluno enxerga primeiro quando quebra.
   const aspectRatio = nearestAspect(bandAspect(request.use ?? 'tela-cheia'), options);

@@ -199,6 +199,35 @@ export class GeminiAgent {
     return state;
   }
 
+  // Ha chave guardada? Quem chama decide a rota de sugestao de texto por isto.
+  async hasKey(): Promise<boolean> {
+    return Boolean(await this.readStored());
+  }
+
+  // UMA frase de texto pela API direta (mesma chave das imagens). Usada pelo
+  // "Gerar automaticamente" do prompt da faixa: e a rota mais barata e mais
+  // rapida quando o aluno conectou o Gemini.
+  async suggestText(prompt: string): Promise<string | null> {
+    const stored = await this.readStored();
+    if (!stored) return null;
+    const url = `${GEMINI_MODELS_URL}/gemini-2.5-flash:generateContent?key=${encodeURIComponent(stored.apiKey)}`;
+    try {
+      const response = await this.deps.fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (!response.ok) return null;
+      const payload = (await response.json().catch(() => ({}))) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+      const texto = payload.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text?.trim();
+      return texto || null;
+    } catch {
+      return null;
+    }
+  }
+
   // Gera uma imagem com o Nano Banana e devolve o PNG. A proporcao vai no
   // imageConfig; se a API recusar o campo, tenta de novo sem ele.
   async generateImage(prompt: string, aspectRatio: string | null): Promise<Buffer> {

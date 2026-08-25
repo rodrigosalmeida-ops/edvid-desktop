@@ -76,9 +76,27 @@ export function planSplits(input: {
   hookEndSec: number;
   position: 'top' | 'bottom';
   kind?: 'image' | 'video';
+  // 'corte' (padrao): um espaco por bloco do corte — o desenho para quando um
+  // AGENTE vai preencher os espacos com conteudo por trecho de fala.
+  // 'inteiro': UM espaco de ponta a ponta, para o aluno recortar com a
+  // tesoura onde quiser e preencher cada pedaco. E o desenho sem agente (e o
+  // da origem "nenhum"): pre-picotar por corte impunha um ritmo que ninguem
+  // pediu, e apagar espaco por espaco era trabalho — pedido de uso real.
+  mode?: 'corte' | 'inteiro';
 }): PlannedSplit[] {
   const durationSec = Number(input.durationSec);
   if (!Number.isFinite(durationSec) || durationSec <= 0) return [];
+
+  if (input.mode === 'inteiro') {
+    if (durationSec < MIN_BLOCO) return [];
+    return [{
+      ...(input.kind ? { kind: input.kind } : {}),
+      src: '',
+      start: 0,
+      end: round3(durationSec),
+      position: input.position,
+    }];
+  }
 
   const hook = Number.isFinite(Number(input.hookEndSec)) ? Math.max(0, Number(input.hookEndSec)) : 0;
   const piso = hook > 0 ? hook + 0.6 : 0;
@@ -159,6 +177,13 @@ export function applySplitPlan(input: {
   // existe FICA. Replanejar para o vazio apagaria a edicao inteira por causa
   // de um arquivo ilegivel.
   if (!input.planned.length) return preservar(input.previous, position, kind, limite, temLimite, fimDe);
+
+  // PLANO DE FAIXA UNICA (modo 'inteiro'): so vale para projeto virgem. Se o
+  // aluno ja recortou a faixa com a tesoura ou apontou midia, reaplicar
+  // estilos nao pode achatar o trabalho dele de volta numa faixa so.
+  if (input.planned.length === 1 && input.previous.length) {
+    return preservar(input.previous, position, kind, limite, temLimite, fimDe);
+  }
 
   const comMidia = input.previous.filter((item) => String(item.src ?? '').trim() !== '');
 

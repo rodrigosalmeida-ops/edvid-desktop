@@ -186,6 +186,21 @@ try {
   // Apagar de novo não muda nada — o chamador sabe que não precisa gravar.
   assert.equal(applyEditOperation(semHeadline.data, { op: 'disable', kind: 'hook' }).changed, false);
 
+  // --- 5d2. Recorte manual pelas bordas -------------------------------------
+  // O crop é parcial como o transform: só o lado que o mouse mexeu muda.
+  const cortadoManual = applyEditOperation(base(), { op: 'set-crop', kind: 'splits', index: 0, crop: { left: 0.2 } });
+  assert.ok(cortadoManual.ok && cortadoManual.changed);
+  assert.deepEqual(cortadoManual.data.splits[0].crop, { left: 0.2 });
+  const doisLados = applyEditOperation(cortadoManual.data, { op: 'set-crop', kind: 'splits', index: 0, crop: { right: 0.1 } });
+  assert.deepEqual(doisLados.data.splits[0].crop, { left: 0.2, right: 0.1 }, 'o lado anterior sobrevive');
+  // Os dois lados do mesmo eixo não podem comer a mídia inteira.
+  assert.ok(!applyEditOperation(base(), { op: 'set-crop', kind: 'splits', index: 0, crop: { left: 0.5, right: 0.5 } }).ok);
+  // Mídia nova zera o recorte: o crop pertence ao arquivo, não ao espaço.
+  const trocada = applyEditOperation(doisLados.data, { op: 'set-split-src', index: 0, src: 'imagens/nova.png', kind: 'image', fit: 'contain' });
+  assert.ok(trocada.ok);
+  assert.equal(trocada.data.splits[0].crop, undefined, 'arquivo novo entra sem o recorte do anterior');
+  assert.equal(trocada.data.splits[0].fit, 'contain', 'arquivo apontado pelo aluno entra INTEIRO');
+
   // --- 5e. Tesoura no elemento selecionado ----------------------------------
   // Recortar com um elemento selecionado parte SO ele: uma mídia vira duas
   // mídias, com o mesmo arquivo e a janela repartida na agulha.

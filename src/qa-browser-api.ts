@@ -325,7 +325,7 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       const result = applyEditOperations(qaLiveEditData ?? {}, [
         // Arquivo que EXISTE no public do projeto da bancada: um src
         // inventado faria o <Img> falhar e derrubar a composição no QA.
-        { op: 'set-split-src', index, src: 'imagens/edvide_desktop_demo.png', kind: 'image' },
+        { op: 'set-split-src', index, src: 'imagens/edvide_desktop_demo.png', kind: 'image', fit: 'contain' },
       ]);
       if (!result.ok) throw new Error(result.reason);
       qaLiveEditData = result.data;
@@ -335,18 +335,27 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     // A geração de verdade custa crédito; na bancada ela só demora e entrega
     // o mesmo arquivo do seletor. O que interessa testar aqui é o caminho da
     // interface: campo, espera, erro e o src chegando no split.
-    generateSplitMedia: async (_directory, index, prompt) => {
+    generateSplitMedia: async (_directory, index, prompt, _kind) => {
       if (!prompt.trim()) throw new Error('Escreva o que você quer ver nesta faixa.');
       await new Promise((resolve) => setTimeout(resolve, 1200));
       if (/falhar/iu.test(prompt)) throw new Error('A IA não devolveu o arquivo desta faixa.');
       const { applyEditOperations } = await import('./edit-data-edits');
       const result = applyEditOperations(qaLiveEditData ?? {}, [
-        { op: 'set-split-src', index, src: 'imagens/edvide_desktop_demo.png', kind: 'image' },
+        { op: 'set-split-src', index, src: 'imagens/edvide_desktop_demo.png', kind: 'image', fit: 'contain' },
       ]);
       if (!result.ok) throw new Error(result.reason);
       qaLiveEditData = result.data;
       qaLiveEditado = true;
       return result.data;
+    },
+    // Sugestão do agente na bancada: espera curta e uma frase determinística.
+    suggestSplitPrompt: async (_directory, _index, kind) => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      return {
+        prompt: kind === 'video'
+          ? 'Slow push-in over a tidy desk with a laptop showing rising charts, warm light'
+          : 'Minimal illustration of a rising bar chart on a dark background',
+      };
     },
     applyPreviewEdits: async (_directory, operations) => {
       const { applyEditOperations } = await import('./edit-data-edits');

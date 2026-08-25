@@ -471,7 +471,15 @@ export type EdvidDesktopApi = {
     directory: string,
     index: number,
     prompt: string,
+    kind: 'imagem' | 'video',
   ) => Promise<Record<string, unknown>>;
+  // O agente escreve o prompt da faixa a partir da fala do trecho (botao
+  // "Gerar automaticamente"). So texto — gerar continua sendo outro clique.
+  suggestSplitPrompt: (
+    directory: string,
+    index: number,
+    kind: 'imagem' | 'video',
+  ) => Promise<{ prompt: string }>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;

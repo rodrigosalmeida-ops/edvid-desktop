@@ -21,7 +21,10 @@ export type EditOperation =
   | { op: 'set-transform'; kind: 'splits' | 'inserts'; index: number; transform: ManualTransform }
   // O aluno apontou o arquivo de um espaco vazio (origem "nenhum"). O src e
   // RELATIVO a public/ e ja foi copiado para la por quem chama.
-  | { op: 'set-split-src'; index: number; src: string; kind: 'image' | 'video' }
+  | { op: 'set-split-src'; index: number; src: string; kind: 'image' | 'video'; fit?: 'cover' | 'contain' }
+  // Recorte manual da midia pelas bordas do gizmo. Fracoes da caixa do
+  // elemento (faixa ou cartao), parcial como o set-transform.
+  | { op: 'set-crop'; kind: 'splits' | 'inserts'; index: number; crop: { left?: number; top?: number; right?: number; bottom?: number } }
   // LEGENDA e HEADLINE nao tem x/y livres: cada uma tem um motor de layout
   // proprio (a legenda se centra sozinha na divisa do split; a headline se
   // reparte em duas linhas e ajusta o corpo). Dar transform livre brigaria
@@ -123,10 +126,46 @@ export function applyEditOperation(
     if (!src || src.startsWith('/') || src.includes('..') || /^[a-z]+:/iu.test(src)) {
       return { ok: false, reason: 'arquivo fora da pasta do projeto' };
     }
-    if (item.src === src && item.kind === operation.kind) return { ok: true, data, changed: false };
+    if (item.src === src && item.kind === operation.kind && (operation.fit === undefined || item.fit === operation.fit)) {
+      return { ok: true, data, changed: false };
+    }
     const next = [...splits];
-    next[operation.index] = { ...item, src, kind: operation.kind };
+    // Midia NOVA zera o recorte da anterior: o crop pertence ao arquivo que o
+    // aluno recortou, nao ao espaco.
+    const { crop: _cropAnterior, ...resto } = item;
+    next[operation.index] = {
+      ...resto,
+      src,
+      kind: operation.kind,
+      ...(operation.fit ? { fit: operation.fit } : {}),
+    };
     return { ok: true, data: { ...data, splits: next }, changed: true };
+  }
+
+  if (operation.op === 'set-crop') {
+    const items = listOf(data, operation.kind);
+    const item = items?.[operation.index];
+    if (!items || !item) return { ok: false, reason: 'esse item não existe mais' };
+    const before = (item.crop ?? {}) as Record<string, number>;
+    const next: Record<string, number> = { ...before };
+    for (const lado of ['left', 'top', 'right', 'bottom'] as const) {
+      const valor = operation.crop[lado];
+      if (valor === undefined) continue;
+      if (!Number.isFinite(valor)) return { ok: false, reason: 'recorte ilegível' };
+      next[lado] = round3(clamp(valor, 0, 0.9));
+    }
+    // Os dois lados do mesmo eixo nao podem se cruzar: sobraria midia
+    // negativa e o clip-path desenharia nada — pior que recusar.
+    if ((next.left ?? 0) + (next.right ?? 0) > 0.85 || (next.top ?? 0) + (next.bottom ?? 0) > 0.85) {
+      return { ok: false, reason: 'o recorte comeria a mídia inteira' };
+    }
+    const iguais = (['left', 'top', 'right', 'bottom'] as const).every(
+      (lado) => (next[lado] ?? 0) === (Number(before[lado]) || 0),
+    );
+    if (iguais) return { ok: true, data, changed: false };
+    const lista = [...items];
+    lista[operation.index] = { ...item, crop: next };
+    return { ok: true, data: { ...data, [operation.kind]: lista }, changed: true };
   }
 
   if (operation.op === 'split-at') {

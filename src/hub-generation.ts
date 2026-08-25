@@ -149,6 +149,13 @@ export class HubGeneration {
     const models = asList(asRecord(response).items)
       .map(asRecord)
       .filter((item): item is HubModel => typeof item.id === 'string');
+    // Lista VAZIA e falha de leitura, nao um catalogo sem modelos — e nao
+    // entra no cache. Cacheada, uma falha transitoria virava "Nenhum modelo do
+    // seu plano entrega imagem nessa proporcao" por uma hora inteira: mensagem
+    // que culpa o plano do aluno por um problema de rede.
+    if (!models.length) {
+      throw new Error('não consegui ler o catálogo de modelos do hub — tente de novo em instantes');
+    }
     this.catalogCache.set(kind, { at: this.now(), models });
     return models;
   }

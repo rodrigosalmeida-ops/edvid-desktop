@@ -965,9 +965,16 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 /* O espaço vazio da tela dividida oferece DUAS origens: apontar um arquivo ou
    descrever para a IA gerar. A caixa é que se posiciona sobre a faixa; os
    botões voltaram a ser fluxo normal quando o campo de prompt entrou. */
+/* O VEU cobre a faixa inteira: embaça o placeholder do template por baixo dos
+   botões — sem ele o "Escolha a mídia desta faixa" ficava encavalado com os
+   controles (relato com print). */
+.pick-media-veil {
+  position: absolute; z-index: 8; display: grid; place-items: center;
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  background: rgba(8, 9, 12, 0.35);
+}
 .pick-media-box {
-  position: absolute; left: 50%; top: 18%; translate: -50% 0; z-index: 8;
-  width: min(84%, 420px); display: flex; flex-direction: column; gap: 8px;
+  width: min(88%, 440px); display: flex; flex-direction: column; gap: 8px;
 }
 .pick-media-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .pick-media {
@@ -992,6 +999,21 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .pick-media-dica {
   color: var(--dim); font-size: 11.5px; line-height: 1.35; text-align: center;
 }
+/* Alças de RECORTE nas bordas do gizmo: linhas que engrossam no hover. Os
+   cantos continuam sendo tamanho; as bordas cortam. */
+.gizmo-edge { position: absolute; z-index: 2; }
+.gizmo-edge.n { left: 12%; right: 12%; top: -4px; height: 9px; cursor: ns-resize; }
+.gizmo-edge.s { left: 12%; right: 12%; bottom: -4px; height: 9px; cursor: ns-resize; }
+.gizmo-edge.e { top: 12%; bottom: 12%; right: -4px; width: 9px; cursor: ew-resize; }
+.gizmo-edge.w { top: 12%; bottom: 12%; left: -4px; width: 9px; cursor: ew-resize; }
+.gizmo-edge::after {
+  content: ''; position: absolute; inset: 0; margin: auto;
+  background: rgba(255, 119, 19, 0.0); border-radius: 3px; transition: background .12s;
+}
+.gizmo-edge.n::after, .gizmo-edge.s::after { height: 3px; }
+.gizmo-edge.e::after, .gizmo-edge.w::after { width: 3px; }
+.gizmo-edge:hover::after { background: var(--orange); }
+
 .pick-media-error {
   margin: 0; padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.35;
   color: #ffc9c9; border: 1px solid rgba(255,90,90,.4); background: rgba(40,12,12,.9);

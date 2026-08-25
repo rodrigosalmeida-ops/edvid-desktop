@@ -499,6 +499,9 @@ function EditorWorkspace({
   renderStamp,
   onRenderPendingChange,
   onCutsPendingChange,
+  chatConnected,
+  imageAiConnected,
+  videoAiConnected,
 }: {
   workspace: ProjectWorkspace | null;
   style: StyleSetup;
@@ -516,6 +519,11 @@ function EditorWorkspace({
   // Cortes pendentes na timeline: o Renderizar da barra aplica-os antes de
   // renderizar — o botao de aplicar deixou de existir.
   onCutsPendingChange: (pending: boolean) => void;
+  // Quem esta conectado decide os botoes do espaco vazio no palco: gerar
+  // imagem, gerar clipe, e o "Gerar automaticamente" do prompt (agente).
+  chatConnected: boolean;
+  imageAiConnected: boolean;
+  videoAiConnected: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const currentTimeRef = useRef(0);
@@ -584,16 +592,30 @@ function EditorWorkspace({
   // guarda o índice do trecho (0 é válido, por isso null e não falsy) — quem
   // escreve o prompt é o aluno, e sem agente conectado é o único caminho.
   const [faixaIa, setFaixaIa] = useState<{
-    aberto: number | null; texto: string; gerando: boolean; erro: string | null;
-  }>({ aberto: null, texto: '', gerando: false, erro: null });
+    aberto: number | null;
+    // O TIPO vem do botao clicado, nao do kind gravado no espaco: o mesmo
+    // espaco vazio oferece imagem E clipe, conforme as contas conectadas.
+    tipo: 'imagem' | 'video';
+    texto: string;
+    gerando: boolean;
+    // "Gerar automaticamente": o agente escrevendo o prompt deste trecho.
+    sugerindo: boolean;
+    erro: string | null;
+  }>({ aberto: null, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null });
   const gizmoDragRef = useRef<{
-    mode: 'move' | 'scale' | 'rotate';
+    mode: 'move' | 'scale' | 'rotate' | 'crop';
     kind: 'splits' | 'inserts';
     index: number;
     startX: number; startY: number;
     baseTransform: { x: number; y: number; scale: number; rotation: number };
     centerX: number; centerY: number;
     startDist: number; startAngle: number;
+    // So no modo crop: qual borda esta sendo arrastada, o inset de partida e
+    // a caixa do ELEMENTO em pixels de composicao (o clip-path e relativo a
+    // ela, nunca a caixa visivel).
+    edge?: 'n' | 's' | 'e' | 'w';
+    baseCrop?: { left: number; top: number; right: number; bottom: number };
+    elementPx?: { w: number; h: number };
     moved: boolean;
   } | null>(null);
 
@@ -602,6 +624,38 @@ function EditorWorkspace({
   // do insert e 780x500 a 90px do topo num quadro 1080x1920 (CARD_W/H/TOP,
   // exportados la — nao importamos o modulo aqui porque carregar o Main fora
   // de hora dispararia o carregamento de fontes sem a base configurada).
+  // DIMENSOES NATURAIS da midia selecionada, para o gizmo desenhar a caixa
+  // onde a midia REALMENTE esta (fit contain centra a midia dentro da faixa; a
+  // caixa presa nas extremidades da faixa foi defeito relatado com print). O
+  // cache vive por src; imagem mede por <img>, video por loadedmetadata.
+  const mediaDimsRef = useRef(new Map<string, { w: number; h: number }>());
+  const [mediaDimsStamp, setMediaDimsStamp] = useState(0);
+  const mediaDimsFor = (src: string): { w: number; h: number } | null => {
+    const cache = mediaDimsRef.current;
+    if (cache.has(src)) return cache.get(src) ?? null;
+    const base = liveData?.staticBase;
+    if (!base) return null;
+    cache.set(src, null as unknown as { w: number; h: number });
+    const url = `${base}/${src}`;
+    const guardar = (w: number, h: number) => {
+      if (w > 0 && h > 0) {
+        cache.set(src, { w, h });
+        setMediaDimsStamp((atual) => atual + 1);
+      }
+    };
+    if (/\.(mp4|mov|webm)$/iu.test(src)) {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => guardar(video.videoWidth, video.videoHeight);
+      video.src = url;
+    } else {
+      const imagem = new Image();
+      imagem.onload = () => guardar(imagem.naturalWidth, imagem.naturalHeight);
+      imagem.src = url;
+    }
+    return null;
+  };
+
   const elementRegion = (kind: 'splits' | 'inserts', item: Record<string, unknown>) => {
     if (kind === 'splits') {
       const divider = Math.min(0.85, Math.max(0.15, Number(item.divider ?? SPLIT_DIVIDER)));
@@ -841,13 +895,63 @@ function EditorWorkspace({
     const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
     if (!(currentTime >= start && currentTime < end)) return null;
     const t = (item.transform ?? {}) as { x?: number; y?: number; scale?: number; rotation?: number };
+    const caixa = elementRegion(selectedElement.kind, item);
+    // A caixa que o gizmo desenha e a da MIDIA VISIVEL, repetindo as decisoes
+    // do template NA MESMA ORDEM: fit posiciona o desenho dentro da caixa do
+    // elemento, o crop (clip-path) recorta no espaco do elemento, e o
+    // transform (translate/rotate/scale sobre o centro) vem por cima. A regra
+    // da casa: quem desenha por cima do render nao recalcula — repete.
+    const src = String(item.src ?? '').trim();
+    const dims = selectedElement.kind === 'splits' && src && item.fit === 'contain' ? mediaDimsFor(src) : null;
+    let desenho = caixa;
+    if (dims) {
+      // contain: o desenho da midia cabe inteiro na caixa, centrado. As
+      // contas em PIXELS da composicao (largura 1080), porque proporcao
+      // mistura os dois eixos.
+      const compW = Number(liveData.editData.width) || 1080;
+      const compH = Number(liveData.editData.height) || 1920;
+      const caixaPxW = caixa.w * compW;
+      const caixaPxH = caixa.h * compH;
+      const escala = Math.min(caixaPxW / dims.w, caixaPxH / dims.h);
+      const desenhoW = (dims.w * escala) / compW;
+      const desenhoH = (dims.h * escala) / compH;
+      desenho = {
+        x: caixa.x + (caixa.w - desenhoW) / 2,
+        y: caixa.y + (caixa.h - desenhoH) / 2,
+        w: desenhoW,
+        h: desenhoH,
+      };
+    }
+    // O crop recorta no espaco do ELEMENTO (a faixa/o cartao): a caixa
+    // visivel e a intersecao do desenho com o retangulo interno do inset.
+    const crop = (item.crop ?? {}) as { left?: number; top?: number; right?: number; bottom?: number };
+    const interL = caixa.x + (Number(crop.left) || 0) * caixa.w;
+    const interT = caixa.y + (Number(crop.top) || 0) * caixa.h;
+    const interR = caixa.x + caixa.w - (Number(crop.right) || 0) * caixa.w;
+    const interB = caixa.y + caixa.h - (Number(crop.bottom) || 0) * caixa.h;
+    const visX = Math.max(desenho.x, interL);
+    const visY = Math.max(desenho.y, interT);
+    const visW = Math.max(0.01, Math.min(desenho.x + desenho.w, interR) - visX);
+    const visH = Math.max(0.01, Math.min(desenho.y + desenho.h, interB) - visY);
     return {
       kind: selectedElement.kind,
       index: selectedElement.index,
-      region: elementRegion(selectedElement.kind, item),
+      // A caixa do ELEMENTO continua disponivel: as alcas de recorte gravam
+      // insets relativos a ela, exatamente como o clip-path le.
+      element: caixa,
+      region: { x: visX, y: visY, w: visW, h: visH },
       transform: { x: t.x ?? 0, y: t.y ?? 0, scale: t.scale ?? 1, rotation: t.rotation ?? 0 },
+      crop: {
+        left: Number(crop.left) || 0,
+        top: Number(crop.top) || 0,
+        right: Number(crop.right) || 0,
+        bottom: Number(crop.bottom) || 0,
+      },
     };
-  }, [liveActive, liveData, selectedElement, currentTime]);
+    // mediaDimsStamp entra nas dependencias porque as dimensoes chegam por
+    // carga assincrona: sem ele a primeira selecao desenharia a faixa cheia.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveActive, liveData, selectedElement, currentTime, mediaDimsStamp]);
   programmeRef.current = programme;
   const effectiveDuration = liveActive && liveDuration > 0
     ? liveDuration
@@ -876,7 +980,10 @@ function EditorWorkspace({
   const liveChips = useMemo(() => {
     if (!liveActive || !liveData) return null;
     const d = liveData.editData as Record<string, unknown>;
-    const rows = { animations: [] as LiveChip[], images: [] as LiveChip[], videos: [] as LiveChip[] };
+    // Imagem e video dividem UMA faixa: para o aluno e tudo midia da tela
+    // dividida, e duas pistas obrigavam a olhar em dois lugares — pedido de
+    // uso real da 0.32.
+    const rows = { animations: [] as LiveChip[], media: [] as LiveChip[] };
     const push = (row: keyof typeof rows, kind: OverlayKind, index: number, item: Record<string, unknown>, fallback: string) => {
       const start = Number(item.start);
       const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
@@ -890,8 +997,8 @@ function EditorWorkspace({
       rows[row].push({ kind, index, start, end, label });
     };
     const list = (value: unknown) => (Array.isArray(value) ? (value as Record<string, unknown>[]) : []);
-    list(d.splits).forEach((item, index) => push(item.kind === 'video' ? 'videos' : 'images', 'splits', index, item, 'Tela dividida'));
-    list(d.inserts).forEach((item, index) => push('images', 'inserts', index, item, 'Insert'));
+    list(d.splits).forEach((item, index) => push('media', 'splits', index, item, 'Tela dividida'));
+    list(d.inserts).forEach((item, index) => push('media', 'inserts', index, item, 'Insert'));
     list(d.behind).forEach((item, index) => push('animations', 'behind', index, item, 'Atrás do sujeito'));
     list(d.animations).forEach((item, index) => push('animations', 'animations', index, item, 'Animação'));
     return rows;
@@ -951,7 +1058,7 @@ function EditorWorkspace({
       pontos.push(inicio);
       if (Number.isFinite(dur)) pontos.push(inicio + dur);
     }
-    for (const linha of [liveChips?.animations, liveChips?.images, liveChips?.videos]) {
+    for (const linha of [liveChips?.animations, liveChips?.media]) {
       for (const chip of linha ?? []) {
         if (excluir && chip.kind === excluir.kind && chip.index === excluir.index) continue;
         pontos.push(chip.start, chip.end);
@@ -2286,10 +2393,6 @@ function EditorWorkspace({
                     const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
                     if (!(currentTime >= start && currentTime < end)) return null;
                     const indice = selectedElement.index;
-                    // O `kind` do espaço vazio é a escolha do formulário ("Conteúdo
-                    // da faixa"). Origem "nenhum" não grava kind — e então este
-                    // espaço só oferece arquivo, como o aluno pediu.
-                    const geraIa = item.kind === 'video' ? 'video' : item.kind === 'image' ? 'imagem' : null;
                     const abertoAqui = faixaIa.aberto === indice;
                     const guardar = (updated: Record<string, unknown> | null) => {
                       if (updated && liveDataRef.current) {
@@ -2300,10 +2403,10 @@ function EditorWorkspace({
                       const texto = faixaIa.texto.trim();
                       if (!liveDirectory || !texto || faixaIa.gerando) return;
                       setFaixaIa((atual) => ({ ...atual, gerando: true, erro: null }));
-                      void window.edvidDesktop.generateSplitMedia(liveDirectory, indice, texto)
+                      void window.edvidDesktop.generateSplitMedia(liveDirectory, indice, texto, faixaIa.tipo)
                         .then((updated) => {
                           guardar(updated);
-                          setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null });
+                          setFaixaIa({ aberto: null, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null });
                         })
                         .catch((error: unknown) => {
                           // O erro fica NO CAMPO, com o texto preservado: a
@@ -2312,7 +2415,31 @@ function EditorWorkspace({
                           setFaixaIa((atual) => ({ ...atual, gerando: false, erro: errorMessage(error) }));
                         });
                     };
+                    const sugerir = () => {
+                      if (!liveDirectory || faixaIa.sugerindo || faixaIa.gerando) return;
+                      setFaixaIa((atual) => ({ ...atual, sugerindo: true, erro: null }));
+                      void window.edvidDesktop.suggestSplitPrompt(liveDirectory, indice, faixaIa.tipo)
+                        .then((resultado) => {
+                          setFaixaIa((atual) => ({ ...atual, sugerindo: false, texto: resultado.prompt }));
+                        })
+                        .catch((error: unknown) => {
+                          setFaixaIa((atual) => ({ ...atual, sugerindo: false, erro: errorMessage(error) }));
+                        });
+                    };
+                    // O VEU cobre a faixa inteira com blur: os botoes entravam
+                    // por cima do texto de instrucao do placeholder e o
+                    // conjunto ficava encavalado — relato de uso real.
+                    const banda = elementRegion('splits', item);
                     return (
+                      <div
+                        className="pick-media-veil"
+                        style={{
+                          left: `${banda.x * 100}%`,
+                          top: `${banda.y * 100}%`,
+                          width: `${banda.w * 100}%`,
+                          height: `${banda.h * 100}%`,
+                        }}
+                      >
                       <div className="pick-media-box">
                         {abertoAqui ? (
                           <div className="pick-media-prompt">
@@ -2320,14 +2447,16 @@ function EditorWorkspace({
                               rows={3}
                               autoFocus
                               value={faixaIa.texto}
-                              disabled={faixaIa.gerando}
-                              placeholder={geraIa === 'video'
-                                ? 'O que este clipe mostra? Ex.: mãos montando um teclado mecânico, close, luz quente'
-                                : 'O que esta imagem mostra? Ex.: gráfico de barras subindo, fundo escuro'}
+                              disabled={faixaIa.gerando || faixaIa.sugerindo}
+                              placeholder={faixaIa.sugerindo
+                                ? 'O agente está escrevendo o prompt deste trecho…'
+                                : faixaIa.tipo === 'video'
+                                  ? 'O que este clipe mostra? Ex.: mãos montando um teclado mecânico, close, luz quente'
+                                  : 'O que esta imagem mostra? Ex.: gráfico de barras subindo, fundo escuro'}
                               onChange={(event) => setFaixaIa((atual) => ({ ...atual, texto: event.target.value }))}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) gerar();
-                                if (event.key === 'Escape') setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null });
+                                if (event.key === 'Escape') setFaixaIa({ aberto: null, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null });
                               }}
                             />
                             {/* O prompt vai para o modelo COMO ESTÁ — o Edvid
@@ -2340,18 +2469,31 @@ function EditorWorkspace({
                               <button
                                 type="button"
                                 className="pick-media"
-                                disabled={faixaIa.gerando || !faixaIa.texto.trim()}
+                                disabled={faixaIa.gerando || faixaIa.sugerindo || !faixaIa.texto.trim()}
                                 onClick={gerar}
                               >
                                 {faixaIa.gerando
-                                  ? (geraIa === 'video' ? 'Gerando o clipe…' : 'Gerando a imagem…')
+                                  ? (faixaIa.tipo === 'video' ? 'Gerando o clipe…' : 'Gerando a imagem…')
                                   : 'Gerar'}
                               </button>
+                              {/* O agente escreve o prompt a partir da fala
+                                  DESTE trecho. Só o texto: gerar (e gastar
+                                  crédito) continua sendo o clique acima. */}
+                              {chatConnected && !faixaIa.gerando && (
+                                <button
+                                  type="button"
+                                  className="pick-media ghost"
+                                  disabled={faixaIa.sugerindo}
+                                  onClick={sugerir}
+                                >
+                                  {faixaIa.sugerindo ? 'Escrevendo…' : 'Gerar automaticamente'}
+                                </button>
+                              )}
                               {!faixaIa.gerando && (
                                 <button
                                   type="button"
                                   className="pick-media ghost"
-                                  onClick={() => setFaixaIa({ aberto: null, texto: '', gerando: false, erro: null })}
+                                  onClick={() => setFaixaIa({ aberto: null, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null })}
                                 >
                                   Cancelar
                                 </button>
@@ -2360,9 +2502,30 @@ function EditorWorkspace({
                           </div>
                         ) : (
                           <div className="pick-media-actions">
+                            {/* As TRES origens, decididas pelas CONTAS e nao
+                                pelo kind gravado: o mesmo espaco aceita
+                                imagem, clipe ou arquivo. */}
+                            {imageAiConnected && (
+                              <button
+                                type="button"
+                                className="pick-media"
+                                onClick={() => setFaixaIa({ aberto: indice, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null })}
+                              >
+                                Gerar Imagem com IA…
+                              </button>
+                            )}
+                            {videoAiConnected && (
+                              <button
+                                type="button"
+                                className="pick-media"
+                                onClick={() => setFaixaIa({ aberto: indice, tipo: 'video', texto: '', gerando: false, sugerindo: false, erro: null })}
+                              >
+                                Gerar Vídeo com IA…
+                              </button>
+                            )}
                             <button
                               type="button"
-                              className="pick-media"
+                              className={`pick-media${imageAiConnected || videoAiConnected ? ' ghost' : ''}`}
                               onClick={() => {
                                 if (!liveDirectory) return;
                                 void window.edvidDesktop.pickSplitMedia(liveDirectory, indice)
@@ -2372,21 +2535,13 @@ function EditorWorkspace({
                             >
                               Escolher arquivo…
                             </button>
-                            {geraIa && (
-                              <button
-                                type="button"
-                                className="pick-media ghost"
-                                onClick={() => setFaixaIa({ aberto: indice, texto: '', gerando: false, erro: null })}
-                              >
-                                {geraIa === 'video' ? 'Gerar clipe com IA…' : 'Gerar imagem com IA…'}
-                              </button>
-                            )}
                           </div>
                         )}
                       </div>
+                      </div>
                     );
                   })()}
-                  {/* GIZMO DE TEXTO (legenda e headline): arrastar move na
+                                    {/* GIZMO DE TEXTO (legenda e headline): arrastar move na
                       vertical (é o eixo que o motor de layout deles aceita),
                       os cantos mudam o corpo da fonte, e duplo clique edita a
                       headline no lugar. x/y livre brigaria com o auto-ajuste
@@ -2540,13 +2695,27 @@ function EditorWorkspace({
                     </div>
                   )}
                   {selectedGizmo && (() => {
-                    const { region, transform: t } = selectedGizmo;
-                    const cx = region.x + region.w / 2 + (selectedGizmo.kind === 'inserts' ? t.x : 0);
-                    const cy = region.y + region.h / 2 + (selectedGizmo.kind === 'inserts' ? t.y : 0);
-                    const scale = selectedGizmo.kind === 'inserts' ? t.scale : 1;
-                    const w = region.w * scale;
-                    const h = region.h * scale;
-                    const beginGizmo = (mode: 'move' | 'scale' | 'rotate') => (event: React.PointerEvent<HTMLElement>) => {
+                    const { region, element, transform: t, crop } = selectedGizmo;
+                    // A composicao em pixels: rotacao mistura os dois eixos e
+                    // fracao de largura nao soma com fracao de altura.
+                    const compW = Number(liveData.editData.width) || 1080;
+                    const compH = Number(liveData.editData.height) || 1920;
+                    // O transform do template age sobre o CENTRO DO ELEMENTO
+                    // (a faixa/o cartao), nao sobre o centro da caixa visivel
+                    // — e vale para os DOIS tipos. A caixa presa na faixa era
+                    // exatamente o gizmo ignorando o transform nos splits.
+                    const origemX = (element.x + element.w / 2) * compW;
+                    const origemY = (element.y + element.h / 2) * compH;
+                    const visX = (region.x + region.w / 2) * compW;
+                    const visY = (region.y + region.h / 2) * compH;
+                    const rad = (t.rotation * Math.PI) / 180;
+                    const dx = (visX - origemX) * t.scale;
+                    const dy = (visY - origemY) * t.scale;
+                    const cx = (origemX + dx * Math.cos(rad) - dy * Math.sin(rad) + t.x * compW) / compW;
+                    const cy = (origemY + dx * Math.sin(rad) + dy * Math.cos(rad) + t.y * compH) / compH;
+                    const w = region.w * t.scale;
+                    const h = region.h * t.scale;
+                    const beginGizmo = (mode: 'move' | 'scale' | 'rotate' | 'crop', edge?: 'n' | 's' | 'e' | 'w') => (event: React.PointerEvent<HTMLElement>) => {
                       event.preventDefault();
                       event.stopPropagation();
                       const palco = (event.currentTarget.closest('.live-stage') as HTMLElement | null);
@@ -2565,6 +2734,9 @@ function EditorWorkspace({
                         centerY,
                         startDist: Math.max(8, Math.hypot(event.clientX - centerX, event.clientY - centerY)),
                         startAngle: Math.atan2(event.clientY - centerY, event.clientX - centerX),
+                        edge,
+                        baseCrop: crop,
+                        elementPx: { w: element.w * compW, h: element.h * compH },
                         moved: false,
                       };
                       event.currentTarget.setPointerCapture(event.pointerId);
@@ -2575,6 +2747,24 @@ function EditorWorkspace({
                     // arrasto de escala sem nenhum erro visivel.
                     const gizmoOperation = (drag: NonNullable<typeof gizmoDragRef.current>, event: { clientX: number; clientY: number }, palco: HTMLElement): EditOperation | null => {
                       const rect = palco.getBoundingClientRect();
+                      if (drag.mode === 'crop' && drag.edge && drag.baseCrop && drag.elementPx) {
+                        // O arrasto chega em pixels do PALCO; o inset vive no
+                        // espaco do ELEMENTO, antes do transform. Desfazer o
+                        // transform e: dividir pela escala e girar de volta.
+                        const paraCompX = compW / Math.max(1, rect.width);
+                        const paraCompY = compH / Math.max(1, rect.height);
+                        const dxComp = (event.clientX - drag.startX) * paraCompX;
+                        const dyComp = (event.clientY - drag.startY) * paraCompY;
+                        const desRad = (-drag.baseTransform.rotation * Math.PI) / 180;
+                        const dxLocal = (dxComp * Math.cos(desRad) - dyComp * Math.sin(desRad)) / Math.max(0.05, drag.baseTransform.scale);
+                        const dyLocal = (dxComp * Math.sin(desRad) + dyComp * Math.cos(desRad)) / Math.max(0.05, drag.baseTransform.scale);
+                        const cropNovo =
+                          drag.edge === 'w' ? { left: drag.baseCrop.left + dxLocal / drag.elementPx.w }
+                            : drag.edge === 'e' ? { right: drag.baseCrop.right - dxLocal / drag.elementPx.w }
+                              : drag.edge === 'n' ? { top: drag.baseCrop.top + dyLocal / drag.elementPx.h }
+                                : { bottom: drag.baseCrop.bottom - dyLocal / drag.elementPx.h };
+                        return { op: 'set-crop', kind: drag.kind, index: drag.index, crop: cropNovo };
+                      }
                       if (drag.mode === 'move') {
                         return {
                           op: 'set-transform', kind: drag.kind, index: drag.index,
@@ -2621,7 +2811,7 @@ function EditorWorkspace({
                           top: `${(cy - h / 2) * 100}%`,
                           width: `${w * 100}%`,
                           height: `${h * 100}%`,
-                          rotate: selectedGizmo.kind === 'inserts' && t.rotation ? `${t.rotation}deg` : undefined,
+                          rotate: t.rotation ? `${t.rotation}deg` : undefined,
                         }}
                         onPointerDown={beginGizmo('move')}
                         onPointerMove={onGizmoMove}
@@ -2631,6 +2821,13 @@ function EditorWorkspace({
                         <span className="gizmo-rotate" title="Girar" onPointerDown={beginGizmo('rotate')} onPointerMove={onGizmoMove} onPointerUp={onGizmoUp} />
                         {['nw', 'ne', 'sw', 'se'].map((corner) => (
                           <span key={corner} className={`gizmo-corner ${corner}`} title="Tamanho" onPointerDown={beginGizmo('scale')} onPointerMove={onGizmoMove} onPointerUp={onGizmoUp} />
+                        ))}
+                        {/* RECORTE pelas bordas: segurar a linha e arrastar
+                            corta a midia daquele lado — os cantos continuam
+                            sendo tamanho. O inset e gravado no espaco do
+                            elemento, exatamente como o clip-path le. */}
+                        {(['n', 's', 'e', 'w'] as const).map((edge) => (
+                          <span key={edge} className={`gizmo-edge ${edge}`} title="Cortar a mídia deste lado" onPointerDown={beginGizmo('crop', edge)} onPointerMove={onGizmoMove} onPointerUp={onGizmoUp} />
                         ))}
                       </div>
                     );
@@ -2797,18 +2994,17 @@ function EditorWorkspace({
                   : overlays?.animations.map((clip, index) => renderOverlayChip(clip, index, 'animation-chip'))}
               </TimelineTrack>
             )}
-            {(liveChips ? liveChips.images.length > 0 : Boolean(overlays && overlays.images.length > 0)) && (
-              <TimelineTrack icon="image" label="Imagem" tone="green">
+            {/* UMA faixa de midia: imagem e clipe juntos. Sem previa ao vivo,
+                as duas listas do overlay entram concatenadas na mesma pista. */}
+            {(liveChips
+              ? liveChips.media.length > 0
+              : Boolean(overlays && (overlays.images.length > 0 || overlays.videos.length > 0))) && (
+              <TimelineTrack icon="image" label="Mídia" tone="green">
                 {liveChips
-                  ? liveChips.images.map((chip) => renderLiveChip(chip, 'image-chip'))
-                  : overlays?.images.map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
-              </TimelineTrack>
-            )}
-            {(liveChips ? liveChips.videos.length > 0 : Boolean(overlays && overlays.videos.length > 0)) && (
-              <TimelineTrack icon="video" label="Vídeo" tone="green">
-                {liveChips
-                  ? liveChips.videos.map((chip) => renderLiveChip(chip, 'image-chip'))
-                  : overlays?.videos.map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
+                  ? liveChips.media.map((chip) => renderLiveChip(chip, 'image-chip'))
+                  : [...(overlays?.images ?? []), ...(overlays?.videos ?? [])]
+                    .sort((a, b) => a.start - b.start)
+                    .map((clip, index) => renderOverlayChip(clip, index, 'image-chip'))}
               </TimelineTrack>
             )}
             <TimelineTrack icon="video" label="Vídeo" tone="orange">
@@ -2971,6 +3167,7 @@ function StyleWorkspace({
   canApply,
   applying,
   runtime,
+  chatConnected,
   imageAiConnected,
   videoAiConnected,
 }: {
@@ -2980,6 +3177,10 @@ function StyleWorkspace({
   canApply: boolean;
   applying: boolean;
   runtime: RemotionRuntimeState;
+  // Agente de chat conectado: e ele quem escreve os prompts por trecho de
+  // fala. Sem agente o seletor de origem nem aparece — a tela dividida sai
+  // como uma faixa unica que o aluno recorta e preenche pelo palco.
+  chatConnected: boolean;
   imageAiConnected: boolean;
   videoAiConnected: boolean;
 }) {
@@ -3006,11 +3207,12 @@ function StyleWorkspace({
               </ChoiceCard>
             ))}
           </div>
-          {/* Origem da mídia da tela dividida. Só as opções POSSÍVEIS: IA de
-              imagem/vídeo aparecem quando há conta conectada capaz de gerar;
-              "Nenhuma" existe sempre — os espaços ficam vazios e o aluno
-              aponta os próprios arquivos na timeline. */}
-          {(style.edit === 'split' || style.edit === 'split2') && (
+          {/* Origem da mídia da tela dividida — SÓ COM AGENTE conectado: é ele
+              quem escreve os prompts por trecho da fala. Sem agente a escolha
+              não existe e a faixa sai inteira para o aluno recortar e
+              preencher pelo palco. As opções de IA continuam exigindo conta
+              capaz de gerar; "Nenhum" existe sempre. */}
+          {(style.edit === 'split' || style.edit === 'split2') && chatConnected && (
             <div className="split-media-row">
               <span>Conteúdo da faixa</span>
               <div className="split-media-options" role="radiogroup" aria-label="Conteúdo da faixa da tela dividida">
@@ -3378,11 +3580,17 @@ export function App() {
   // estilo do disco por cima. Aqui a interface e a aplicação leem a mesma
   // conta, sempre. Cai em "Nenhum", a opção que nunca gasta crédito de
   // surpresa — nunca no outro tipo de geração, que custa mais.
-  const splitMediaEfetivo: NonNullable<StyleSetup['splitMedia']> = style.splitMedia === 'video'
-    ? (videoAiConnected ? 'video' : 'nenhum')
-    : style.splitMedia === 'nenhum'
-      ? 'nenhum'
-      : (imageAiConnected ? 'imagem' : 'nenhum');
+  // SEM AGENTE DE CHAT o seletor de origem nem aparece: gerar por trecho de
+  // fala exige alguem que escreva os prompts. O caminho vira o manual — uma
+  // faixa de ponta a ponta que o aluno recorta e preenche (com IA pelo palco,
+  // ou arquivo), e o palco decide os botoes pelas CONTAS conectadas.
+  const splitMediaEfetivo: NonNullable<StyleSetup['splitMedia']> = !activeAiConnected
+    ? 'nenhum'
+    : style.splitMedia === 'video'
+      ? (videoAiConnected ? 'video' : 'nenhum')
+      : style.splitMedia === 'nenhum'
+        ? 'nenhum'
+        : (imageAiConnected ? 'imagem' : 'nenhum');
   const readyRuntimes = runtimes.filter((runtime) => runtime.available).length;
   const accountLabel = account.account?.type === 'apiKey'
     ? 'Chave de API conectada'
@@ -4286,15 +4494,13 @@ export function App() {
       // e o texto diz exatamente o que ficou pronto e o que falta.
       const partes = ['Estilos aplicados na edição.'];
       if (plano.splits > 0) {
-        const espacos = plano.splits === 1 ? 'um espaço' : `${plano.splits} espaços`;
-        // `escolhas.splitMedia` já é a origem EFETIVA: só sobra 'imagem' ou
-        // 'video' quando existe conta capaz de gerar aquele tipo. Prometer a
-        // IA para quem não tem conta é a mesma mentira que esta versão veio
-        // desfazer.
-        const podeGerar = escolhas.splitMedia !== 'nenhum';
-        partes.push(podeGerar
-          ? `Deixei ${espacos} de tela dividida na timeline: selecione cada um e escolha o arquivo, ou descreva o que quer ver e deixe a IA gerar.`
-          : `Deixei ${espacos} de tela dividida na timeline: selecione cada um e aponte o arquivo que vai entrar.`);
+        // Origem "nenhum" (o único caminho sem agente): a faixa sai INTEIRA e
+        // o aluno recorta com a tesoura onde quiser. Com IA de geração
+        // conectada, cada pedaço oferece gerar imagem/clipe pelo palco.
+        const temGeracao = imageAiConnected || videoAiConnected;
+        partes.push(escolhas.splitMedia === 'nenhum'
+          ? `Deixei a faixa de mídia da tela dividida na timeline, de ponta a ponta: recorte com a tesoura onde quiser e preencha cada trecho ${temGeracao ? 'gerando com IA pelo palco ou apontando um arquivo' : 'apontando os arquivos'}.`
+          : `São ${plano.splits === 1 ? 'um espaço' : `${plano.splits} espaços`} de tela dividida na timeline, prontos para receber a mídia.`);
       }
       // A observação é a única parte que continua exigindo um agente: é texto
       // livre, e não há como o aplicativo adivinhar o que ela pede.
@@ -5137,8 +5343,11 @@ export function App() {
                   applyingCorrections={sending}
                   onTimelineModelChange={handleTimelineModelChange}
                   onApplyTimelineEdits={applyTimelineEdits}
+                  chatConnected={activeAiConnected}
+                  imageAiConnected={imageAiConnected}
+                  videoAiConnected={videoAiConnected}
                 />
-              ) : <StyleWorkspace style={{ ...style, splitMedia: splitMediaEfetivo }} onChange={setStyle} onApply={applyStyleSelection} canApply={canApplyStyles} applying={sending} runtime={remotionRuntime} imageAiConnected={imageAiConnected} videoAiConnected={videoAiConnected} />}
+              ) : <StyleWorkspace style={{ ...style, splitMedia: splitMediaEfetivo }} onChange={setStyle} onApply={applyStyleSelection} canApply={canApplyStyles} applying={sending} runtime={remotionRuntime} chatConnected={activeAiConnected} imageAiConnected={imageAiConnected} videoAiConnected={videoAiConnected} />}
             </div>
           </section>
         </div>

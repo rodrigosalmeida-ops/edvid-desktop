@@ -2861,6 +2861,10 @@ async function writeEditData(
       hookEndSec: hookEnabled ? hookEndSec : 0,
       position: style.edit === 'split' ? 'top' : 'bottom',
       kind: style.splitMedia === 'video' ? 'video' : style.splitMedia === 'nenhum' ? undefined : 'image',
+      // Origem "nenhum" (inclui o caminho sem agente): UMA faixa de ponta a
+      // ponta que o aluno recorta com a tesoura e preenche pedaco a pedaco.
+      // Um espaco por corte so faz sentido quando um agente vai preencher.
+      mode: style.splitMedia === 'nenhum' || !style.splitMedia ? 'inteiro' : 'corte',
     }),
   });
   // Os flashes sao RECALCULADOS a cada aplicacao, porque as juncoes mudam
@@ -4706,7 +4710,9 @@ async function attachSplitMedia(
   const file = path.join(publicDirectory, 'edit-data.json');
   const data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   const result = applyEditOperations(data, [
-    { op: 'set-split-src', index, src: `${folder}/${name}`, kind: isVideo ? 'video' : 'image' },
+    // fit 'contain': a midia entra INTEIRA, nunca ja cortada — relato de uso
+    // real. Quem decide o corte e o aluno, com as bordas do gizmo no palco.
+    { op: 'set-split-src', index, src: `${folder}/${name}`, kind: isVideo ? 'video' : 'image', fit: 'contain' },
   ]);
   if (!result.ok) throw new Error(`Não consegui aplicar: ${result.reason}.`);
   const temporary = `${file}.tmp`;
@@ -4747,6 +4753,7 @@ async function generateSplitMedia(
   projectDirectory: string,
   index: number,
   prompt: string,
+  tipo: 'imagem' | 'video',
 ): Promise<Record<string, unknown>> {
   const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
   const data = JSON.parse(
@@ -4756,7 +4763,10 @@ async function generateSplitMedia(
   const item = splits[index];
   if (!item) throw new Error('Este trecho não existe mais na edição.');
 
-  const isVideo = item.kind === 'video';
+  // O tipo vem do BOTAO que o aluno clicou, nao do kind gravado no espaco: o
+  // mesmo espaco vazio oferece imagem E clipe agora, conforme as contas
+  // conectadas.
+  const isVideo = tipo === 'video';
   const uso: ImageUse = item.position === 'bottom' ? 'tela-dividida-base' : 'tela-dividida';
   const start = Number(item.start);
   const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
@@ -4810,6 +4820,100 @@ async function generateSplitMedia(
       : 'A IA não devolveu o arquivo desta faixa.');
   }
   return attachSplitMedia(projectDirectory, index, target);
+}
+
+// O PROMPT AUTOMATICO da faixa: o agente le a fala DAQUELE trecho e escreve a
+// descricao em ingles. So o texto — gerar (e gastar credito) continua sendo o
+// clique do aluno.
+//
+// Tres rotas, na ordem de custo/robustez: Gemini por chave (uma chamada REST),
+// ChatGPT por chave (idem), ChatGPT por assinatura (turno utilitario do Codex,
+// que nao devolve texto — escreve num arquivo e o app le, o mesmo truque da
+// geracao de imagem por assinatura). Claude nao tem canal utilitario hoje:
+// erro honesto em vez de silencio.
+async function suggestSplitPrompt(
+  projectDirectory: string,
+  index: number,
+  tipo: 'imagem' | 'video',
+): Promise<{ prompt: string }> {
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const data = JSON.parse(
+    await readFile(path.join(publicDirectory, 'edit-data.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  const splits = Array.isArray(data.splits) ? (data.splits as Record<string, unknown>[]) : [];
+  const item = splits[index];
+  if (!item) throw new Error('Este trecho não existe mais na edição.');
+  const start = Number(item.start);
+  const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+
+  // A fala do trecho, palavra a palavra, do MESMO arquivo que a legenda usa.
+  let fala = '';
+  try {
+    const captions = JSON.parse(
+      await readFile(path.join(publicDirectory, 'captions.json'), 'utf8'),
+    ) as Array<{ text?: unknown; startMs?: unknown; endMs?: unknown }>;
+    fala = captions
+      .filter((word) => Number(word.endMs) / 1000 > start && Number(word.startMs) / 1000 < end)
+      .map((word) => asText(word.text))
+      .join(' ')
+      .trim();
+  } catch {
+    // Sem legenda o pedido segue com a janela de tempo apenas.
+  }
+  if (!fala) throw new Error('Não há fala neste trecho para basear o prompt.');
+
+  const instrucao = [
+    `Write ONE English sentence (max 28 words) describing ${tipo === 'video' ? 'a short b-roll video scene' : 'an illustrative image'} for this spoken excerpt from a vertical social video:`,
+    `"${fala}"`,
+    'Describe a concrete visual scene, not the speech. No people talking to camera. No text, letters or logos in the scene.',
+  ].join(' ');
+
+  // 1. Gemini por chave: resposta direta.
+  const gemini = await geminiAgentReady();
+  if (await gemini.hasKey()) {
+    const texto = await gemini.suggestText(instrucao);
+    if (texto) return { prompt: texto };
+  }
+
+  // 2. ChatGPT por CHAVE: a mesma API direta das imagens.
+  const chatgptApiKey = await readCodexStoredApiKey();
+  if (chatgptApiKey) {
+    const response = await net.fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chatgptApiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-5.2-mini',
+        messages: [{ role: 'user', content: instrucao }],
+      }),
+    }).catch(() => null);
+    const payload = response ? ((await response.json().catch(() => null)) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    } | null) : null;
+    const texto = payload?.choices?.[0]?.message?.content?.trim();
+    if (response?.ok && texto) return { prompt: texto.replace(/^"|"$/gu, '') };
+  }
+
+  // 3. ChatGPT por ASSINATURA: turno utilitario que escreve num arquivo.
+  const codexAccount = await (await codexServer()).readAccount().catch(() => null);
+  if (codexAccount?.account) {
+    const alvo = path.join(projectDirectory, 'edit', 'imagens', `.prompt-faixa-${index}.txt`);
+    await mkdir(path.dirname(alvo), { recursive: true });
+    await rm(alvo, { force: true });
+    await (await codexServer()).runUtilityTurn(
+      projectDirectory,
+      [
+        instrucao,
+        `Write ONLY that sentence to this exact file and do nothing else: ${alvo}`,
+        'Do not create or modify any other file. Reply with one short sentence.',
+      ].join(' '),
+      120_000,
+    );
+    const texto = (await readFile(alvo, 'utf8').catch(() => '')).trim();
+    await rm(alvo, { force: true });
+    if (texto) return { prompt: texto.split(/\r?\n/u)[0].replace(/^"|"$/gu, '').trim() };
+  }
+
+  throw new Error('A sugestão automática precisa do ChatGPT ou do Gemini conectado.');
 }
 
 // Valida a chave da OpenAI antes de entregar ao Codex: o app-server aceita
@@ -5370,7 +5474,7 @@ function registerIpcHandlers(): void {
   // DESCREVE o que quer ver e o Edvid gera. Ver generateSplitMedia.
   ipcMain.handle('preview:generate-split-media', async (
     _event,
-    input: { directory?: string; index?: unknown; prompt?: unknown },
+    input: { directory?: string; index?: unknown; prompt?: unknown; kind?: unknown },
   ) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
@@ -5380,7 +5484,24 @@ function registerIpcHandlers(): void {
     if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
     const prompt = asText(input.prompt).trim();
     if (!prompt) throw new Error('Escreva o que você quer ver nesta faixa.');
-    return generateSplitMedia(directory, index, prompt);
+    const tipo = asText(input.kind) === 'video' ? 'video' : 'imagem';
+    return generateSplitMedia(directory, index, prompt, tipo);
+  });
+
+  // O AGENTE ESCREVE O PROMPT da faixa a partir da fala daquele trecho — o
+  // botao "Gerar automaticamente". So o prompt: quem decide gerar (e gastar
+  // credito) continua sendo o clique do aluno no Gerar.
+  ipcMain.handle('preview:suggest-split-prompt', async (
+    _event,
+    input: { directory?: string; index?: unknown; kind?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+    }
+    const index = Number(input.index);
+    if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
+    return suggestSplitPrompt(directory, index, asText(input.kind) === 'video' ? 'video' : 'imagem');
   });
 
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {

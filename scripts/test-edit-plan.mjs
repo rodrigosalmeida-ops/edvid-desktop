@@ -190,6 +190,29 @@ try {
     'edição limpa é uma afirmação sobre o resultado',
   );
 
+  // --- 2b. Modo INTEIRO: uma faixa de ponta a ponta -------------------------
+  // Sem agente (e na origem "nenhum"), pré-picotar por corte impunha um ritmo
+  // que ninguém pediu. A faixa sai única e o aluno recorta com a tesoura.
+  const inteira = planSplits({
+    segments: blocos, durationSec: 20, hookEndSec: 4, position: 'top', mode: 'inteiro',
+  });
+  assert.equal(inteira.length, 1, 'o modo inteiro entrega UMA faixa');
+  assert.deepEqual([inteira[0].start, inteira[0].end], [0, 20], 'de ponta a ponta, headline inclusa');
+  assert.ok(!('kind' in inteira[0]), 'sem kind: os botões do palco vêm das contas conectadas');
+
+  // Reaplicar estilos com faixa única NÃO achata o trabalho: se o aluno já
+  // recortou (ou preencheu), o que existe fica.
+  const recortadaPelaTesoura = [
+    { src: '', start: 0, end: 7, position: 'top' },
+    { src: 'imagens/a.png', kind: 'image', start: 7, end: 14, position: 'top' },
+    { src: '', start: 14, end: 20, position: 'top' },
+  ];
+  const reaplicada = applySplitPlan({
+    edit: 'split', splitMedia: 'nenhum', previous: recortadaPelaTesoura, planned: inteira, durationSec: 20,
+  });
+  assert.equal(reaplicada.length, 3, 'os recortes da tesoura sobrevivem ao Salvar e aplicar');
+  assert.equal(reaplicada[1].src, 'imagens/a.png');
+
   // --- 3. Flashes de transição ---------------------------------------------
   const segments = [
     { start: 0, dur: 3 }, { start: 3, dur: 2.5 }, { start: 5.5, dur: 0.6 },

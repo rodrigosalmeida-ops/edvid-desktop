@@ -1247,6 +1247,50 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.0: A MÍDIA ENTRA INTEIRA, O GIZMO SEGUE A MÍDIA, E A FAIXA VIROU UMA SÓ
+  — cinco relatos de uso real numa mensagem, com dois prints.
+  (1) "NENHUM MODELO DO SEU PLANO ENTREGA IMAGEM NESSA PROPORÇÃO" com o plano
+  intacto: o catálogo listado pelo hub voltou VAZIO (falha transitória) e a
+  lista vazia ainda entrava no cache por uma hora — a mensagem culpava o plano
+  do aluno por um problema de rede. Medido na minha conexão: o catálogo real
+  tem todos os candidatos com aspect_ratios no topo. Agora lista vazia é erro
+  honesto ("não consegui ler o catálogo — tente de novo") e não é cacheada; e
+  a proporção ganhou a mesma tolerância a drift da duração (se o campo do topo
+  sumir, procura no parâmetro aspect_ratio).
+  (2) MÍDIA APONTADA ENTRAVA CORTADA (objectFit cover na faixa). O split
+  ganhou `fit` ('cover' padrão histórico; 'contain' é o que o app grava ao
+  apontar/gerar — a mídia entra INTEIRA) e `crop` {left,top,right,bottom} em
+  frações da caixa do elemento, aplicado como clip-path ANTES do transform.
+  Inserts ganharam crop também. Quem corta é o aluno: o gizmo ganhou ALÇAS DE
+  BORDA (n/s/e/w) que arrastam o recorte; cantos continuam sendo tamanho. A
+  conversão do arrasto desfaz o transform (÷escala, gira de volta) porque o
+  inset vive no espaço do elemento. Mídia nova zera o crop da anterior.
+  (3) O GIZMO FICAVA PRESO NAS EXTREMIDADES DA FAIXA (print): o box do split
+  ignorava transform, fit e crop. Agora a caixa é a da MÍDIA VISÍVEL,
+  repetindo as decisões do template NA MESMA ORDEM (fit posiciona o desenho na
+  caixa; crop recorta; transform por cima, com origem no CENTRO DO ELEMENTO e
+  contas em pixels da composição porque rotação mistura eixos). As dimensões
+  naturais da mídia vêm de um cache por src carregado no renderer (Image /
+  loadedmetadata) — verificado na bancada: contain de 1536×1024 numa faixa
+  0,39 dá caixa h=0,375 y=0,007, e a escala 0,6 encolheu a caixa junto.
+  (4) O FLUXO DA TELA DIVIDIDA MUDOU. Sem agente de chat: o seletor "Conteúdo
+  da faixa" NEM APARECE, e a tela dividida sai como UMA faixa de mídia de
+  ponta a ponta (planSplits mode:'inteiro') que o aluno recorta com a tesoura
+  e preenche pedaço a pedaço. Com agente: as três opções voltam (respeitando
+  contas capazes); "nenhum" também sai como faixa única. O espaço vazio
+  selecionado oferece até TRÊS botões — Gerar Imagem com IA / Gerar Vídeo com
+  IA / Escolher arquivo — decididos pelas CONTAS conectadas, não pelo kind
+  gravado (generateSplitMedia ganhou o parâmetro kind). As faixas Imagem e
+  Vídeo da timeline viraram UMA ("Mídia"). Reaplicar estilos com faixa única
+  já recortada NÃO achata o trabalho (applySplitPlan: plano de 1 janela +
+  previous existente = mantém o previous). "Gerar automaticamente" no campo de
+  prompt: o agente escreve o prompt a partir da fala DAQUELE trecho
+  (suggestSplitPrompt — rotas Gemini por chave, ChatGPT por chave, ChatGPT
+  assinatura via turno utilitário que escreve arquivo; Claude não tem canal
+  utilitário: erro honesto). Só o texto: gerar continua sendo outro clique.
+  (5) BOTÕES ENCAVALADOS com o texto do placeholder (print): os controles do
+  espaço vazio agora vivem num VÉU que cobre a faixa inteira com
+  backdrop-blur — o placeholder fica embaçado atrás, nada se sobrepõe.
 - 0.32.1: "NÃO ESTOU RECEBENDO A ATUALIZAÇÃO" — e a atualização estava no
   disco. O Squirrel.Mac baixa, arma o ShipIt e espera o processo SAIR para
   trocar o bundle; no macOS fechar a janela não encerra o app (o
