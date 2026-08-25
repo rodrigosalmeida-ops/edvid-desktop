@@ -4333,8 +4333,10 @@ export function App() {
         setSending(false);
         // O SINO DA CASA: falha avisa sempre (o motivo já está no chat);
         // sucesso só quando o turno foi longo o bastante para o aluno ter
-        // saído da frente. Interrupção foi o aluno — não toca nada.
-        if (event.status === 'failed' || event.error) {
+        // saído da frente. Interrupção foi o aluno — não toca nada, e por
+        // isso o gatilho é o STATUS: no caminho Codex um turno interrompido
+        // pode carregar error.message mesmo assim.
+        if (event.status === 'failed') {
           notify('erro', 'A tarefa do chat falhou', 'O motivo está no chat.');
         } else if (event.status === 'completed' && Date.now() - turnStartedAtRef.current >= 10_000) {
           notify('ok', 'O Edvid terminou', 'A tarefa pedida no chat foi concluída.');
