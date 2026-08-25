@@ -65,7 +65,11 @@ type Item = Record<string, unknown>;
 const clamp = (value: number, low: number, high: number): number =>
   Math.max(low, Math.min(high, value));
 
-const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+// 9 casas, como o segments_for_remotion.py e pelo MESMO motivo: um tempo
+// quantizado em quadro (121/30 = 4,0333333...) truncado em milissegundos vira
+// 4,033 — 0,99 de um quadro — e a agulha (que anda em quadros) nunca mais
+// coincide com a borda do chip. Visto em uso real com zoom na timeline.
+const round3 = (value: number): number => Math.round(value * 1e9) / 1e9;
 
 function listOf(data: Record<string, unknown>, kind: OverlayKind): Item[] | null {
   const value = data[kind];

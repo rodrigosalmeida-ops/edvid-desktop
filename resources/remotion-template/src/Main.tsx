@@ -656,27 +656,56 @@ const SplitMedia: React.FC<{split: Split}> = ({split}) => {
 // Envolve a base: sem split ativo rende o DynamicVideo cheio; com split, o
 // mesmo DynamicVideo aparece recortado na metade dele. O recorte e feito por
 // container (overflow hidden) para a camera dinamica continuar valendo.
+// Quantos quadros ANTES da janela cada midia de split e montada. A Sequence
+// usa o layout PADRAO (absolute-fill), nao "none": o premountFor precisa do
+// wrapper para esconder a midia pre-montada (opacity 0), e o layout none nao
+// tem wrapper — o tipo nem aceita o premountFor la.
+// O numero
+// resolve dois defeitos vistos na previa ao vivo: a faixa PRETA nos 2-3
+// primeiros quadros (o <video> do Player precisa decodificar antes de ter
+// imagem) e a mini-travada na emenda (montar um elemento de video no exato
+// quadro do corte trava o main thread por um instante). 30 quadros = 1s de
+// folga de decodificacao. No render o OffthreadVideo extrai quadro a quadro e
+// nada disto muda o resultado.
+const SPLIT_PREMOUNT = 30;
+
 const BaseWithSplits: React.FC = () => {
   const frame = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
   const D = useEditData();
-  const s = activeSplitAt(D.splits ?? [], frame, fps);
-  if (!s) return <DynamicVideo />;
-  const g = splitGeometry(height, s.position, s.bandTop, s.divider);
-  const from = Math.round(s.start * fps);
-  const duration = Math.max(1, Math.round((s.end - s.start) * fps));
+  const splits = D.splits ?? [];
+  const s = activeSplitAt(splits, frame, fps);
+  const g = s ? splitGeometry(height, s.position, s.bandTop, s.divider) : null;
   return (
-    <AbsoluteFill style={{backgroundColor: 'black'}}>
-      <div style={{position: 'absolute', left: 0, width, height: g.mediaHeight, top: g.mediaTop, overflow: 'hidden'}}>
-        <Sequence from={from} durationInFrames={duration} layout="none">
-          <SplitMedia split={s} />
-        </Sequence>
-      </div>
-      <div style={{position: 'absolute', left: 0, width, height: g.videoHeight, top: g.videoTop, overflow: 'hidden'}}>
-        <div style={{position: 'absolute', left: 0, top: 0, width, height, transform: `translateY(${g.videoOffset}px)`}}>
-          <DynamicVideo />
+    <AbsoluteFill style={s ? {backgroundColor: 'black'} : undefined}>
+      {/* TODAS as midias de split vivem em Sequences proprias, pre-montadas.
+          Antes so a ATIVA era montada — o subtree nascia no exato quadro do
+          corte, e nascia preto. A janela de cada Sequence repete a conta do
+          activeSplitAt (o +1 do lag de video, menos no quadro 0), senao a
+          geometria diria "split ativo" num quadro em que a midia nao existe. */}
+      {splits.map((sp, i) => {
+        const inicio = Math.round(sp.start * fps);
+        const de = inicio === 0 ? 0 : inicio + 1;
+        const ate = Math.round(sp.end * fps) + 1;
+        if (ate - de < 1) return null;
+        const gi = splitGeometry(height, sp.position, sp.bandTop, sp.divider);
+        return (
+          <Sequence key={i} from={de} durationInFrames={ate - de} premountFor={SPLIT_PREMOUNT}>
+            <div style={{position: 'absolute', left: 0, width, height: gi.mediaHeight, top: gi.mediaTop, overflow: 'hidden'}}>
+              <SplitMedia split={sp} />
+            </div>
+          </Sequence>
+        );
+      })}
+      {s && g ? (
+        <div style={{position: 'absolute', left: 0, width, height: g.videoHeight, top: g.videoTop, overflow: 'hidden'}}>
+          <div style={{position: 'absolute', left: 0, top: 0, width, height, transform: `translateY(${g.videoOffset}px)`}}>
+            <DynamicVideo />
+          </div>
         </div>
-      </div>
+      ) : (
+        <DynamicVideo />
+      )}
     </AbsoluteFill>
   );
 };

@@ -46,7 +46,11 @@ export type PlannedFlash = {
 // falha de render em vez de corte.
 export const MIN_BLOCO = 1.5;
 
-const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+// 9 casas, como o segments_for_remotion.py e pelo MESMO motivo: um tempo
+// quantizado em quadro (121/30 = 4,0333333...) truncado em milissegundos vira
+// 4,033 — 0,99 de um quadro — e a agulha (que anda em quadros) nunca mais
+// coincide com a borda do chip. Visto em uso real com zoom na timeline.
+const round3 = (value: number): number => Math.round(value * 1e9) / 1e9;
 
 /**
  * UMA JANELA DE TELA DIVIDIDA POR CORTE.

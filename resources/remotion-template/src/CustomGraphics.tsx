@@ -288,7 +288,11 @@ export const SplitScreen: React.FC<{items: SplitInsert[]}> = ({items}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   // frame-indexed, not seconds: the window edges ARE cut frames
-  const active = items.find((it) => {
+  // Item SEM src (ex.: kind 'timeline' registrado no splitInserts de projetos
+  // antigos) nao vira faixa: staticFile(undefined) derruba a composicao
+  // inteira — a previa E o render. O grafico dele ja e desenhado pelo
+  // caminho das animacoes; aqui ele so nao ocupa a banda.
+  const active = items.filter((it) => typeof it.src === 'string' && it.src).find((it) => {
     const a = Math.round(it.start * fps) + VIDEO_LAG;
     const b = Math.round(it.end * fps) + VIDEO_LAG;
     return frame >= a && frame < b;

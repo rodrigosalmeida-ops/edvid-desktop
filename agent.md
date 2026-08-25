@@ -1247,6 +1247,31 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.4: TRÊS AJUSTES FINOS DO MESMO CORTE (a geração de vídeo passou a
+  funcionar de ponta a ponta na 0.33.3; estes são os vizinhos do corte).
+  (1) A AGULHA NÃO COINCIDIA COM A BORDA DO CHIP: o round3 (milissegundos)
+  truncava os tempos QUANTIZADOS EM QUADRO — 121/30 = 4,0333333 virava 4,033,
+  ou seja 0,99 de um quadro, e uma fronteira que não está em quadro nenhum é
+  uma fronteira em que a agulha nunca para. Os dois módulos de tempo
+  (edit-plan, edit-data-edits) passaram a 9 casas — o MESMO motivo e o mesmo
+  número do segments_for_remotion.py. Medido na bancada: agulha estacionada na
+  junção fica a 0,5px da borda pintada do chip.
+  (2) FAIXA PRETA NOS PRIMEIROS 2-3 QUADROS DO SPLIT + MINI-TRAVADA NA EMENDA:
+  o BaseWithSplits montava SÓ o split ativo — o subtree de vídeo nascia no
+  exato quadro do corte, e nascia preto (o <video> do Player precisa
+  decodificar) enquanto a montagem travava o main thread (a "mini repetição").
+  Agora TODAS as mídias de split vivem em Sequences próprias com
+  premountFor=30 (1s de folga de decodificação; layout PADRÃO, não "none" — o
+  premount precisa do wrapper para esconder com opacity 0, e o tipo nem aceita
+  premountFor no layout none). A janela de cada Sequence repete a conta do
+  activeSplitAt (+1 do lag, menos no quadro 0). Verificado na bancada: mídia
+  no DOM 0,7s antes da janela com véu opacity 0, visível dentro, sem erro. No
+  render nada muda (OffthreadVideo extrai por quadro).
+  (3) MINA ANTIGA DESTAMPADA: SplitScreen (splitInserts legado do
+  CustomGraphics) não filtrava item sem src (kind 'timeline') —
+  staticFile(undefined) derrubava a composição INTEIRA, prévia e render, a
+  partir do frame do item. Passava despercebida porque nada parava a agulha
+  ali; a bancada quebrou ao medir 10,8s. Agora item sem src não vira faixa.
 - 0.33.3: O HUB RECOMENDA PRESET EM VEZ DE SUBMETER — e o vídeo parava aí.
   Mensagem real do plano do aluno: 'Preset "IN THE DARK" was recommended
   instead of submitting a job. Retry this index with declined_preset_id=

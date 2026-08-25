@@ -261,8 +261,11 @@ try {
     { fps: 30 },
   );
   assert.ok(emQuadro.ok);
-  assert.equal(emQuadro.data.splits[0].start, 4.467, '4,4831s cai no quadro 134 (4,4667s)');
-  assert.equal(emQuadro.data.splits[0].end, 9.467, 'e a duração é preservada');
+  // O valor gravado é EXATAMENTE 134/30 — com 9 casas, não truncado em
+  // milissegundos: truncar deixava a borda 0,99 de um quadro fora da agulha.
+  assert.equal(emQuadro.data.splits[0].start, Math.round((134 / 30) * 1e9) / 1e9, '4,4831s cai no quadro 134');
+  assert.equal(Math.round(emQuadro.data.splits[0].start * 30), 134, 'e multiplicado pelo fps volta ao quadro inteiro');
+  assert.equal(Math.round((emQuadro.data.splits[0].end - emQuadro.data.splits[0].start) * 1000), 5000, 'a duração é preservada');
   const trimQuadro = applyEditOperations(
     base(),
     [{ op: 'resize', kind: 'splits', index: 0, edge: 'end', time: 8.008 }],
@@ -277,6 +280,7 @@ try {
   );
   assert.ok(comFpsNoArquivo.ok);
   assert.equal(comFpsNoArquivo.data.splits[0].end, 6.5, 'o fps do edit-data vale quando ninguém passa outro');
+  assert.equal(Math.round(comFpsNoArquivo.data.splits[1].start * 30), 195, 'a outra metade também cai no quadro');
 
   // --- 6. Split ativo no instante -------------------------------------------
   assert.equal(activeSplitIndexAt(base(), 5), 0);
