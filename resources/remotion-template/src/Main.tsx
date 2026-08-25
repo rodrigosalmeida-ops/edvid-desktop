@@ -619,17 +619,17 @@ const Inserts: React.FC = () => {
 // A base do video NAO some: durante um split ela encolhe para a faixa oposta,
 // mostrando um recorte vertical do quadro original (splitGeometry manda na
 // divisa). A midia entra com fade curto.
-const SplitMedia: React.FC<{split: Split; totalFrames: number; noInicio?: boolean}> = ({split, totalFrames, noInicio}) => {
-  const f = useCurrentFrame();
+const SplitMedia: React.FC<{split: Split}> = ({split}) => {
   const {width, height} = useVideoConfig();
-  const enter = entrada(f, 7, Boolean(noInicio));
-  const exit = interpolate(f, [totalFrames - 6, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const manual = manualTransformCss(split.transform, width, height);
   const clip = mediaCropCss(split.crop);
+  // CORTE SECO (0.33.1): sem fade de entrada, sem fade de saida e sem whoosh.
+  // Com a faixa unica recortada pela tesoura, cada pedaco e uma Sequence — o
+  // fade fazia TODA emenda piscar e o whoosh tocava a cada recorte. Corte de
+  // midia e como corte de take: instantaneo.
   const style: React.CSSProperties = {
     width: '100%', height: '100%',
     objectFit: split.fit === 'contain' ? 'contain' : 'cover',
-    opacity: Math.min(enter, exit),
     // O recorte manual acontece ANTES do transform (clip-path e no espaco do
     // elemento); o enquadramento gira/desloca a midia ja recortada, e o
     // overflow hidden do container da faixa apara o que sair.
@@ -642,20 +642,15 @@ const SplitMedia: React.FC<{split: Split; totalFrames: number; noInicio?: boolea
   // aluno pediu assim.
   if (!split.src) {
     return (
-      <AbsoluteFill style={{alignItems: 'center', justifyContent: 'center', background: '#101216', border: '2px dashed rgba(255,255,255,0.22)', boxSizing: 'border-box', opacity: Math.min(enter, exit)}}>
+      <AbsoluteFill style={{alignItems: 'center', justifyContent: 'center', background: '#101216', border: '2px dashed rgba(255,255,255,0.22)', boxSizing: 'border-box'}}>
         <div style={{fontFamily, fontWeight: 700, fontSize: 34, color: 'rgba(255,255,255,0.55)'}}>Escolha a mídia desta faixa</div>
         <div style={{fontFamily, fontWeight: 500, fontSize: 24, color: 'rgba(255,255,255,0.35)', marginTop: 10}}>Selecione o trecho na timeline e aponte o arquivo</div>
       </AbsoluteFill>
     );
   }
-  return (
-    <>
-      <Sfx src="whoosh.mp3" />
-      {split.kind === 'video'
-        ? <OffthreadVideo src={staticFile(split.src)} muted style={style} />
-        : <Img src={staticFile(split.src)} style={style} />}
-    </>
-  );
+  return split.kind === 'video'
+    ? <OffthreadVideo src={staticFile(split.src)} muted style={style} />
+    : <Img src={staticFile(split.src)} style={style} />;
 };
 
 // Envolve a base: sem split ativo rende o DynamicVideo cheio; com split, o
@@ -674,7 +669,7 @@ const BaseWithSplits: React.FC = () => {
     <AbsoluteFill style={{backgroundColor: 'black'}}>
       <div style={{position: 'absolute', left: 0, width, height: g.mediaHeight, top: g.mediaTop, overflow: 'hidden'}}>
         <Sequence from={from} durationInFrames={duration} layout="none">
-          <SplitMedia split={s} totalFrames={duration} noInicio={from === 0} />
+          <SplitMedia split={s} />
         </Sequence>
       </div>
       <div style={{position: 'absolute', left: 0, width, height: g.videoHeight, top: g.videoTop, overflow: 'hidden'}}>

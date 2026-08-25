@@ -170,6 +170,7 @@ export class HubGeneration {
     const catalog = await this.catalog(kind);
     const planned: Array<{ item: GenerationItem; resolved: ResolvedGeneration }> = [];
     for (const item of items) {
+      const reasons: string[] = [];
       const resolved = resolveGeneration({
         hub: this.hub.hub,
         kind,
@@ -178,10 +179,14 @@ export class HubGeneration {
         seconds: item.seconds,
         portrait: item.portrait,
         catalog,
-      });
+      }, reasons);
       if (!resolved) {
+        // A mensagem carrega o DIAGNOSTICO: qual porta barrou cada candidato
+        // do nivel pedido. "Nenhum modelo do seu plano entrega" sem prova
+        // custou dois dias de idas e vindas com o aluno.
+        const detalhe = reasons.slice(0, 3).join('; ');
         throw new Error(
-          `Nenhum modelo do seu plano entrega ${kind === 'video' ? 'vídeo vertical em fullHD' : 'imagem nessa proporção'} agora.`,
+          `nenhum modelo ${kind === 'video' ? 'de vídeo' : 'de imagem'} pôde atender${detalhe ? ` — ${detalhe}` : ''}. Tente de novo em instantes; se persistir, me mostre esta mensagem.`,
         );
       }
       planned.push({ item, resolved });

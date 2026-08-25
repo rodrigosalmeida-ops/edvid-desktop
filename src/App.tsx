@@ -2450,9 +2450,7 @@ function EditorWorkspace({
                               disabled={faixaIa.gerando || faixaIa.sugerindo}
                               placeholder={faixaIa.sugerindo
                                 ? 'O agente está escrevendo o prompt deste trecho…'
-                                : faixaIa.tipo === 'video'
-                                  ? 'O que este clipe mostra? Ex.: mãos montando um teclado mecânico, close, luz quente'
-                                  : 'O que esta imagem mostra? Ex.: gráfico de barras subindo, fundo escuro'}
+                                : faixaIa.tipo === 'video' ? 'Descreva a cena do clipe…' : 'Descreva a imagem…'}
                               onChange={(event) => setFaixaIa((atual) => ({ ...atual, texto: event.target.value }))}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) gerar();
@@ -2460,10 +2458,9 @@ function EditorWorkspace({
                               }}
                             />
                             {/* O prompt vai para o modelo COMO ESTÁ — o Edvid
-                                não traduz. Vale dizer: os modelos entendem
-                                português, mas foram treinados em inglês e
-                                entregam bem melhor nele. */}
-                            <small className="pick-media-dica">Sai melhor em inglês. O Edvid já pede à IA que não desenhe texto nenhum na cena.</small>
+                                não traduz, e o pedido já proíbe texto na cena
+                                por conta própria. */}
+                            <small className="pick-media-hint"><i className="hint-i">i</i>Prompts em inglês geram melhores resultados</small>
                             {faixaIa.erro && <p className="pick-media-error">{faixaIa.erro}</p>}
                             <div className="pick-media-actions">
                               <button
@@ -2502,30 +2499,40 @@ function EditorWorkspace({
                           </div>
                         ) : (
                           <div className="pick-media-actions">
-                            {/* As TRES origens, decididas pelas CONTAS e nao
-                                pelo kind gravado: o mesmo espaco aceita
-                                imagem, clipe ou arquivo. */}
+                            {/* TRES ICONES na horizontal, decididos pelas
+                                CONTAS e nao pelo kind gravado: imagem com
+                                sparkle de IA, video com sparkle, pasta. O
+                                texto vive no title — tres frases inteiras nao
+                                cabiam na faixa. */}
                             {imageAiConnected && (
                               <button
                                 type="button"
-                                className="pick-media"
+                                className="pick-media-icon"
+                                title="Gerar imagem com IA"
+                                aria-label="Gerar imagem com IA"
                                 onClick={() => setFaixaIa({ aberto: indice, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null })}
                               >
-                                Gerar Imagem com IA…
+                                <Icon name="image" />
+                                <span className="ia-spark"><Icon name="sparkles" /></span>
                               </button>
                             )}
                             {videoAiConnected && (
                               <button
                                 type="button"
-                                className="pick-media"
+                                className="pick-media-icon"
+                                title="Gerar vídeo com IA"
+                                aria-label="Gerar vídeo com IA"
                                 onClick={() => setFaixaIa({ aberto: indice, tipo: 'video', texto: '', gerando: false, sugerindo: false, erro: null })}
                               >
-                                Gerar Vídeo com IA…
+                                <Icon name="video" />
+                                <span className="ia-spark"><Icon name="sparkles" /></span>
                               </button>
                             )}
                             <button
                               type="button"
-                              className={`pick-media${imageAiConnected || videoAiConnected ? ' ghost' : ''}`}
+                              className="pick-media-icon"
+                              title="Escolher arquivo"
+                              aria-label="Escolher arquivo"
                               onClick={() => {
                                 if (!liveDirectory) return;
                                 void window.edvidDesktop.pickSplitMedia(liveDirectory, indice)
@@ -2533,7 +2540,7 @@ function EditorWorkspace({
                                   .catch(() => {});
                               }}
                             >
-                              Escolher arquivo…
+                              <Icon name="folder" />
                             </button>
                           </div>
                         )}

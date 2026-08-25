@@ -1247,6 +1247,35 @@ Dependências do Fill:
   fica. O casamento é pelo MAIOR ENCAIXE GLOBAL, não janela por janela —
   medido na bancada, a ordem gulosa dava a imagem à janela com 0,63s de
   sobreposição e deixava vazia a que encaixava por 2,87s.
+- 0.33.1: quatro retornos do teste real da 0.33.0.
+  (1) GERAÇÃO AINDA FALHANDO para imagem E vídeo com "nenhum modelo do seu
+  plano entrega". O catálogo não estava vazio (a mensagem seria outra), então
+  todos os candidatos falharam numa porta compartilhada — modelo fora do
+  catálogo do plano, parâmetro recusado ou proporções ausentes — e eu não
+  enxergo o catálogo da conta do aluno para saber qual. Duas mudanças:
+  resolveGeneration ganhou passadas RELAXADAS (parâmetro que o plano recusa é
+  DESCARTADO e o modelo gera no padrão dele — um plano que só oferece 1k
+  recebia recusa quando a verdade era "entrega, em 1k"; para vídeo a exigência
+  de 1080p também cai na passada relaxada: 720p ganha de clipe nenhum) e a
+  recusa final agora carrega o DIAGNÓSTICO por candidato ("nano_banana_2:
+  parâmetro recusado pelo plano; …") — "nenhum modelo do seu plano" sem prova
+  custou dois dias de idas e vindas.
+  (2) "NÃO CORTA NAS LATERAIS": as alças e/w do gizmo ficavam METADE PARA FORA
+  da caixa; com a mídia em largura cheia a caixa encosta na borda do palco, o
+  overflow corta a metade externa e sobra uma tira de 5px colada na janela —
+  o evento sintético da bancada acertava (dispatch direto no elemento ignora
+  hit-testing!), o mouse de verdade não. As quatro alças agora vivem POR
+  DENTRO da caixa (14px), verificadas com document.elementFromPoint — que é o
+  teste que reproduz o mouse real. Lição de bancada: arrasto sintético prova a
+  LÓGICA, elementFromPoint prova o ALCANCE.
+  (3) CORTES SECOS: SplitMedia perdeu o fade de entrada/saída E o whoosh. Com
+  a faixa única recortada pela tesoura, cada pedaço é uma Sequence — o fade
+  fazia toda emenda piscar e o whoosh tocava a cada recorte. Verificado:
+  opacidade 1 a dois quadros do início (o fade antigo daria ~0,3).
+  (4) UI: os três botões do espaço vazio viraram ÍCONES na horizontal (imagem
+  e vídeo com sparkle de IA, pasta para arquivo; o texto vive no title), e a
+  explicação longa do prompt virou uma linha com (i): "Prompts em inglês geram
+  melhores resultados".
 - 0.33.0: A MÍDIA ENTRA INTEIRA, O GIZMO SEGUE A MÍDIA, E A FAIXA VIROU UMA SÓ
   — cinco relatos de uso real numa mensagem, com dois prints.
   (1) "NENHUM MODELO DO SEU PLANO ENTREGA IMAGEM NESSA PROPORÇÃO" com o plano

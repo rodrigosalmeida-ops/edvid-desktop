@@ -976,7 +976,31 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .pick-media-box {
   width: min(88%, 440px); display: flex; flex-direction: column; gap: 8px;
 }
-.pick-media-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.pick-media-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; }
+/* Botao de ICONE do espaco vazio: imagem/video com sparkle de IA, pasta para
+   arquivo. Texto vive no title — tres botoes com frase inteira nao cabiam na
+   faixa sem encavalar (print real). */
+.pick-media-icon {
+  width: 52px; height: 52px; display: grid; place-items: center; position: relative;
+  border-radius: 14px; cursor: pointer; color: #ffd2b0;
+  border: 1px solid rgba(255,119,19,.55); background: rgba(10,11,14,.88);
+}
+.pick-media-icon:hover { background: rgba(56,27,10,.92); }
+.pick-media-icon svg { width: 22px; height: 22px; }
+.pick-media-icon .ia-spark {
+  position: absolute; top: 6px; right: 6px; width: 13px; height: 13px;
+  color: var(--orange); filter: drop-shadow(0 0 4px rgba(255,119,19,.6));
+}
+.pick-media-icon .ia-spark svg { width: 13px; height: 13px; }
+.pick-media-hint {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  color: var(--dim); font-size: 11px; line-height: 1.3;
+}
+.pick-media-hint .hint-i {
+  width: 13px; height: 13px; flex: 0 0 auto; display: grid; place-items: center;
+  border: 1px solid currentColor; border-radius: 50%;
+  font-size: 9px; font-weight: 700; font-style: normal;
+}
 .pick-media {
   padding: 9px 14px; border-radius: 10px; cursor: pointer; font: inherit;
   font-size: 12.5px; font-weight: 800; color: #ffd2b0;
@@ -996,22 +1020,26 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 }
 .pick-media-prompt textarea:focus { outline: none; border-color: var(--orange); }
 .pick-media-prompt textarea:disabled { opacity: .6; }
-.pick-media-dica {
-  color: var(--dim); font-size: 11.5px; line-height: 1.35; text-align: center;
-}
 /* Alças de RECORTE nas bordas do gizmo: linhas que engrossam no hover. Os
    cantos continuam sendo tamanho; as bordas cortam. */
-.gizmo-edge { position: absolute; z-index: 2; }
-.gizmo-edge.n { left: 12%; right: 12%; top: -4px; height: 9px; cursor: ns-resize; }
-.gizmo-edge.s { left: 12%; right: 12%; bottom: -4px; height: 9px; cursor: ns-resize; }
-.gizmo-edge.e { top: 12%; bottom: 12%; right: -4px; width: 9px; cursor: ew-resize; }
-.gizmo-edge.w { top: 12%; bottom: 12%; left: -4px; width: 9px; cursor: ew-resize; }
+/* As alcas vivem POR DENTRO da caixa. Metade para fora era inagarravel nas
+   laterais: com a midia em largura cheia a caixa encosta na borda do palco, o
+   overflow corta a metade externa e sobra uma tira de 5px colada na janela —
+   evento sintetico acertava, mouse de verdade nao ("nao corta nas laterais",
+   relato real). */
+.gizmo-edge { position: absolute; z-index: 2; touch-action: none; }
+.gizmo-edge.n { left: 14%; right: 14%; top: 0; height: 14px; cursor: ns-resize; }
+.gizmo-edge.s { left: 14%; right: 14%; bottom: 0; height: 14px; cursor: ns-resize; }
+.gizmo-edge.e { top: 14%; bottom: 14%; right: 0; width: 14px; cursor: ew-resize; }
+.gizmo-edge.w { top: 14%; bottom: 14%; left: 0; width: 14px; cursor: ew-resize; }
 .gizmo-edge::after {
-  content: ''; position: absolute; inset: 0; margin: auto;
-  background: rgba(255, 119, 19, 0.0); border-radius: 3px; transition: background .12s;
+  content: ''; position: absolute; background: rgba(255, 119, 19, 0.0);
+  border-radius: 3px; transition: background .12s;
 }
-.gizmo-edge.n::after, .gizmo-edge.s::after { height: 3px; }
-.gizmo-edge.e::after, .gizmo-edge.w::after { width: 3px; }
+.gizmo-edge.n::after { left: 0; right: 0; top: 0; height: 4px; }
+.gizmo-edge.s::after { left: 0; right: 0; bottom: 0; height: 4px; }
+.gizmo-edge.e::after { top: 0; bottom: 0; right: 0; width: 4px; }
+.gizmo-edge.w::after { top: 0; bottom: 0; left: 0; width: 4px; }
 .gizmo-edge:hover::after { background: var(--orange); }
 
 .pick-media-error {

@@ -250,6 +250,27 @@ export function paramsFit(model: HubModel, params: Record<string, ParamValue>): 
   return true;
 }
 
+// Versao RELAXADA: parametro que o plano do aluno nao aceita e DESCARTADO em
+// vez de derrubar o candidato. Um plano que so oferece resolution 1k no
+// nano_banana_2 recebia "nenhum modelo do seu plano entrega imagem" — quando a
+// verdade era "entrega, em 1k". Gerar com qualidade menor e melhor que nao
+// gerar; quem chama usa isto so depois de esgotar a passada estrita.
+export function paramsRelaxed(
+  model: HubModel,
+  params: Record<string, ParamValue>,
+): Record<string, ParamValue> {
+  const declared = new Map(parametersOf(model).map((item) => [item.name, item]));
+  const kept: Record<string, ParamValue> = {};
+  for (const [name, value] of Object.entries(params)) {
+    const parameter = declared.get(name);
+    if (!parameter) continue;
+    const options = asArray(parameter.options);
+    if (options.length && !options.some((option) => option === value)) continue;
+    kept[name] = value;
+  }
+  return kept;
+}
+
 // Duracoes sao TRAVADAS por modelo (seedance1_5 aceita 4, 8 ou 12; veo3_1
 // aceita 4, 6 ou 8). As janelas do Edvid sao quebradas — 3,7s —, entao pedimos
 // a menor duracao que COBRE a janela e o template corta o resto. Pedir menos
@@ -321,10 +342,21 @@ function tryCandidate(
   request: GenerationRequest,
   byId: Map<string, HubModel>,
   requireFullDuration: boolean,
+  relax: boolean,
+  reasons?: string[],
 ): Omit<ResolvedGeneration, 'tier'> | null {
+  const recusa = (motivo: string): null => {
+    reasons?.push(`${candidate.model}: ${motivo}`);
+    return null;
+  };
   const model = byId.get(candidate.model);
-  if (!model) return null;
-  if (!paramsFit(model, candidate.params)) return null;
+  if (!model) return recusa('fora do catálogo do plano');
+  let params = candidate.params;
+  if (relax) {
+    params = paramsRelaxed(model, candidate.params);
+  } else if (!paramsFit(model, candidate.params)) {
+    return recusa('parâmetro recusado pelo plano');
+  }
 
   // O formato do catalogo JA MUDOU uma vez debaixo de nos (a duracao migrou
   // para dentro de `parameters` — ver durationFor). A proporcao ganha a mesma
@@ -337,27 +369,28 @@ function tryCandidate(
   // Sem controle de proporcao nao da para prometer 9:16 — e a promessa de
   // proporcao e a que o aluno enxerga primeiro quando quebra.
   const aspectRatio = nearestAspect(bandAspect(request.use ?? 'tela-cheia'), options);
-  if (!aspectRatio) return null;
+  if (!aspectRatio) return recusa('sem lista de proporções no catálogo');
 
   let duration: number | null = null;
   let truncated = false;
   if (request.kind === 'video') {
     // FullHD prometido: ou o candidato pede 1080p, ou foi verificado que o
-    // modelo entrega isso nativamente.
-    const asks1080 = Object.values(candidate.params).some(
+    // modelo entrega isso nativamente. Na passada RELAXADA a exigência cai —
+    // um clipe em 720p é melhor que clipe nenhum, e o aviso vai na mensagem.
+    const asks1080 = Object.values(params).some(
       (value) => typeof value === 'string' && /^(1080p|1920|2k|4k)$/u.test(value),
     );
-    if (!asks1080 && !candidate.fullHd) return null;
+    if (!asks1080 && !candidate.fullHd && !relax) return recusa('sem 1080p no plano');
     const window = durationFor(model, request.seconds ?? 0);
-    if (!window) return null;
-    if (requireFullDuration && !window.covers) return null;
+    if (!window) return recusa('sem controle de duração no catálogo');
+    if (requireFullDuration && !window.covers) return recusa('não cobre a janela inteira');
     duration = window.duration;
     truncated = !window.covers;
   }
   return {
     model: candidate.model,
     aspectRatio,
-    params: { ...candidate.params },
+    params: { ...params },
     duration,
     credits: candidate.credits ?? null,
     truncated,
@@ -367,18 +400,29 @@ function tryCandidate(
 // Escolhe o modelo. Se o nivel pedido nao tiver ninguem capaz, DESCE para o
 // nivel abaixo — nunca sobe. Subir sozinho gastaria mais credito do aluno do
 // que ele autorizou, e credito gasto nao volta.
-export function resolveGeneration(request: GenerationRequest): ResolvedGeneration | null {
+export function resolveGeneration(
+  request: GenerationRequest,
+  // Preenchido quando a resolucao FALHA: o motivo de cada recusa, na ordem
+  // tentada. E o que transforma "nenhum modelo do seu plano entrega" — que
+  // culpava o plano sem prova — numa mensagem que diz qual porta barrou.
+  reasons?: string[],
+): ResolvedGeneration | null {
   const table = TABLES[request.hub];
   if (!table) return null;
   const byId = new Map(request.catalog.map((model) => [model.id, model]));
   const start = TIERS.indexOf(request.tier);
   if (start < 0) return null;
 
-  // Duas passadas. Na primeira so entra quem cobre a janela inteira; na
-  // segunda aceitamos o clipe mais curto que existir. Sem isso um pedido de
-  // 10 segundos no Extremo cairia no Veo (teto de 8) e deixaria dois segundos
-  // de buraco, quando o Cinema Studio ao lado vai ate 15.
-  for (const requireFullDuration of [true, false]) {
+  // Passadas, da mais exigente para a mais tolerante:
+  //   1. estrita cobrindo a janela inteira; 2. estrita aceitando clipe curto;
+  //   3-4. RELAXADAS — parametro que o plano recusa e descartado (o modelo
+  //   gera no padrao dele) em vez de derrubar o candidato. Um plano que so
+  //   oferece 1k recebia "nenhum modelo entrega" quando a verdade era
+  //   "entrega, em 1k" — gerar com qualidade menor ganha de nao gerar.
+  const passes: Array<{ full: boolean; relax: boolean }> = request.kind === 'video'
+    ? [{ full: true, relax: false }, { full: false, relax: false }, { full: true, relax: true }, { full: false, relax: true }]
+    : [{ full: false, relax: false }, { full: false, relax: true }];
+  for (const pass of passes) {
     for (let index = start; index >= 0; index -= 1) {
       const tier = TIERS[index];
       const candidates = [...table[request.kind][tier]];
@@ -388,11 +432,13 @@ export function resolveGeneration(request: GenerationRequest): ResolvedGeneratio
         candidates.unshift(HIGGSFIELD_PORTRAIT);
       }
       for (const candidate of candidates) {
-        const resolved = tryCandidate(candidate, request, byId, requireFullDuration);
+        // Motivos so na PRIMEIRA passada do nivel pedido: e a que descreve o
+        // que o aluno pediu; as seguintes sao tentativas de salvar o pedido.
+        const anotar = pass === passes[0] && tier === request.tier ? reasons : undefined;
+        const resolved = tryCandidate(candidate, request, byId, pass.full, pass.relax, anotar);
         if (resolved) return { ...resolved, tier };
       }
     }
-    if (request.kind !== 'video') break;
   }
   return null;
 }

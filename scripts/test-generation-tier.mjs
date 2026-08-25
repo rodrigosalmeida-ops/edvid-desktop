@@ -322,6 +322,52 @@ try {
   // O padrão não pode ser o nível mais caro: é o crédito do aluno.
   assert.ok(TIERS.indexOf(DEFAULT_TIER.video) < TIERS.indexOf('extremo'));
 
+  // --- Passada RELAXADA: plano magro nao vira "nenhum modelo entrega" ------
+  // Um plano que so oferece 1k no nano_banana_2 (e nada dos outros candidatos)
+  // recusava tudo; agora o parametro recusado e descartado e o modelo gera no
+  // padrao dele. Qualidade menor ganha de geracao nenhuma.
+  const catalogoMagro = [
+    { id: 'nano_banana_2', aspect_ratios: ['1:1', '3:2', '9:16'],
+      parameters: [{ name: 'resolution', options: ['1k'], default: '1k' }] },
+  ];
+  const relaxada = resolveGeneration({
+    hub: 'higgsfield', kind: 'imagem', tier: 'medio', use: 'tela-dividida', catalog: catalogoMagro,
+  });
+  assert.ok(relaxada, 'o plano magro tem de gerar mesmo assim');
+  assert.equal(relaxada.model, 'nano_banana_2');
+  assert.deepEqual(relaxada.params, {}, 'o parametro recusado e descartado, nao enviado errado');
+
+  // Video sem 1080p no plano: a passada relaxada aceita o padrao do modelo.
+  const videoMagro = [
+    { id: 'seedance1_5', aspect_ratios: ['9:16'],
+      parameters: [
+        { name: 'resolution', options: ['720p'], default: '720p' },
+        { name: 'duration', options: [4, 8, 12] },
+        { name: 'generate_audio', options: [] },
+      ] },
+  ];
+  const clipeMagro = resolveGeneration({
+    hub: 'higgsfield', kind: 'video', tier: 'medio', use: 'tela-dividida', seconds: 4, catalog: videoMagro,
+  });
+  assert.ok(clipeMagro, 'clipe em 720p ganha de clipe nenhum');
+  assert.equal(clipeMagro.model, 'seedance1_5');
+
+  // --- Diagnostico: a recusa DIZ qual porta barrou --------------------------
+  const motivos = [];
+  const nada = resolveGeneration({
+    hub: 'higgsfield', kind: 'imagem', tier: 'medio', use: 'tela-dividida', catalog: [],
+  }, motivos);
+  assert.equal(nada, null);
+  assert.ok(motivos.length >= 3, 'cada candidato do nivel pedido registra o motivo');
+  assert.ok(motivos.every((m) => /fora do catálogo/.test(m)), `motivos: ${motivos.join('; ')}`);
+
+  const motivosProporcao = [];
+  resolveGeneration({
+    hub: 'higgsfield', kind: 'imagem', tier: 'medio', use: 'tela-dividida',
+    catalog: [{ id: 'nano_banana_2', aspect_ratios: [], parameters: [{ name: 'resolution', options: ['2k'] }] }],
+  }, motivosProporcao);
+  assert.ok(motivosProporcao.some((m) => /sem lista de proporções/.test(m)));
+
   console.log('test:generation-tier ok — vídeo sempre 1080p 9:16 e mudo, imagem nunca em 4k, e o nível desce mas nunca sobe.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
