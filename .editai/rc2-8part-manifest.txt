@@ -1,0 +1,6 @@
+bundle=editai-rc2-minimal.tar.xz
+sha256=02622a8aca9269410a21ee37248c956309101a762431b5dd4c7f5f5aa66c9431
+parts=8
+part_size=12288
+last_part_size=8052
+encoding=base64-per-part
