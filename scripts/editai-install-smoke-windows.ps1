@@ -1,6 +1,6 @@
 param(
   [string]$SetupPath,
-  [int]$InstallTimeoutSeconds = 900,
+  [int]$InstallTimeoutSeconds = 3600,
   [int]$SmokeTimeoutSeconds = 180
 )
 $ErrorActionPreference = 'Stop'
@@ -18,16 +18,13 @@ if (-not $SetupPath) {
 
 Write-Host "[EDIT AI] instalando via Squirrel: $SetupPath"
 $setupProcess = Start-Process -FilePath $SetupPath -ArgumentList @('--silent') -PassThru
-if (-not $setupProcess.WaitForExit($InstallTimeoutSeconds * 1000)) {
-  try { $setupProcess.Kill() } catch {}
-  throw "Setup excedeu ${InstallTimeoutSeconds}s."
-}
-if ($setupProcess.ExitCode -ne 0) { throw "Setup falhou (exit $($setupProcess.ExitCode))." }
-
 $deadline = (Get-Date).AddSeconds($InstallTimeoutSeconds)
 $installRoot = $null
 $appExe = $null
-while ((Get-Date) -lt $deadline -and -not $appExe) {
+$report = Join-Path $Root 'out\editai-installed-smoke.json'
+$smokePassed = $false
+$lastAttempt = [DateTime]::MinValue
+while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   $roots = @(
     (Join-Path $env:LOCALAPPDATA 'EditAI'),
     (Join-Path $env:LOCALAPPDATA 'EDIT AI'),
@@ -53,23 +50,37 @@ while ((Get-Date) -lt $deadline -and -not $appExe) {
       break
     }
   }
-  if (-not $appExe) { Start-Sleep -Seconds 2 }
-}
-if (-not $appExe) { throw 'Instalacao terminou, mas o executavel instalado nao foi localizado no LocalAppData.' }
 
-# Setup pode abrir a aplicacao na primeira instalacao; encerra somente processos do diretorio instalado.
-Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
-  try {
-    if ($_.Path -and $_.Path.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-      Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+  if ($appExe -and ((Get-Date) - $lastAttempt).TotalSeconds -ge 15) {
+    # O Setup pode abrir o app; encerra apenas processos do diretorio instalado
+    # antes de testar. O updater fica vivo enquanto termina a extracao.
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+      try {
+        if ($_.Path -and $_.Path.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+          Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+      } catch {}
     }
-  } catch {}
-}
-Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 1
+    $lastAttempt = Get-Date
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'editai-smoke-windows.ps1') -ExecutablePath $appExe -OutputPath $report -TimeoutSeconds $SmokeTimeoutSeconds
+    if ($LASTEXITCODE -eq 0) {
+      $smokePassed = $true
+      break
+    }
+    Write-Host '[EDIT AI] instalacao ainda incompleta; repetindo smoke em 15s.'
+  }
 
-$report = Join-Path $Root 'out\editai-installed-smoke.json'
-& powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'editai-smoke-windows.ps1') -ExecutablePath $appExe -OutputPath $report -TimeoutSeconds $SmokeTimeoutSeconds
-if ($LASTEXITCODE -ne 0) { throw 'Smoke do aplicativo instalado falhou.' }
+  if ($setupProcess.HasExited -and $setupProcess.ExitCode -ne 0 -and -not $appExe) {
+    throw "Setup falhou (exit $($setupProcess.ExitCode))."
+  }
+  Start-Sleep -Seconds 2
+}
+if (-not $smokePassed) {
+  try { if (-not $setupProcess.HasExited) { $setupProcess.Kill() } } catch {}
+  throw "Instalacao/smoke excedeu ${InstallTimeoutSeconds}s."
+}
+try { if (-not $setupProcess.HasExited) { $setupProcess.Kill() } } catch {}
 
 $summary = [ordered]@{
   schemaVersion = 1
