@@ -14,12 +14,12 @@ jobs:
   installed-app-gate:
     if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[install-only]') }}
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       GH_TOKEN: ${{ github.token }}
-      EDITAI_BUILD_RUN_ID: '32976554691'
-      EDITAI_BUILD_ARTIFACT: edit-ai-rc2-windows-5
-      EDITAI_BUILD_COMMIT: 21289d14703734df97d3564aa228c100f95457f1
+      EDITAI_BUILD_RUN_ID: '33013533038'
+      EDITAI_BUILD_ARTIFACT: edit-ai-rc2-windows-9
+      EDITAI_BUILD_COMMIT: 68a56f4919284950f16632a46a32bc5425b40407
       EDITAI_UPSTREAM_COMMIT: db71373c2613333a80f399e864655c5891a9ea3b
       EDITAI_RC2_SOURCE_SHA256: 9f79813ec7ea2315efd75272264f4d6947a4731dc2444faef9f4b828209f88f9
 
@@ -49,6 +49,20 @@ jobs:
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1 -SmokeReportPath out\editai-installed-smoke.json -OutputPath out\editai-installed-media-smoke.json
 
+      - name: Cache EDIT AI WhisperX models and Remotion runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Roaming\EDIT AI\cache\huggingface
+            ~\AppData\Roaming\EDIT AI\runtime\remotion
+            ~\AppData\Local\uv
+          key: editai-e2e-runtime-v1-${{ hashFiles('resources/runtime-manifest.json', 'resources/remotion-template/package.json', 'scripts/editai-e2e-real-video-windows.ps1') }}
+          save-always: true
+
+      - name: Real video E2E with installed EDIT AI
+        shell: powershell
+        run: npm run smoke:editai:e2e
+
       - name: Build installed-app evidence
         shell: powershell
         run: |
@@ -58,7 +72,7 @@ jobs:
           $nupkg = Get-ChildItem $root -File -Filter '*.nupkg' | Select-Object -First 1
           $releases = Get-Item (Join-Path $root 'RELEASES') -ErrorAction Stop
           if (-not $nupkg) { throw 'EDIT AI .nupkg ausente.' }
-          foreach ($reportName in @('editai-installed-smoke.json','editai-install-smoke.json','editai-installed-media-smoke.json','editai-windows-artifacts.json')) {
+          foreach ($reportName in @('editai-installed-smoke.json','editai-install-smoke.json','editai-installed-media-smoke.json','editai-e2e-real-report.json','editai-e2e-real-summary.json','editai-windows-artifacts.json')) {
             if (-not (Test-Path (Join-Path $PWD "out\$reportName"))) { throw "Relatorio ausente: $reportName" }
           }
           $evidence = [ordered]@{
@@ -83,6 +97,7 @@ jobs:
             squirrelInstall = $true
             installedSmoke = $true
             installedMediaSmoke = $true
+            realVideoE2E = $true
           }
           $evidence | ConvertTo-Json -Depth 6 | Set-Content out\editai-rc2-installed-evidence.json -Encoding UTF8
           Get-Content out\editai-rc2-installed-evidence.json
@@ -100,4 +115,8 @@ jobs:
             out/editai-installed-smoke.json
             out/editai-install-smoke.json
             out/editai-installed-media-smoke.json
+            out/editai-e2e-real-report.json
+            out/editai-e2e-real-summary.json
+            out/editai-e2e-real/**
+            out/editai-squirrel-diagnostics/**
             out/editai-rc2-installed-evidence.json

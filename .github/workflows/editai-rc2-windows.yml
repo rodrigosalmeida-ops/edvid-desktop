@@ -153,6 +153,7 @@ jobs:
             out/editai-install-smoke.json
             out/editai-media-smoke.json
             out/editai-installed-media-smoke.json
+            out/editai-squirrel-diagnostics/**
             out/editai-e2e-real-report.json
             out/editai-e2e-real-summary.json
             out/editai-e2e-real/**
