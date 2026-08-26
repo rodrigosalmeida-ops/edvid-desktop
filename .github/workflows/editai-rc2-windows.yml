@@ -1,0 +1,172 @@
+name: EDIT AI RC2 Windows QA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - editai-v1
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  editai-rc2-windows:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EDITAI_EXPECTED_RC2_SHA256: 02622a8aca9269410a21ee37248c956309101a762431b5dd4c7f5f5aa66c9431
+
+    steps:
+      - name: Checkout EDIT AI branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Reconstruct and verify EDIT AI RC2 bundle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = Join-Path $PWD '.editai\editai-rc2-minimal.tar.xz'
+          if (Test-Path $bundle) { Remove-Item $bundle -Force }
+          $stream = [System.IO.File]::Open($bundle, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+          try {
+            for ($i = 0; $i -lt 8; $i++) {
+              $part = Join-Path $PWD ('.editai\rc2-pack-{0:D2}.b64' -f $i)
+              if (-not (Test-Path $part)) { throw "RC2 part missing: $part" }
+              $raw = (Get-Content $part -Raw).Trim()
+              $bytes = [Convert]::FromBase64String($raw)
+              $stream.Write($bytes, 0, $bytes.Length)
+              Write-Host ("RC2 part {0:D2}: {1} bytes" -f $i, $bytes.Length)
+            }
+          } finally {
+            $stream.Dispose()
+          }
+          $actual = (Get-FileHash $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "RC2 SHA256: $actual"
+          if ($actual -ne $env:EDITAI_EXPECTED_RC2_SHA256) {
+            throw "RC2 SHA256 mismatch: expected $env:EDITAI_EXPECTED_RC2_SHA256, got $actual"
+          }
+          $patchRoot = Join-Path $PWD '.editai\rc2-patch'
+          if (Test-Path $patchRoot) { Remove-Item $patchRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $patchRoot | Out-Null
+          tar.exe -xJf $bundle -C $patchRoot
+          if ($LASTEXITCODE -ne 0) { throw "RC2 archive extraction failed (exit $LASTEXITCODE)" }
+          $apply = Join-Path $patchRoot 'scripts\apply-editai-v10-rc2.mjs'
+          if (-not (Test-Path $apply)) { throw "RC2 apply script missing: $apply" }
+          Write-Host 'RC2 bundle integrity gate: PASS'
+
+      - name: Apply EDIT AI V1.0 RC2
+        shell: powershell
+        run: |
+          $apply = Join-Path $PWD '.editai\rc2-patch\scripts\apply-editai-v10-rc2.mjs'
+          node $apply $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '1.0.0-editai.2') {
+            throw "Expected EDIT AI 1.0.0-editai.2, got $($pkg.version)"
+          }
+          if ($pkg.name -ne '@editai/desktop' -or $pkg.productName -ne 'EDIT AI') {
+            throw "EDIT AI package identity was not applied"
+          }
+          Write-Host "EDIT AI patch applied: $($pkg.version)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache staged EDIT AI runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/runtimes/win32-x64
+            .runtime-cache
+          key: editai-rc2-win-runtime-v3-${{ hashFiles('resources/runtime-manifest.json', 'scripts/stage-*.mjs', 'scripts/fetch-ffmpeg-source.mjs', 'scripts/build-ffmpeg-torchcodec.mjs', 'scripts/editai-ci-stage-torchcodec-prebuilt.mjs') }}
+
+      - name: Verify EDIT AI patch and regression suite
+        run: npm run verify:editai
+
+      - name: Stage verified FFmpeg 7.1 LGPL shared runtime for TorchCodec
+        run: node scripts/editai-ci-stage-torchcodec-prebuilt.mjs
+
+      - name: Build EDIT AI Windows QA installer
+        shell: powershell
+        run: |
+          npm run build:editai:win:qa
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke packaged EDIT AI executable
+        shell: powershell
+        run: |
+          npm run smoke:editai:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Media smoke with bundled EDIT AI FFmpeg
+        shell: powershell
+        run: |
+          npm run smoke:editai:media
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Setup and smoke installed EDIT AI
+        shell: powershell
+        run: |
+          npm run smoke:editai:install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build RC2 evidence report
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $PWD 'out\make\squirrel.windows\x64'
+          $setup = Get-ChildItem $root -Recurse -Filter '*Setup.exe' | Select-Object -First 1
+          $nupkg = Get-ChildItem $root -Recurse -Filter '*.nupkg' | Select-Object -First 1
+          $releases = Get-ChildItem $root -Recurse -Filter 'RELEASES' | Select-Object -First 1
+          if (-not $setup) { throw 'EDIT AI Setup.exe not generated' }
+          if (-not $nupkg) { throw 'EDIT AI .nupkg not generated' }
+          if (-not $releases) { throw 'EDIT AI RELEASES not generated' }
+          foreach ($reportName in @('editai-smoke.json','editai-media-smoke.json','editai-installed-smoke.json','editai-install-smoke.json')) {
+            $reportPath = Join-Path $PWD "out\$reportName"
+            if (-not (Test-Path $reportPath)) { throw "Required smoke report missing: $reportName" }
+          }
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $evidence = [ordered]@{
+            schemaVersion = 1
+            generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+            productName = $pkg.productName
+            packageName = $pkg.name
+            version = $pkg.version
+            commit = (git rev-parse HEAD).Trim()
+            rc2BundleSha256 = $env:EDITAI_EXPECTED_RC2_SHA256
+            setupName = $setup.Name
+            setupPath = $setup.FullName
+            setupBytes = $setup.Length
+            setupSha256 = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            nupkgName = $nupkg.Name
+            nupkgSha256 = (Get-FileHash $nupkg.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            releasesName = $releases.Name
+            packagedSmoke = $true
+            mediaSmoke = $true
+            installedSmoke = $true
+          }
+          $evidence | ConvertTo-Json -Depth 6 | Set-Content out\editai-rc2-windows-evidence.json -Encoding UTF8
+          Get-Content out\editai-rc2-windows-evidence.json
+
+      - name: Upload EDIT AI RC2 Windows artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edit-ai-rc2-windows-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            out/make/squirrel.windows/x64/**
+            out/editai-windows-artifacts.json
+            out/editai-smoke.json
+            out/editai-installed-smoke.json
+            out/editai-install-smoke.json
+            out/editai-media-smoke.json
+            out/editai-rc2-windows-evidence.json
