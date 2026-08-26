@@ -55,6 +55,7 @@ jobs:
             resources/runtimes/win32-x64
             .runtime-cache
           key: editai-rc2-win-runtime-v4-${{ hashFiles('resources/runtime-manifest.json', 'scripts/stage-*.mjs', 'scripts/fetch-ffmpeg-win.mjs', 'scripts/editai-ci-stage-torchcodec-prebuilt.mjs') }}
+          save-always: true
 
       - name: Verify EDIT AI RC2
         run: npm run verify:editai

@@ -13,14 +13,13 @@ function Resolve-EditAiExecutable {
     if (-not (Test-Path $resolved -PathType Leaf)) { throw "Executavel invalido: $resolved" }
     return $resolved
   }
-  $candidates = @(Get-ChildItem -Path (Join-Path $Root 'out') -Recurse -File -Filter '*.exe' -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.Name -notmatch '^(Setup|Update|Squirrel|WriteZipToSetup)' -and
-      $_.FullName -notmatch '\\make\\squirrel\.windows\\'
-    } |
-    Sort-Object Length -Descending)
-  if ($candidates.Count -lt 1) { throw 'Executavel empacotado do EDIT AI nao encontrado em out/.' }
-  return $candidates[0].FullName
+  $package = Get-Content (Join-Path $Root 'package.json') -Raw | ConvertFrom-Json
+  $packageDirectory = Join-Path (Join-Path $Root 'out') "$($package.productName)-win32-x64"
+  $candidate = Join-Path $packageDirectory "$($package.productName).exe"
+  if (-not (Test-Path $candidate -PathType Leaf)) {
+    throw "Executavel empacotado do EDIT AI nao encontrado: $candidate"
+  }
+  return $candidate
 }
 
 $Exe = Resolve-EditAiExecutable $ExecutablePath

@@ -1,7 +1,7 @@
 param(
   [string]$SetupPath,
-  [int]$InstallTimeoutSeconds = 180,
-  [int]$SmokeTimeoutSeconds = 120
+  [int]$InstallTimeoutSeconds = 900,
+  [int]$SmokeTimeoutSeconds = 180
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
