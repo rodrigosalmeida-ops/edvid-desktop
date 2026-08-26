@@ -1,7 +1,8 @@
 param(
   [string]$SetupPath,
   [int]$InstallTimeoutSeconds = 3600,
-  [int]$SmokeTimeoutSeconds = 180
+  [int]$SmokeTimeoutSeconds = 180,
+  [int]$BootstrapTimeoutSeconds = 300
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -19,11 +20,18 @@ if (-not $SetupPath) {
 Write-Host "[EDIT AI] instalando via Squirrel: $SetupPath"
 $setupProcess = Start-Process -FilePath $SetupPath -ArgumentList @('--silent') -PassThru
 $deadline = (Get-Date).AddSeconds($InstallTimeoutSeconds)
+$bootstrapDeadline = (Get-Date).AddSeconds($BootstrapTimeoutSeconds)
 $installRoot = $null
 $appExe = $null
 $report = Join-Path $Root 'out\editai-installed-smoke.json'
+$diagnostics = Join-Path $Root 'out\editai-squirrel-diagnostics'
+$squirrelTemp = Join-Path $env:LOCALAPPDATA 'SquirrelTemp'
+$squirrelLog = Join-Path $squirrelTemp 'SquirrelSetup.log'
+$installMode = 'setup-bootstrapper'
+$directUpdaterStarted = $false
 $smokePassed = $false
 $lastAttempt = [DateTime]::MinValue
+New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
 while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   $roots = @(
     (Join-Path $env:LOCALAPPDATA 'EditAI'),
@@ -35,6 +43,29 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
     $roots = @(Get-ChildItem -Path $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue |
       Where-Object { $_.LastWriteTime -ge $StartedAt.AddMinutes(-1) -and (Test-Path (Join-Path $_.FullName 'Update.exe')) } |
       Select-Object -ExpandProperty FullName)
+  }
+
+  if (-not $appExe -and -not $directUpdaterStarted -and (Get-Date) -ge $bootstrapDeadline) {
+    # Setup.exe apenas extrai Update.exe e o chama com `--install .`. Em runners
+    # Windows o bootstrapper pode ficar preso lendo o payload embutido. Copia o
+    # mesmo updater oficial e aponta-o para RELEASES/.nupkg ja verificados.
+    $embeddedUpdater = Join-Path $squirrelTemp 'Update.exe'
+    if (Test-Path $embeddedUpdater) {
+      $directUpdater = Join-Path $env:TEMP 'editai-squirrel-update.exe'
+      Copy-Item -Force $embeddedUpdater $directUpdater
+      if (Test-Path $squirrelLog) {
+        Copy-Item -Force $squirrelLog (Join-Path $diagnostics 'SquirrelSetup-bootstrapper.log')
+        Write-Host '[EDIT AI] bootstrapper Squirrel nao progrediu; ultimas linhas:'
+        Get-Content $squirrelLog -Tail 80 -ErrorAction SilentlyContinue | Write-Host
+      }
+      Get-Process -Name 'Update' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      try { if (-not $setupProcess.HasExited) { $setupProcess.Kill() } } catch {}
+      $releaseDirectory = Split-Path -Parent $SetupPath
+      Write-Host "[EDIT AI] retry Squirrel direto em: $releaseDirectory"
+      $setupProcess = Start-Process -FilePath $directUpdater -ArgumentList @('--install', $releaseDirectory, '--silent') -WorkingDirectory $releaseDirectory -PassThru
+      $directUpdaterStarted = $true
+      $installMode = 'update-exe-release-directory'
+    }
   }
 
   foreach ($candidateRoot in $roots) {
@@ -52,11 +83,11 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   }
 
   if ($appExe -and ((Get-Date) - $lastAttempt).TotalSeconds -ge 15) {
-    # O Setup pode abrir o app; encerra apenas processos do diretorio instalado
-    # antes de testar. O updater fica vivo enquanto termina a extracao.
+    # O Setup pode abrir o app. Encerra apenas esse executavel antes do smoke;
+    # Update.exe/Squirrel precisam continuar vivos ate finalizar a extracao.
     Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
       try {
-        if ($_.Path -and $_.Path.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($_.Path -and $_.Path.Equals($appExe, [System.StringComparison]::OrdinalIgnoreCase)) {
           Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
         }
       } catch {}
@@ -77,10 +108,17 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   Start-Sleep -Seconds 2
 }
 if (-not $smokePassed) {
+  if (Test-Path $squirrelLog) {
+    Copy-Item -Force $squirrelLog (Join-Path $diagnostics 'SquirrelSetup-final.log')
+    Get-Content $squirrelLog -Tail 120 -ErrorAction SilentlyContinue | Write-Host
+  }
   try { if (-not $setupProcess.HasExited) { $setupProcess.Kill() } } catch {}
   throw "Instalacao/smoke excedeu ${InstallTimeoutSeconds}s."
 }
 try { if (-not $setupProcess.HasExited) { $setupProcess.Kill() } } catch {}
+if (Test-Path $squirrelLog) {
+  Copy-Item -Force $squirrelLog (Join-Path $diagnostics 'SquirrelSetup-success.log')
+}
 
 $summary = [ordered]@{
   schemaVersion = 1
@@ -88,6 +126,7 @@ $summary = [ordered]@{
   setup = $SetupPath
   installRoot = $installRoot
   executable = $appExe
+  installMode = $installMode
   runtimeSmokeReport = $report
   ok = $true
 }
