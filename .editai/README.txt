@@ -1,0 +1,1 @@
+EDIT AI RC2 staging area. Binary bundle is committed through Git data blobs/trees and verified by SHA-256 before application.
