@@ -41,6 +41,11 @@ const HOOK_WORDS = new Set([
 const WORD_RE = /[\p{L}\p{N}_]+/gu;
 const CTA_RE = /\b(compre|comprar|garanta|aproveite|clique|clica|link|carrinho|peça|peca|pedido|siga|segue|comenta|comente|salva|compartilha)\b/iu;
 const PRICE_RE = /(?:r\$\s?\d|\b\d+[,.]\d{2}\b|\bpor\s+\d+\b)/iu;
+const PT_NUMBER = '(?:um|uma|dois|duas|tres|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|cem|cento|duzentos|trezentos|quatrocentos|quinhentos|seiscentos|setecentos|oitocentos|novecentos|mil)';
+const SPOKEN_PRICE_RE = new RegExp(
+  `\\b${PT_NUMBER}(?:\\s+(?:e\\s+)?${PT_NUMBER}){0,5}\\s+reais?(?:\\s+e\\s+${PT_NUMBER}(?:\\s+(?:e\\s+)?${PT_NUMBER}){0,2}\\s+centavos?)?\\b`,
+  'iu',
+);
 const BENEFIT_RE = /\b(benef[ií]cio|resolve|ajuda|melhora|reduz|aumenta|protege|hidrata|fortalece|economiza|pr[aá]tico|r[aá]pido|f[aá]cil)\b/iu;
 
 function clamp(value: number, min: number, max: number): number {
@@ -102,7 +107,7 @@ export function retentionReport(
   const pacing = Math.max(25, 100 - paceDistance * 0.55 - pacingPenalty);
 
   const ctaDetected = CTA_RE.test(lower);
-  const priceDetected = PRICE_RE.test(lower);
+  const priceDetected = PRICE_RE.test(lower) || SPOKEN_PRICE_RE.test(lower);
   const benefitDetected = BENEFIT_RE.test(lower);
   const commercialClarity = Math.min(
     100,
