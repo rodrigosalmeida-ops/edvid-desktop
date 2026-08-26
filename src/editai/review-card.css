@@ -1,0 +1,40 @@
+.editai-review { margin: 12px 0 18px; padding: 12px; border: 1px solid rgba(9,181,183,.3); border-radius: 13px; background: linear-gradient(145deg, rgba(9,181,183,.09), rgba(14,17,23,.92) 48%, rgba(255,119,19,.045)); box-shadow: 0 14px 38px rgba(0,0,0,.18); }
+.editai-review-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.editai-review-head > div:first-child { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.editai-review-head strong { color:#e8f5f5; font-size:11px; }
+.editai-review-kicker { color:#62c9cb; font-size:7px; font-weight:900; letter-spacing:1.1px; }
+.editai-score { width:48px; height:48px; flex:0 0 48px; display:grid; place-content:center; border:1px solid rgba(9,181,183,.28); border-radius:50%; text-align:center; background:rgba(9,181,183,.06); }
+.editai-score b { display:inline; color:#dffafa; font-size:15px; line-height:1; }
+.editai-score span { display:block; margin-top:2px; color:#71848a; font-size:6px; text-transform:uppercase; }
+.editai-score.score-fraca { border-color:rgba(255,94,115,.4); }
+.editai-score.score-mediana { border-color:rgba(255,190,80,.4); }
+.editai-score.score-forte { border-color:rgba(79,208,139,.45); }
+.editai-score.pending { border-radius:12px; }
+.editai-dimensions { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin-top:10px; }
+.editai-dimensions span { display:flex; flex-direction:column; gap:1px; padding:6px; border:1px solid rgba(255,255,255,.055); border-radius:8px; color:#697581; background:rgba(0,0,0,.14); font-size:6.5px; }
+.editai-dimensions b { color:#cfd8df; font-size:10px; }
+.editai-review-list { display:flex; flex-direction:column; gap:5px; margin-top:10px; }
+.editai-review-item { position:relative; display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center; gap:7px; padding:8px; border:1px solid rgba(255,255,255,.06); border-radius:9px; background:rgba(255,255,255,.025); cursor:pointer; }
+.editai-review-item:hover { border-color:rgba(9,181,183,.2); }
+.editai-review-item input { position:absolute; opacity:0; pointer-events:none; }
+.editai-review-check { width:17px; height:17px; display:grid; place-items:center; border:1px solid rgba(9,181,183,.25); border-radius:5px; color:transparent; font-size:9px; background:rgba(0,0,0,.2); }
+.editai-review-item input:checked + .editai-review-check { color:#cfffff; border-color:rgba(9,181,183,.5); background:rgba(9,181,183,.16); }
+.editai-review-copy { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.editai-review-copy strong { color:#cdd9df; font-size:8.5px; }
+.editai-review-copy small { color:#697581; font-size:7px; line-height:1.4; overflow-wrap:anywhere; }
+.editai-review-time { color:#7f9299; font-size:7px; white-space:nowrap; }
+.editai-review-item em { grid-column:3; padding:2px 5px; border-radius:999px; color:#8b7b72; background:rgba(255,119,19,.08); font-size:6px; font-style:normal; }
+.editai-review-item.future { opacity:.65; cursor:default; }
+.editai-review-notes { margin-top:9px; color:#71808a; font-size:7px; }
+.editai-review-notes summary { cursor:pointer; color:#83949c; }
+.editai-review-notes ul { margin:7px 0 0 14px; padding:0; line-height:1.5; }
+.editai-review-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:11px; }
+.editai-review-disclaimer { margin:8px 0 0 !important; color:#53616a !important; font-size:6px !important; line-height:1.35 !important; }
+.editai-analysis-launch { width:100%; display:flex; align-items:center; justify-content:center; gap:6px; margin:8px 0 2px; }
+.editai-analysis-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; margin:0 0 12px; padding:8px; border:1px solid rgba(255,255,255,.055); border-radius:10px; background:rgba(0,0,0,.12); }
+.editai-analysis-toolbar select { min-width:0; padding:7px 8px; border:1px solid var(--stroke); border-radius:8px; outline:none; color:#aeb8c0; background:#12171e; font-size:8px; }
+.editai-analysis-toolbar .btn { margin:0; white-space:nowrap; }
+.editai-review-item em.ready {
+  color: var(--success, #3fb950);
+  border-color: color-mix(in srgb, var(--success, #3fb950) 45%, transparent);
+}

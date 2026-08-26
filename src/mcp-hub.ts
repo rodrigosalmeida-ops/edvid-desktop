@@ -54,13 +54,13 @@ type StoredAuth = {
 };
 
 // A pagina que o navegador mostra quando o login termina. O aluno volta para o
-// Edvid sozinho; sem isto ele fica olhando uma aba em branco sem saber se deu
+// EDIT AI sozinho; sem isto ele fica olhando uma aba em branco sem saber se deu
 // certo.
 function closingPage(hub: GenerationHub, ok: boolean): string {
   const title = ok ? `${HUB_NAME[hub]} conectado` : 'Não foi possível conectar';
   const body = ok
-    ? 'Pode fechar esta aba e voltar para o Edvid.'
-    : 'Volte para o Edvid e tente novamente.';
+    ? 'Pode fechar esta aba e voltar para o EDIT AI.'
+    : 'Volte para o EDIT AI e tente novamente.';
   return `<!doctype html><html lang="pt-BR"><meta charset="utf-8">
 <title>${title}</title>
 <style>body{font:16px -apple-system,system-ui,sans-serif;background:#0d0d10;color:#f4f4f5;
@@ -104,7 +104,7 @@ class HubAuthStore implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: 'Edvid Desktop',
+      client_name: 'EDIT AI Desktop',
       redirect_uris: [this.redirect],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
@@ -266,7 +266,7 @@ export class McpHub {
         authProvider: store,
       });
       const client = new Client(
-        { name: 'edvid-desktop', version: '1.0.0' },
+        { name: 'editai-desktop', version: '1.0.0' },
         { capabilities: {} },
       );
       await client.connect(transport);
@@ -307,7 +307,7 @@ export class McpHub {
     const transport = new StreamableHTTPClientTransport(new URL(HUB_URL[this.hub]), {
       authProvider: store,
     });
-    const client = new Client({ name: 'edvid-desktop', version: '1.0.0' }, { capabilities: {} });
+    const client = new Client({ name: 'editai-desktop', version: '1.0.0' }, { capabilities: {} });
 
     const code = new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('O login demorou demais. Tente de novo.')), LOGIN_TIMEOUT_MS);
@@ -322,7 +322,7 @@ export class McpHub {
         response.end(closingPage(this.hub, Boolean(received)));
         clearTimeout(timer);
         if (received) resolve(received);
-        else reject(new Error(url.searchParams.get('error_description') ?? 'A conta não autorizou o Edvid.'));
+        else reject(new Error(url.searchParams.get('error_description') ?? 'A conta não autorizou o EDIT AI.'));
       });
     });
 
@@ -363,7 +363,7 @@ export class McpHub {
     // compacto ("jobs[1]{index,job_id,...}: 0,uuid,in_progress"), que nao e
     // JSON, e poe o dado de verdade neste campo do proprio protocolo MCP.
     // Ignora-lo era o defeito: a submissao funcionava, os jobs abriam, o hub
-    // COBRAVA os creditos — e o Edvid dizia "nao abriu nenhuma geracao"
+    // COBRAVA os creditos — e o EDIT AI dizia "nao abriu nenhuma geracao"
     // porque nao achava a lista no texto. Cinco clipes ja tinham sido pagos
     // quando isto foi descoberto lendo o historico da conta.
     const structured = (result as { structuredContent?: unknown }).structuredContent;

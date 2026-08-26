@@ -1,1 +1,0 @@
-Binary chunks are integrity checked and are not executed until the reconstructed RC2 archive SHA-256 matches the manifest.

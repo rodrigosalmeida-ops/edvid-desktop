@@ -1,7 +1,7 @@
 import {continueRender, delayRender, staticFile} from 'remotion';
 
 // Fontes locais, servidas de public/fonts. O @remotion/google-fonts busca os
-// arquivos em fonts.gstatic.com durante o render, e o Edvid renderiza sem
+// arquivos em fonts.gstatic.com durante o render, e o EDIT AI renderiza sem
 // rede: os arquivos viriam vazios e a tipografia cairia para a fonte padrao,
 // desmontando justamente os estilos. O aplicativo baixa as familias uma vez ao
 // instalar o runtime e escreve public/fonts/fonts.css com os @font-face.
@@ -18,18 +18,18 @@ const FONT_TIMEOUT_MS = 30000;
 
 let loading: Promise<void> | null = null;
 
-export function loadEdvidFonts(): void {
+export function loadEditAiFonts(): void {
   if (loading) return;
   // timeoutInMilliseconds proprio: o backstop abaixo garante que o handle e
   // liberado em ate 30 s, entao o prazo do Remotion aqui e so redundancia — e
   // com o prazo da CLI ele ja derrubou renders inteiros marcando este handle
   // como pendente mesmo depois de todas as abas confirmarem as fontes.
-  const handle = delayRender('Carregando as fontes locais do Edvid', {
+  const handle = delayRender('Carregando as fontes locais do EDIT AI', {
     timeoutInMilliseconds: 86_400_000,
   });
-  // Os marcadores edvid-fonts aparecem com --log=verbose e mostram onde o
+  // Os marcadores editai-fonts aparecem com --log=verbose e mostram onde o
   // carregamento parou quando um render morrer por timeout das fontes.
-  console.log('edvid-fonts: v2 iniciando');
+  console.log('editai-fonts: v2 iniciando');
   const load = (async () => {
     const href = staticFile('fonts/fonts.css');
     if (!document.querySelector(`link[href="${href}"]`)) {
@@ -44,12 +44,12 @@ export function loadEdvidFonts(): void {
         link.addEventListener('error', () => resolve(), {once: true});
       });
     }
-    console.log('edvid-fonts: folha carregada');
+    console.log('editai-fonts: folha carregada');
     // Carrega cada @font-face declarado na folha, sem document.fonts.ready:
     // sob carga esse promise pode nunca resolver numa aba de render, e o
     // delayRender estoura o timeout depois de minutos de trabalho feito.
     await Promise.allSettled(Array.from(document.fonts).map((face) => face.load()));
-    console.log(`edvid-fonts: ${document.fonts.size} faces prontas`);
+    console.log(`editai-fonts: ${document.fonts.size} faces prontas`);
   })();
   loading = Promise.race([
     load,
@@ -57,7 +57,7 @@ export function loadEdvidFonts(): void {
     // pode segurar o handle para sempre e derrubar o render no timeout.
     new Promise<void>((resolve) => {
       setTimeout(() => {
-        console.log('edvid-fonts: backstop de tempo acionado');
+        console.log('editai-fonts: backstop de tempo acionado');
         resolve();
       }, FONT_TIMEOUT_MS);
     }),
@@ -65,6 +65,6 @@ export function loadEdvidFonts(): void {
     .catch(() => undefined)
     .finally(() => {
       continueRender(handle);
-      console.log('edvid-fonts: handle liberado');
+      console.log('editai-fonts: handle liberado');
     });
 }

@@ -9,8 +9,8 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import edvidIcon from './brand/edvid-icon.png';
-import edvidLogo from './brand/edvid-logo.png';
+import edvidIcon from './brand/editai-icon.png';
+import edvidLogo from './brand/editai-logo.png';
 // Thumbnails renderizadas pelo proprio template do Remotion
 // (scripts/render-style-thumbs.mjs) — fieis ao resultado da Fase 2.
 import thumbHeadlineOutline from './brand/thumbs/headline-outline.png';
@@ -76,6 +76,47 @@ import type {
   WhisperModelState,
 } from './shared';
 import { AI_CATALOG, catalogEntry, type AiCatalogEntry } from './ai-catalog';
+import {
+  EDIT_AI_PRESETS,
+  analyzeEditAiContext,
+  applyAiEditPlan,
+  buildAiReviewRequest,
+  defaultReviewSelection,
+  mergeAiReviewWithLocal,
+  parseAiEditPlan,
+  reviewStateFromAiText,
+  selectedTimelinePlan,
+  editDataOperationsForPlan,
+  buildEditAiVisualHistoryEntry,
+  commercialCalloutAtPointer,
+  activeBrandKit,
+  buildTikTokShopVariants,
+  brandBriefing,
+  editDataOperationsForBrand,
+  readBrandKits,
+  readProjectBrandId,
+  reviewStateForTikTokVariant,
+  removeBrandKit,
+  stylePatchForBrand,
+  upsertBrandKit,
+  writeProjectBrandId,
+  type CommercialCallout,
+  type CommercialDragMode,
+  type EditAiBrandKit,
+  type EditAiVisualHistoryEntry,
+  type AiEditPlan,
+  type EditAiPresetId,
+  type EditAiReviewState,
+  type TikTokShopVariantId,
+  type TikTokShopVariantSet,
+} from './editai';
+import { CommercialInspector } from './editai/commercial-inspector';
+import { BrandKitPanel } from './editai/brand-kit-panel';
+import { TikTokShopVariantPanel } from './editai/tiktok-shop-variants';
+import './editai/tiktok-shop-variants.css';
+import { EditAiReviewCard } from './editai/review-card';
+import './editai/review-card.css';
+const EDIT_AI_STANDALONE = true;
 import { LivePreview, type PlayerRef } from './live-preview';
 import { activeSplitIndexAt, type EditOperation, type OverlayKind } from './edit-data-edits';
 import { SPLIT_DIVIDER } from './image-format';
@@ -303,7 +344,7 @@ function friendlyAiError(raw: string): string {
     }
   }
   if (/model is not supported|unsupported model|model_not_found|invalid model/iu.test(text)) {
-    return 'O modelo de IA desta conta mudou e esta versão do Edvid ainda não o acompanha. Atualize o Edvid e tente de novo.';
+    return 'O modelo de IA desta conta mudou e esta versão do EDIT AI ainda não o acompanha. Atualize o EDIT AI e tente de novo.';
   }
   return text;
 }
@@ -495,6 +536,10 @@ function EditorWorkspace({
   onApplyCorrections,
   applyingCorrections,
   onTimelineModelChange,
+  editAiCommitRef,
+  editAiPreviewOpsRef,
+  editAiTransactionRef,
+  editAiActiveBrand,
   onApplyTimelineEdits,
   renderStamp,
   onRenderPendingChange,
@@ -511,6 +556,10 @@ function EditorWorkspace({
   onApplyCorrections: (corrections: CorrectionRange[]) => Promise<boolean>;
   applyingCorrections: boolean;
   onTimelineModelChange: (model: TimelineModel, commit: boolean) => void;
+  editAiCommitRef: { current: ((model: TimelineModel) => void) | null };
+  editAiPreviewOpsRef: { current: ((operations: readonly EditOperation[]) => Promise<boolean>) | null };
+  editAiTransactionRef: { current: ((input: { model: TimelineModel | null; visualOperations: readonly EditOperation[]; brand?: EditAiBrandKit }) => Promise<boolean>) | null };
+  editAiActiveBrand: EditAiBrandKit;
   onApplyTimelineEdits: () => Promise<boolean>;
   // Muda quando um render da Fase 2 termina: pede dados novos da previa (e o
   // renderPending atualizado que esconde o botao Renderizar).
@@ -586,7 +635,8 @@ function EditorWorkspace({
   // deles entram por elemento (cada um tem um motor de layout proprio).
   type SelectedElement =
     | { kind: OverlayKind; index: number }
-    | { kind: 'captions' | 'headline' | 'soundtrack' };
+    | { kind: 'captions' | 'headline' | 'soundtrack' }
+    | { kind: 'editai-commercial'; id: string };
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
   // Pedido de mídia por IA para um espaço vazio da tela dividida. `aberto`
   // guarda o índice do trecho (0 é válido, por isso null e não falsy) — quem
@@ -678,9 +728,13 @@ function EditorWorkspace({
   } | null>(null);
   const [headlineDraft, setHeadlineDraft] = useState<string | null>(null);
 
-  const applyLiveOperation = (operation: EditOperation, persist: boolean) => {
+  const applyLiveOperation = (operation: EditOperation, persist: boolean, historyBeforeEditData?: Record<string, unknown>) => {
     const atual = liveDataRef.current;
     if (!atual) return;
+    // Em drag, liveData já contém vários previews. O Undo precisa partir do
+    // estado do pointerDown, não do último pointerMove.
+    const editAiHistorySource = historyBeforeEditData ?? (atual.editData as Record<string, unknown>);
+    const editAiManualHistory = persist ? buildEditAiVisualHistoryEntry(editAiHistorySource, [operation]) : null;
     // Otimista: a mesma mutacao do main roda aqui para o quadro responder ao
     // mouse; o disco so e tocado no soltar.
     // applyEditOperations (plural) e nao applyEditOperation: e a versao que
@@ -698,6 +752,13 @@ function EditorWorkspace({
             if (liveDataRef.current) {
               setLiveData({ ...liveDataRef.current, editData: persisted, renderPending: true });
             }
+            if (editAiManualHistory && result.changed) {
+              editAiBatchHistoryRef.current.push({ beforeModel: null, afterModel: null, visual: editAiManualHistory });
+              editAiBatchFutureRef.current = [];
+              modelFutureRef.current = [];
+              redoActionOrderRef.current = [];
+              actionOrderRef.current.push('editai-batch');
+            }
           })
           .catch(() => {
             // A escrita falhou: recarrega a verdade do disco em vez de deixar
@@ -709,6 +770,68 @@ function EditorWorkspace({
       }
     }).catch(() => {});
   };
+  // Ponte V0.5: o card de revisão grava operações VISUAIS em lote pelo mesmo
+  // applyEditOperations do editor. Preview e render leem o mesmo edit-data.
+  useEffect(() => {
+    editAiTransactionRef.current = async ({ model: nextModel, visualOperations, brand }) => {
+      const beforeModel = modelRef.current;
+      const beforeLive = liveDataRef.current;
+      const effectiveVisualOperations: EditOperation[] = brand && beforeLive
+        ? [
+            { op: 'set-editai-brand-style', headlineFont: brand.headlineFont, captionFont: brand.captionFont, accent: brand.primary, logoDataUrl: brand.logoDataUrl },
+            ...editDataOperationsForBrand(beforeLive.editData as Record<string, unknown>, brand),
+            ...visualOperations,
+          ]
+        : [...visualOperations];
+      let visual: EditAiVisualHistoryEntry | null = null;
+      let visualChanged = false;
+      if (effectiveVisualOperations.length) {
+        if (!beforeLive || !editAiPreviewOpsRef.current) return false;
+        const { applyEditOperations } = await import('./edit-data-edits');
+        const preflight = applyEditOperations(beforeLive.editData as Record<string, unknown>, effectiveVisualOperations);
+        if (!preflight.ok) return false;
+        visualChanged = preflight.changed;
+        if (visualChanged) visual = buildEditAiVisualHistoryEntry(beforeLive.editData as Record<string, unknown>, effectiveVisualOperations);
+      }
+      const visualOk = visualChanged ? await editAiPreviewOpsRef.current!(effectiveVisualOperations) : true;
+      if (!visualOk) return false;
+      const modelChanged = Boolean(nextModel && beforeModel && !modelsEqual(beforeModel, nextModel));
+      if (modelChanged && nextModel) onTimelineModelChange(nextModel, true);
+      if (!modelChanged && !visual) return false;
+      editAiBatchHistoryRef.current.push({ beforeModel: modelChanged ? beforeModel : null, afterModel: modelChanged ? nextModel : null, visual });
+      editAiBatchFutureRef.current = [];
+      modelFutureRef.current = [];
+      redoActionOrderRef.current = [];
+      actionOrderRef.current.push('editai-batch');
+      return true;
+    };
+    return () => { editAiTransactionRef.current = null; };
+  }, [liveDirectory]);
+  useEffect(() => {
+    editAiPreviewOpsRef.current = async (operations) => {
+      const current = liveDataRef.current;
+      const directory = liveDirectory;
+      if (!current || !directory || operations.length === 0) return operations.length === 0;
+      try {
+        const { applyEditOperations } = await import('./edit-data-edits');
+        const optimistic = applyEditOperations(current.editData, operations);
+        if (!optimistic.ok) return false;
+        if (optimistic.changed && liveDataRef.current) {
+          setLiveData({ ...liveDataRef.current, editData: optimistic.data, renderPending: true });
+        }
+        const persisted = await window.edvidDesktop.applyPreviewEdits(directory, [...operations]);
+        if (liveDataRef.current) {
+          setLiveData({ ...liveDataRef.current, editData: persisted, renderPending: true });
+        }
+        setLiveDirty(true);
+        return true;
+      } catch {
+        void window.edvidDesktop.getLivePreview(directory).then(setLiveData).catch(() => {});
+        return false;
+      }
+    };
+    return () => { editAiPreviewOpsRef.current = null; };
+  }, [liveDirectory]);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [markIn, setMarkIn] = useState<number | null>(null);
@@ -723,7 +846,11 @@ function EditorWorkspace({
   const correctionHistoryRef = useRef<CorrectionRange[][]>([]);
   const modelHistoryRef = useRef<TimelineModel[]>([]);
   const modelFutureRef = useRef<TimelineModel[]>([]);
-  const actionOrderRef = useRef<Array<'model' | 'corrections'>>([]);
+  type EditAiBatchHistoryEntry = { beforeModel: TimelineModel | null; afterModel: TimelineModel | null; visual: EditAiVisualHistoryEntry | null };
+  const editAiBatchHistoryRef = useRef<EditAiBatchHistoryEntry[]>([]);
+  const editAiBatchFutureRef = useRef<EditAiBatchHistoryEntry[]>([]);
+  const redoActionOrderRef = useRef<Array<'model' | 'editai-batch'>>([]);
+  const actionOrderRef = useRef<Array<'model' | 'corrections' | 'editai-batch'>>([]);
   const baselineModelRef = useRef<TimelineModel | null>(null);
   const baselineKeyRef = useRef<string | null>(null);
   const modelRef = useRef<TimelineModel | null>(null);
@@ -806,12 +933,27 @@ function EditorWorkspace({
     || ((editDataAtual.captions ?? {}) as Record<string, unknown>).enabled !== false;
   const headlineEnabled = !editDataAtual
     || ((editDataAtual.hook ?? {}) as Record<string, unknown>).enabled !== false;
+  const editAiCommercialCallouts = Array.isArray(editDataAtual?.commercialCallouts)
+    ? (editDataAtual!.commercialCallouts as CommercialCallout[])
+        .filter((item) => item && typeof item.id === 'string' && Number.isFinite(Number(item.start)) && Number.isFinite(Number(item.end)))
+    : [];
+  const editAiSelectedCommercial = selectedElement?.kind === 'editai-commercial'
+    ? editAiCommercialCallouts.find((item) => item.id === selectedElement.id) ?? null
+    : null;
+  const editAiCommercialDragRef = useRef<null | {
+    id: string; mode: CommercialDragMode; base: CommercialCallout; grabOffset: number; moved: boolean;
+    beforeEditData: Record<string, unknown>;
+  }>(null);
   // Selecao presa a um elemento que sumiu deixaria o gizmo apontando para o
   // nada — e o Delete seguinte tentaria apagar de novo.
   useEffect(() => {
     if (!selectedElement) return;
     if (selectedElement.kind === 'captions' && !captionsEnabled) setSelectedElement(null);
     if (selectedElement.kind === 'headline' && !headlineEnabled) setSelectedElement(null);
+    if (selectedElement.kind === 'editai-commercial') {
+      if (!editAiCommercialCallouts.some((item) => item.id === selectedElement.id)) setSelectedElement(null);
+      return;
+    }
     if ('index' in selectedElement) {
       const lista = editDataAtual?.[selectedElement.kind];
       if (Array.isArray(lista) && !lista[selectedElement.index]) setSelectedElement(null);
@@ -1136,6 +1278,21 @@ function EditorWorkspace({
       };
   };
 
+  const editAiCommercialOperationFor = (
+    drag: NonNullable<typeof editAiCommercialDragRef.current>,
+    event: { clientX: number },
+    lane: HTMLElement | null,
+  ): EditOperation => {
+    const pointerTime = timeAtPointer(event, lane);
+    const laneWidth = lane?.getBoundingClientRect().width ?? 0;
+    const tolerance = laneWidth > 0 && effectiveDuration > 0 ? (8 / laneWidth) * effectiveDuration : 0;
+    const snapPoints = [0, currentTime, effectiveDuration, ...editAiCommercialCallouts.flatMap((item) => item.id === drag.id ? [] : [item.start, item.end])];
+    const callout = commercialCalloutAtPointer({
+      base: drag.base, mode: drag.mode, pointerTime, grabOffset: drag.grabOffset,
+      duration: effectiveDuration, fps: liveFpsRef.current || fps || 30, snapPoints, snapTolerance: tolerance,
+    });
+    return { op: 'upsert-commercial-callout', callout };
+  };
   const renderLiveChip = (chip: LiveChip, className: string) => {
     const EDGE_PX = 9;
     return (
@@ -1349,6 +1506,9 @@ function EditorWorkspace({
     correctionHistoryRef.current = [];
     modelHistoryRef.current = [];
     modelFutureRef.current = [];
+    editAiBatchHistoryRef.current = [];
+    editAiBatchFutureRef.current = [];
+    redoActionOrderRef.current = [];
     actionOrderRef.current = [];
     trimDragRef.current = null;
     mappedIndexRef.current = -1;
@@ -1619,12 +1779,14 @@ function EditorWorkspace({
       const foco = document.activeElement as HTMLElement | null;
       if (foco && (foco.tagName === 'INPUT' || foco.tagName === 'TEXTAREA' || foco.isContentEditable)) return;
       event.preventDefault();
-      const operacao: EditOperation = 'index' in selectedElement
-        ? { op: 'remove', kind: selectedElement.kind, index: selectedElement.index }
-        : {
-            op: 'disable',
-            kind: selectedElement.kind === 'headline' ? 'hook' : selectedElement.kind,
-          };
+      const operacao: EditOperation = selectedElement.kind === 'editai-commercial'
+        ? { op: 'remove-commercial-callout', id: selectedElement.id }
+        : 'index' in selectedElement
+          ? { op: 'remove', kind: selectedElement.kind, index: selectedElement.index }
+          : {
+              op: 'disable',
+              kind: selectedElement.kind === 'headline' ? 'hook' : selectedElement.kind,
+            };
       applyLiveOperation(operacao, true);
       setSelectedElement(null);
     };
@@ -1867,6 +2029,9 @@ function EditorWorkspace({
 
   function commitCorrections(next: CorrectionRange[]) {
     correctionHistoryRef.current.push(corrections);
+    modelFutureRef.current = [];
+    editAiBatchFutureRef.current = [];
+    redoActionOrderRef.current = [];
     actionOrderRef.current.push('corrections');
     onCorrectionsChange(next);
   }
@@ -1882,15 +2047,22 @@ function EditorWorkspace({
     }
     modelHistoryRef.current.push(before);
     modelFutureRef.current = [];
+    editAiBatchFutureRef.current = [];
+    redoActionOrderRef.current = [];
     actionOrderRef.current.push('model');
     onTimelineModelChange(next, true);
   }
 
+  useEffect(() => {
+    editAiCommitRef.current = (next) => commitModel(next);
+    return () => { editAiCommitRef.current = null; };
+  });
   function undoModelEdit() {
     const previous = modelHistoryRef.current.pop();
     const current = modelRef.current;
     if (!previous || !current) return;
     modelFutureRef.current.push(current);
+    redoActionOrderRef.current.push('model');
     onTimelineModelChange(previous, true);
   }
 
@@ -1903,6 +2075,37 @@ function EditorWorkspace({
     onTimelineModelChange(next, true);
   }
 
+  async function undoEditAiBatch() {
+    const entry = editAiBatchHistoryRef.current.pop();
+    if (!entry) return;
+    const visualOk = entry.visual?.undo.length
+      ? await (editAiPreviewOpsRef.current?.(entry.visual.undo) ?? Promise.resolve(false))
+      : true;
+    if (!visualOk) {
+      editAiBatchHistoryRef.current.push(entry);
+      actionOrderRef.current.push('editai-batch');
+      return;
+    }
+    if (entry.beforeModel) onTimelineModelChange(entry.beforeModel, true);
+    editAiBatchFutureRef.current.push(entry);
+    redoActionOrderRef.current.push('editai-batch');
+  }
+  async function redoEditAiBatch() {
+    const entry = editAiBatchFutureRef.current.pop();
+    if (!entry) return;
+    const visualOk = entry.visual?.redo.length
+      ? await (editAiPreviewOpsRef.current?.(entry.visual.redo) ?? Promise.resolve(false))
+      : true;
+    if (!visualOk) { editAiBatchFutureRef.current.push(entry); redoActionOrderRef.current.push('editai-batch'); return; }
+    if (entry.afterModel) onTimelineModelChange(entry.afterModel, true);
+    editAiBatchHistoryRef.current.push(entry);
+    actionOrderRef.current.push('editai-batch');
+  }
+  function redoTimelineAction() {
+    const kind = redoActionOrderRef.current.pop();
+    if (kind === 'model') { redoModelEdit(); return; }
+    if (kind === 'editai-batch') void redoEditAiBatch();
+  }
   function undoTimelineAction() {
     if (draftRange) {
       setMarkIn(draftRange.start);
@@ -1919,6 +2122,7 @@ function EditorWorkspace({
       undoModelEdit();
       return;
     }
+    if (lastAction === 'editai-batch') { void undoEditAiBatch(); return; }
     if (lastAction === 'corrections') {
       const previous = correctionHistoryRef.current.pop();
       if (previous) onCorrectionsChange(previous);
@@ -2153,7 +2357,7 @@ function EditorWorkspace({
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === 'z' && !event.altKey) {
         event.preventDefault();
-        if (event.shiftKey) redoModelEdit();
+        if (event.shiftKey) redoTimelineAction();
         else undoTimelineAction();
         return;
       }
@@ -2457,7 +2661,7 @@ function EditorWorkspace({
                                 if (event.key === 'Escape') setFaixaIa({ aberto: null, tipo: 'imagem', texto: '', gerando: false, sugerindo: false, erro: null });
                               }}
                             />
-                            {/* O prompt vai para o modelo COMO ESTÁ — o Edvid
+                            {/* O prompt vai para o modelo COMO ESTÁ — o EDIT AI
                                 não traduz, e o pedido já proíbe texto na cena
                                 por conta própria. */}
                             <small className="pick-media-hint"><i className="hint-i">i</i>Prompts em inglês geram melhores resultados</small>
@@ -2914,6 +3118,19 @@ function EditorWorkspace({
           )}
         </div>
       </section>
+      {liveActive && editAiSelectedCommercial && (
+        <CommercialInspector
+          item={editAiSelectedCommercial}
+          brandAccent={editAiActiveBrand.primary || style.accent || '#ff5200'}
+          brand={editAiActiveBrand}
+          duration={effectiveDuration}
+          onCommit={(next) => applyLiveOperation({ op: 'upsert-commercial-callout', callout: next }, true)}
+          onDelete={() => {
+            applyLiveOperation({ op: 'remove-commercial-callout', id: editAiSelectedCommercial.id }, true);
+            setSelectedElement(null);
+          }}
+        />
+      )}
 
       <section className="timeline-section">
         <div className="timeline-toolbar slim">
@@ -2933,8 +3150,8 @@ function EditorWorkspace({
             <button
               type="button"
               className="history-button"
-              onClick={redoModelEdit}
-              disabled={modelFutureRef.current.length === 0}
+              onClick={redoTimelineAction}
+              disabled={redoActionOrderRef.current.length === 0}
               title="Refazer (⇧⌘Z)"
             >
               <Icon name="redo" />
@@ -2992,6 +3209,63 @@ function EditorWorkspace({
                   'headline-chip',
                   { width: overlays?.hookEnd && effectiveDuration > 0 ? `${Math.min(100, (overlays.hookEnd / effectiveDuration) * 100)}%` : '31%' },
                 )}
+              </TimelineTrack>
+            )}
+            {phase === 2 && editAiCommercialCallouts.length > 0 && (
+              <TimelineTrack icon="text" label="Oferta" tone="orange">
+                {editAiCommercialCallouts.map((item) => {
+                  const left = effectiveDuration > 0 ? Math.max(0, Math.min(100, (item.start / effectiveDuration) * 100)) : 0;
+                  const width = effectiveDuration > 0 ? Math.max(0.8, Math.min(100 - left, ((item.end - item.start) / effectiveDuration) * 100)) : 10;
+                  const label = item.kind === 'price' ? 'Preço' : item.kind === 'cta' ? 'CTA' : 'Benefício';
+                  return (
+                    <div
+                      key={item.id}
+                      className={`timeline-chip headline-chip editable editai-commercial-chip${selectedElement?.kind === 'editai-commercial' && selectedElement.id === item.id ? ' selected' : ''}`}
+                      style={{ left: `${left}%`, width: `${width}%` }}
+                      title={`${label}: ${item.text} · ${formatTime(item.start)}–${formatTime(item.end)} · arraste para mover; bordas ajustam a duração`}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0 || !liveDataRef.current) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const target = event.currentTarget;
+                        const rect = target.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const edgePx = 9;
+                        const mode: CommercialDragMode = x <= edgePx ? 'start' : x >= rect.width - edgePx ? 'end' : 'move';
+                        editAiCommercialDragRef.current = {
+                          id: item.id, mode, base: { ...item },
+                          grabOffset: timeAtPointer(event, target.parentElement) - item.start, moved: false,
+                          beforeEditData: liveDataRef.current.editData as Record<string, unknown>,
+                        };
+                        setSelectedElement({ kind: 'editai-commercial', id: item.id });
+                        target.setPointerCapture(event.pointerId);
+                      }}
+                      onPointerMove={(event) => {
+                        const drag = editAiCommercialDragRef.current;
+                        if (!drag || drag.id !== item.id) return;
+                        drag.moved = true;
+                        applyLiveOperation(editAiCommercialOperationFor(drag, event, event.currentTarget.parentElement), false);
+                      }}
+                      onPointerUp={(event) => {
+                        const drag = editAiCommercialDragRef.current;
+                        editAiCommercialDragRef.current = null;
+                        if (!drag || drag.id !== item.id || !drag.moved) return;
+                        applyLiveOperation(
+                          editAiCommercialOperationFor(drag, event, event.currentTarget.parentElement),
+                          true,
+                          drag.beforeEditData,
+                        );
+                      }}
+                      onPointerCancel={() => {
+                        const drag = editAiCommercialDragRef.current;
+                        editAiCommercialDragRef.current = null;
+                        if (drag?.id === item.id) applyLiveOperation({ op: 'upsert-commercial-callout', callout: drag.base }, false);
+                      }}
+                    >
+                      <span>{label} · {item.text}</span>
+                    </div>
+                  );
+                })}
               </TimelineTrack>
             )}
             {(liveChips ? liveChips.animations.length > 0 : Boolean(overlays && overlays.animations.length > 0)) && (
@@ -3265,7 +3539,7 @@ function StyleWorkspace({
           </div>
           {/* O TEXTO da headline. Era a única parte criativa desta aba que
               dependia do agente, e ele já mandou o texto de exemplo do
-              template para um vídeo real. Vazio, o Edvid usa a frase de
+              template para um vídeo real. Vazio, o EDIT AI usa a frase de
               abertura da fala — nunca fica sem nada. */}
           {style.headline !== 'none' && (
             <label className="style-note">
@@ -3367,22 +3641,22 @@ function MemberGate({
   return (
     <div className="member-gate">
       <section className="member-card">
-        <img className="member-logo" src={edvidLogo} alt="Edvid" />
+        <img className="member-logo" src={edvidLogo} alt="EDIT AI" />
         {auth.status === 'no-access' ? (
           <>
             <h1>Sua matrícula não está ativa</h1>
             <p>
-              O Edvid é liberado para alunos com o <strong>IA Edit Pro</strong> ativo na Creator
+              O EDIT AI é liberado para alunos com o <strong>EDIT AI</strong> ativo na Creator
               Factory. A conta {auth.email ? <strong>{auth.email}</strong> : 'informada'} não tem essa
               matrícula no momento — se você acabou de comprar ou renovou, feche e reabra o aplicativo.
             </p>
-            <p className="member-hint">Dúvidas? Fale com o suporte da Creator Factory.</p>
+            <p className="member-hint">Dúvidas? Fale com o suporte da EDIT AI.</p>
             <button type="button" className="btn ghost" onClick={() => void onLogout()}>Entrar com outra conta</button>
           </>
         ) : (
           <>
             <h1>Entre com sua conta de aluno</h1>
-            <p>Use o mesmo e-mail e senha da área de membros da Creator Factory.</p>
+            <p>Use o mesmo e-mail e senha da área de membros da EDIT AI.</p>
             <form onSubmit={submit}>
               <label>
                 <span>E-mail</span>
@@ -3402,7 +3676,7 @@ function MemberGate({
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete="current-password"
-                  placeholder="Sua senha da Creator Factory"
+                  placeholder="Sua senha da EDIT AI"
                   disabled={busy}
                 />
               </label>
@@ -3429,6 +3703,19 @@ export function App() {
   const [answeringApprovalId, setAnsweringApprovalId] = useState<string | number | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [composer, setComposer] = useState('');
+  const [editAiPreset, setEditAiPreset] = useState<EditAiPresetId>('tiktok_shop');
+  const [editAiReview, setEditAiReview] = useState<EditAiReviewState | null>(null);
+  const [editAiTikTokVariants, setEditAiTikTokVariants] = useState<TikTokShopVariantSet | null>(null);
+  const [editAiVariantId, setEditAiVariantId] = useState<TikTokShopVariantId>('A');
+  const [editAiAnalyzing, setEditAiAnalyzing] = useState(false);
+  const [editAiApplying, setEditAiApplying] = useState(false);
+  const editAiCommitModelRef = useRef<((model: TimelineModel) => void) | null>(null);
+  const editAiPreviewOpsRef = useRef<((operations: readonly EditOperation[]) => Promise<boolean>) | null>(null);
+  const editAiTransactionRef = useRef<((input: { model: TimelineModel | null; visualOperations: readonly EditOperation[]; brand?: EditAiBrandKit }) => Promise<boolean>) | null>(null);
+  const editAiRuntimeRef = useRef<{ preset: EditAiPresetId; analyzing: boolean }>({ preset: 'tiktok_shop', analyzing: false });
+  useEffect(() => {
+    editAiRuntimeRef.current = { preset: editAiPreset, analyzing: editAiAnalyzing };
+  }, [editAiPreset, editAiAnalyzing]);
   const [checking, setChecking] = useState(true);
   const [sending, setSending] = useState(false);
   const [cleanCut, setCleanCut] = useState<CleanCutState>({ status: 'idle' });
@@ -3441,6 +3728,12 @@ export function App() {
   const [railPinned, setRailPinned] = useState(() => localStorage.getItem('edvid:rail-pinned') === 'true');
   const [workTab, setWorkTab] = useState<WorkTab>('edit');
   const [style, setStyle] = useState<StyleSetup>(defaultStyleSetup);
+  const [editAiBrands, setEditAiBrands] = useState<EditAiBrandKit[]>(() => readBrandKits(localStorage));
+  const [editAiActiveBrandId, setEditAiActiveBrandId] = useState(() => {
+    const kits = readBrandKits(localStorage);
+    return readProjectBrandId(localStorage, null, kits);
+  });
+  const editAiActiveBrand = activeBrandKit(editAiBrands, editAiActiveBrandId);
   const [styleApplied, setStyleApplied] = useState(false);
   const [corrections, setCorrections] = useState<CorrectionRange[]>([]);
   const [handledCutApprovalId, setHandledCutApprovalId] = useState<string | null>(null);
@@ -3878,7 +4171,7 @@ export function App() {
     }
   }
 
-  // O QUE O EDVID ESTÁ FAZENDO AGORA, em uma frase.
+  // O QUE O EDIT AI ESTÁ FAZENDO AGORA, em uma frase.
   //
   // Uma fonte só para todos os processos: chat, corte, render, imagem. O
   // rodapé antes só olhava o turno do chat e dizia "Pronto" com o aplicativo
@@ -3920,7 +4213,7 @@ export function App() {
   ]);
 
   // O corte limpo NAO passa pelo chat: quem transcreve, mede o silencio e
-  // corta e o proprio Edvid. Antes isso era um pedido ao agente, e com IA
+  // corta e o proprio EDIT AI. Antes isso era um pedido ao agente, e com IA
   // gratuita ele respondia com um tutorial em vez de trabalhar.
   async function startCleanCut() {
     const directory = activeProjectDirectoryRef.current;
@@ -3939,7 +4232,7 @@ export function App() {
     }
   }
 
-  // O corte terminou: a mensagem entra no chat como se o Edvid tivesse falado
+  // O corte terminou: a mensagem entra no chat como se o EDIT AI tivesse falado
   // (e o gate de aprovacao aparece por ela), e o workspace recarrega para a
   // timeline e o preview mostrarem o corte novo.
   function handleCleanCutState(state: CleanCutState) {
@@ -4019,7 +4312,7 @@ export function App() {
           // O app já colocou o arquivo em public/ e ligou o soundtrack: o
           // agente só precisa seguir. Pedir cópia falhou em uso real.
           void dispatchMessage(
-            'A trilha sonora já está aplicada na edição pelo Edvid. Não copie arquivos nem mexa no soundtrack: apenas siga com o restante da edição e encerre o turno.',
+            'A trilha sonora já está aplicada na edição pelo EDIT AI. Não copie arquivos nem mexa no soundtrack: apenas siga com o restante da edição e encerre o turno.',
             'Trilha pronta',
           );
         }
@@ -4280,6 +4573,7 @@ export function App() {
       return;
     }
     if (event.type === 'assistant-delta') {
+      if (editAiRuntimeRef.current.analyzing) return;
       const id = `assistant:${event.turnId}`;
       setMessages((current) => {
         const existing = current.findIndex((message) => message.id === id);
@@ -4290,9 +4584,19 @@ export function App() {
     }
     if (event.type === 'assistant-final') {
       const id = `assistant:${event.turnId}`;
+      const review = reviewStateFromAiText(event.text, editAiRuntimeRef.current.preset);
+      if (review) {
+        setEditAiReview((current) => mergeAiReviewWithLocal(current, review));
+        setEditAiTikTokVariants(null);
+        editAiRuntimeRef.current.analyzing = false;
+        setEditAiAnalyzing(false);
+      }
+      const displayText = review
+        ? 'Revisão criativa pronta. Confira as sugestões no card EDIT AI antes de aplicar.'
+        : event.text;
       setMessages((current) => {
         const existing = current.some((message) => message.id === id);
-        return existing ? current.map((message) => message.id === id ? { ...message, text: event.text } : message) : [...current, { id, role: 'assistant', text: event.text }];
+        return existing ? current.map((message) => message.id === id ? { ...message, text: displayText } : message) : [...current, { id, role: 'assistant', text: displayText }];
       });
       if (/(escolh|selecion).{0,60}(estilo|headline|legenda)|estilo.{0,60}(headline|legenda)/isu.test(event.text)) {
         setWorkTab('styles');
@@ -4305,6 +4609,10 @@ export function App() {
       } else {
         setActiveTurn(null);
         setSending(false);
+        if (editAiRuntimeRef.current.analyzing) {
+          editAiRuntimeRef.current.analyzing = false;
+          setEditAiAnalyzing(false);
+        }
         // Limite de uso: o erro cru do provedor (em inglês) nunca chega ao
         // aluno. Com outro chat conectado, troca o preferencial sozinha e
         // avisa — mas nunca reenvia a mensagem, para não executar uma edição
@@ -4388,13 +4696,59 @@ export function App() {
     const text = composer.trim();
     if (!text) return;
     setComposer('');
+    if (text.startsWith('/plano ')) {
+      try {
+        const rawPlan = JSON.parse(text.slice('/plano '.length));
+        const plan = parseAiEditPlan(rawPlan, editAiPreset);
+        setEditAiReview({ id: `debug:${Date.now()}`, plan, report: null, selection: defaultReviewSelection(plan), source: 'ai' });
+      } catch (error) {
+        setMessages((current) => [...current, { id: `error:${Date.now()}`, role: 'system', text: `Plano EDIT AI inválido: ${errorMessage(error)}` }]);
+      }
+      return;
+    }
     await dispatchMessage(text);
+  }
+
+  useEffect(() => {
+    setEditAiActiveBrandId(readProjectBrandId(localStorage, projectDirectory, editAiBrands));
+  }, [projectDirectory]);
+
+  function selectEditAiBrand(id: string) {
+    const active = writeProjectBrandId(localStorage, projectDirectory, editAiBrands, id);
+    setEditAiActiveBrandId(active);
+  }
+
+  function saveEditAiBrand(brand: EditAiBrandKit) {
+    const next = upsertBrandKit(localStorage, editAiBrands, brand);
+    setEditAiBrands(next);
+    const active = writeProjectBrandId(localStorage, projectDirectory, next, brand.id);
+    setEditAiActiveBrandId(active);
+  }
+
+  function deleteEditAiBrand(id: string) {
+    const next = removeBrandKit(localStorage, editAiBrands, id);
+    setEditAiBrands(next);
+    const active = activeBrandKit(next, editAiActiveBrandId).id;
+    setEditAiActiveBrandId(writeProjectBrandId(localStorage, projectDirectory, next, active));
+  }
+
+  async function applyEditAiBrand(brand: EditAiBrandKit) {
+    saveEditAiBrand(brand);
+    const patch = stylePatchForBrand(brand);
+    setStyle((current) => ({
+      ...current, accent: patch.accent, headline: patch.headline, captions: patch.captions,
+      elements: { ...current.elements, ...patch.elements },
+    }));
+    setStyleApplied(false);
+    if (editAiTransactionRef.current) {
+      await editAiTransactionRef.current({ model: null, visualOperations: [], brand });
+    }
   }
 
   async function applyStyleSelection() {
     if (!projectDirectory) return;
     // A origem da mídia que a interface MOSTRA é a que vale — ver
-    // splitMediaEfetivo. Aplicar o valor guardado faria o Edvid planejar
+    // splitMediaEfetivo. Aplicar o valor guardado faria o EDIT AI planejar
     // "Imagens por IA" enquanto o seletor oferecia só "Nenhum".
     const escolhas: StyleSetup = { ...style, splitMedia: splitMediaEfetivo };
     // A Fase 2 renderiza no Remotion. O aplicativo prepara o motor e monta o
@@ -4411,7 +4765,7 @@ export function App() {
       }]);
       return;
     }
-    // O EDVID MONTA A FASE 2 INTEIRA: copia o corte aprovado, mede o arquivo,
+    // O EDIT AI MONTA A FASE 2 INTEIRA: copia o corte aprovado, mede o arquivo,
     // gera legenda e segmentos e escreve os dados da edição a partir deste
     // formulário. Isto era um pedido ao agente, e o que voltava era um corte
     // de 91s declarado como 30s, legendas vazias, a headline de exemplo do
@@ -4451,11 +4805,11 @@ export function App() {
       `- Elementos incluídos: ${enabled}`,
       `- Elementos fora: ${disabled}`,
       `- Observação: ${escolhas.note.trim() || 'nenhuma'}`,
-      // Trilha com IA: o Edvid gera fora do sandbox, como as imagens.
+      // Trilha com IA: o EDIT AI gera fora do sandbox, como as imagens.
       ...(escolhas.elements.musicAI
         ? [
             '',
-            'Trilha sonora: o Edvid já pediu a música, já gerou e já ligou na edição. Não escreva pedidos.json, não copie arquivo e não mexa no campo soundtrack.',
+            'Trilha sonora: o EDIT AI já pediu a música, já gerou e já ligou na edição. Não escreva pedidos.json, não copie arquivo e não mexa no campo soundtrack.',
           ]
         : []),
       // Tela dividida sem conteúdo definido fazia o agente improvisar (já
@@ -4465,7 +4819,7 @@ export function App() {
       ...((escolhas.edit === 'split' || escolhas.edit === 'split2') && plano.splits > 0
         ? [
             '',
-            // AS JANELAS JÁ EXISTEM. O Edvid as escreve a partir da própria
+            // AS JANELAS JÁ EXISTEM. O EDIT AI as escreve a partir da própria
             // fala (src/edit-plan.ts), em fronteira de frase e com respiro
             // entre uma e outra. Antes quem as inventava era o agente — e sem
             // agente conectado elas simplesmente não existiam. O que sobrou
@@ -4481,14 +4835,14 @@ export function App() {
           ]
         : []),
       '',
-      'O EDVID JÁ APLICOU TUDO ISSO. O corte já está em edit/remotion/public/cut.mp4, as legendas, os segmentos e o edit-data.json já foram escritos com as escolhas acima, com as medidas reais do arquivo. NÃO reescreva esses campos e NÃO monte o esqueleto de novo — sobrescrever apaga o que já está certo.',
+      'O EDIT AI JÁ APLICOU TUDO ISSO. O corte já está em edit/remotion/public/cut.mp4, as legendas, os segmentos e o edit-data.json já foram escritos com as escolhas acima, com as medidas reais do arquivo. NÃO reescreva esses campos e NÃO monte o esqueleto de novo — sobrescrever apaga o que já está certo.',
       'Sua parte é só o que ficou de fora: o conteúdo visual pedido acima (tela dividida, inserts, animações) e a observação do aluno. Some ao edit-data.json existente, sem apagar o que já está lá.',
-      'Não execute remotion render: quando terminar, encerre o turno com um resumo curto — o Edvid renderiza sozinho.',
+      'Não execute remotion render: quando terminar, encerre o turno com um resumo curto — o EDIT AI renderiza sozinho.',
     ].join('\n');
     setWorkTab('edit');
     // O agente só entra quando SOBRA algo criativo: tela dividida (que precisa
     // de imagens ilustrando a fala) ou um pedido escrito na observação. O
-    // resto — legenda, zoom, cor, trilha, medidas — o Edvid já escreveu, e
+    // resto — legenda, zoom, cor, trilha, medidas — o EDIT AI já escreveu, e
     // pedir de novo era o que fazia o agente sobrescrever tudo com um
     // esqueleto vazio.
     const precisaDoAgente = escolhas.edit !== 'limpa' || escolhas.note.trim().length > 0;
@@ -4597,8 +4951,145 @@ export function App() {
 
   // Recortar segundo uma lista de intervalos é exatamente o que o corte limpo
   // faz — a única diferença é de onde vem a lista. Isto era um pedido ao
-  // agente, que escrevia o EDL, dizia que o Edvid renderizaria e nada
+  // agente, que escrevia o EDL, dizia que o EDIT AI renderizaria e nada
   // acontecia; e o J-Cut seguinte colava o áudio novo no vídeo antigo.
+  async function analyzeCurrentCutWithEditAi() {
+    const directory = activeProjectDirectoryRef.current;
+    if (!directory || editAiAnalyzing) return;
+    setEditAiAnalyzing(true);
+    try {
+      const context = await window.edvidDesktop.getEditAiAnalysisContext(directory);
+      if (!context.ranges.length || !context.transcripts.length) {
+        setMessages((current) => [...current, {
+          id: `system:editai-analysis:${Date.now()}`,
+          role: 'system',
+          text: 'Faça o corte limpo primeiro. O score do EDIT AI usa a transcrição WhisperX e o EDL reais do projeto.',
+        }]);
+        return;
+      }
+      const activeModel = workspace?.timelineModel ?? null;
+      const timelineRanges = activeModel
+        ? edlRangesFromModel(activeModel).map((range) => ({ source: range.sourceId, start: range.start, end: range.end, label: range.label }))
+        : [];
+      const analysis = analyzeEditAiContext(
+        { ...context, ranges: timelineRanges.length ? timelineRanges : context.ranges },
+        editAiPreset,
+      );
+      if (editAiPreset === 'tiktok_shop') {
+        const variants = buildTikTokShopVariants(analysis);
+        setEditAiTikTokVariants(variants);
+        setEditAiVariantId('A');
+        setEditAiReview(reviewStateForTikTokVariant(variants.variants[0]));
+      } else {
+        setEditAiTikTokVariants(null);
+        setEditAiReview({
+          id: `local:${Date.now()}`,
+          plan: analysis.plan,
+          report: analysis.report,
+          selection: defaultReviewSelection(analysis.plan),
+          source: 'local',
+        });
+      }
+      setFollowingOutput(true);
+    } catch (error) {
+      setMessages((current) => [...current, { id: `error:editai-analysis:${Date.now()}`, role: 'system', text: errorMessage(error) }]);
+    } finally {
+      setEditAiAnalyzing(false);
+    }
+  }
+
+  function selectEditAiTikTokVariant(id: TikTokShopVariantId) {
+    if (!editAiTikTokVariants) return;
+    const variant = editAiTikTokVariants.variants.find((item) => item.id === id);
+    if (!variant) return;
+    setEditAiVariantId(id);
+    setEditAiReview(reviewStateForTikTokVariant(variant));
+  }
+
+  async function enhanceEditAiReview() {
+    if (!activeAiConnected || editAiAnalyzing) return;
+    editAiRuntimeRef.current = { preset: editAiPreset, analyzing: true };
+    setEditAiAnalyzing(true);
+    const sent = await dispatchMessage(`${buildAiReviewRequest(editAiPreset)}\n\n${brandBriefing(editAiActiveBrand)}`, 'Revisar análise com IA');
+    if (!sent) {
+      editAiRuntimeRef.current.analyzing = false;
+      setEditAiAnalyzing(false);
+    }
+  }
+
+  function toggleEditAiReviewItem(id: string) {
+    setEditAiReview((current) => current ? {
+      ...current,
+      selection: { ...current.selection, [id]: !current.selection[id] },
+    } : current);
+  }
+
+  async function applyEditAiReview() {
+    if (!editAiReview || editAiApplying) return;
+    const selectedPlan = selectedTimelinePlan(editAiReview);
+    const currentModel = workspace?.timelineModel ?? null;
+    const needsTimeline = selectedPlan.operations.length > 0 && Boolean(currentModel);
+    const hasVisualSelection = (selectedPlan.overlays?.length ?? 0) > 0;
+    if (!needsTimeline && !hasVisualSelection) return;
+    if (!editAiTransactionRef.current) {
+      setWorkTab('edit');
+      setMessages((current) => [...current, {
+        id: `system:editai-open-editor:${Date.now()}`, role: 'system',
+        text: 'Abri a aba Edição para aplicar tudo como uma única ação reversível. Clique em Aplicar alterações novamente.',
+      }]);
+      return;
+    }
+    setEditAiApplying(true);
+    try {
+      const sourceDurations = Object.fromEntries((workspace?.sources ?? []).map((source) => [source.id, source.duration]));
+      const result = needsTimeline && currentModel ? applyAiEditPlan(currentModel, selectedPlan, sourceDurations) : null;
+      const visualOperations = hasVisualSelection ? editDataOperationsForPlan({
+        ...selectedPlan,
+        operations: result?.applied ?? [],
+      }, editAiActiveBrand) : [];
+      const ok = await editAiTransactionRef.current({
+        model: result?.applied.length ? result.model : null,
+        visualOperations,
+        brand: editAiActiveBrand,
+      });
+      if (ok) {
+        setMessages((current) => [...current, {
+          id: `system:editai-applied:${Date.now()}`, role: 'system',
+          text: `EDIT AI aplicou ${result?.applied.length ?? 0} ajuste(s) de timeline e ${visualOperations.length} ajuste(s) visual(is) em uma ação reversível.`,
+        }]);
+        setEditAiReview(null);
+        setEditAiTikTokVariants(null);
+      }
+    } finally {
+      setEditAiApplying(false);
+    }
+  }
+
+  function applyEditAiPlanToTimeline(planInput: AiEditPlan | unknown) {
+    const model = workspace?.timelineModel;
+    if (!model) return null;
+    const plan = parseAiEditPlan(planInput, 'tiktok_shop');
+    const sourceDurations = Object.fromEntries((workspace?.sources ?? []).map((source) => [source.id, source.duration]));
+    const result = applyAiEditPlan(model, plan, sourceDurations);
+    if (result.applied.length > 0) {
+      if (!editAiCommitModelRef.current) {
+        setWorkTab('edit');
+        setMessages((current) => [...current, {
+          id: `system:editai-open-timeline:${Date.now()}`,
+          role: 'system',
+          text: 'Abri a aba Edição para preservar Undo/Redo. Clique em Aplicar alterações novamente.',
+        }]);
+        return null;
+      }
+      editAiCommitModelRef.current(result.model);
+      setMessages((current) => [...current, {
+        id: `system:${Date.now()}`,
+        role: 'system',
+        text: `EDIT AI aplicou ${result.applied.length} operação(ões) na timeline e removeu ${result.removedSeconds.toFixed(2)}s.`,
+      }]);
+    }
+    return result;
+  }
   async function applyTimelineEdits() {
     const directory = activeProjectDirectoryRef.current;
     const model = workspace?.timelineModel;
@@ -4825,9 +5316,9 @@ export function App() {
   // Modal do primeiro boot: o pacote de ferramentas baixando com o app
   // inteiro desfocado atrás. Aparece sobre o gate e sobre o estúdio.
   const packModal = (runtimePack.status === 'downloading' || runtimePack.status === 'extracting' || runtimePack.status === 'error') && (
-    <div className="pack-overlay" role="dialog" aria-modal="true" aria-label="Preparando o Edvid">
+    <div className="pack-overlay" role="dialog" aria-modal="true" aria-label="Preparando o EDIT AI">
       <div className="pack-modal">
-        <strong>Preparando o Edvid</strong>
+        <strong>Preparando o EDIT AI</strong>
         {runtimePack.status === 'error' ? (
           <>
             <p className="pack-error">{runtimePack.error ?? 'Não foi possível baixar as ferramentas.'}</p>
@@ -4854,17 +5345,17 @@ export function App() {
   // ABERTURA: enquanto a sessão é verificada, só o logo. O formulário de
   // login piscava aqui para quem já estava logado — a decisão de mostrar o
   // gate agora espera a primeira resposta que não seja "checking".
-  if (!memberLoaded || memberAuth.status === 'checking') {
+  if (!EDIT_AI_STANDALONE && (!memberLoaded || memberAuth.status === 'checking')) {
     return (
       <div className="app-splash">
-        <img src={edvidLogo} alt="Edvid" />
+        <img src={edvidLogo} alt="EDIT AI" />
       </div>
     );
   }
 
   // Gate do aluno: sem sessão válida, o estúdio inteiro fica atrás do login.
   // "unconfigured" (sem as chaves do Supabase) mantém o app aberto como antes.
-  if (memberAuth.status === 'signed-out' || memberAuth.status === 'no-access') {
+  if (!EDIT_AI_STANDALONE && (memberAuth.status === 'signed-out' || memberAuth.status === 'no-access')) {
     return (
       <>
         {packModal}
@@ -4873,9 +5364,9 @@ export function App() {
             type="button"
             className="btn primary small update-ready update-floating"
             onClick={() => void window.edvidDesktop.installAppUpdate()}
-            title="A nova versão já foi baixada; o Edvid reinicia atualizado."
+            title="A nova versão já foi baixada; o EDIT AI reinicia atualizado."
           >
-            {appUpdate.version ? `Atualizar para ${appUpdate.version}` : 'Atualizar o Edvid'} · Reiniciar
+            {appUpdate.version ? `Atualizar para ${appUpdate.version}` : 'Atualizar o EDIT AI'} · Reiniciar
           </button>
         )}
         <MemberGate
@@ -4900,7 +5391,7 @@ export function App() {
         <div className="rail-brand">
           <div className="rail-logo">
             <img className="rail-brand-icon" src={edvidIcon} alt="" />
-            <img className="rail-brand-wordmark" src={edvidLogo} alt="Edvid" />
+            <img className="rail-brand-wordmark" src={edvidLogo} alt="EDIT AI" />
           </div>
           <button type="button" className={`rail-pin ${railPinned ? 'active' : ''}`} onClick={toggleRailPinned} title={railPinned ? 'Recolher barra lateral' : 'Manter barra expandida'}><Icon name="pin" /></button>
         </div>
@@ -4936,8 +5427,8 @@ export function App() {
           <div className="rail-account">
             <span className="account-avatar signed-in">{(memberAuth.name ?? memberAuth.email ?? 'E').slice(0, 1).toUpperCase()}</span>
             <span className="rail-account-copy">
-              <strong>{memberAuth.name ?? memberAuth.email ?? 'Edvid'}</strong>
-              <small>{memberAuth.status === 'signed-in' ? memberAuth.email : 'Creator Factory'}</small>
+              <strong>{memberAuth.name ?? memberAuth.email ?? 'EDIT AI'}</strong>
+              <small>{memberAuth.status === 'signed-in' ? memberAuth.email : 'EDIT AI'}</small>
             </span>
             <button type="button" className="account-action gear" onClick={() => setSettingsOpen(true)} title="Configurações"><Icon name="settings" /></button>
           </div>
@@ -4984,7 +5475,7 @@ export function App() {
               disabled={updateChecking}
               title={updateChecked ?? 'Verificar atualização'}
             >
-              Edvid {appVersion ?? ''}
+              EDIT AI {appVersion ?? ''}
               <span className="topbar-version-hint">{updateChecking ? 'verificando…' : updateChecked ? '✓' : 'verificar'}</span>
             </button>
             {appUpdate.status === 'ready' && (
@@ -4992,9 +5483,9 @@ export function App() {
                 type="button"
                 className="btn primary small update-ready"
                 onClick={() => void window.edvidDesktop.installAppUpdate()}
-                title="A nova versão já foi baixada; o Edvid reinicia atualizado."
+                title="A nova versão já foi baixada; o EDIT AI reinicia atualizado."
               >
-                {appUpdate.version ? `Atualizar para ${appUpdate.version}` : 'Atualizar o Edvid'} · Reiniciar
+                {appUpdate.version ? `Atualizar para ${appUpdate.version}` : 'Atualizar o EDIT AI'} · Reiniciar
               </button>
             )}
           </div>
@@ -5003,7 +5494,7 @@ export function App() {
         <div className="studio-grid">
           <section className="chat-panel">
             <div className="chat-head">
-              <div><span className="eyebrow">Direção da edição</span><h1>Converse com o Edvid</h1></div>
+              <div><span className="eyebrow">Direção da edição</span><h1>Converse com o EDIT AI</h1></div>
               {!canChat && <span className="work-status"><span />Configuração pendente</span>}
             </div>
             <div
@@ -5060,12 +5551,41 @@ export function App() {
                   )}
                 </div>
               )}
+              {workspace && (
+                <div className="editai-analysis-toolbar">
+                  <select value={editAiPreset} onChange={(event) => { const next = event.target.value as EditAiPresetId; setEditAiPreset(next); setEditAiTikTokVariants(null); setEditAiReview(null); }} aria-label="Preset EDIT AI">
+                    {Object.values(EDIT_AI_PRESETS).map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+                  </select>
+                  <button type="button" className="btn ghost small" onClick={() => void analyzeCurrentCutWithEditAi()} disabled={editAiAnalyzing || cleanCutRunning}>
+                    <Icon name="sparkles" /> {editAiAnalyzing ? 'Analisando…' : 'Analisar retenção'}
+                  </button>
+                </div>
+              )}
+              {editAiTikTokVariants && editAiPreset === 'tiktok_shop' && (
+                <TikTokShopVariantPanel
+                  set={editAiTikTokVariants}
+                  active={editAiVariantId}
+                  onSelect={selectEditAiTikTokVariant}
+                />
+              )}
+              {editAiReview && (
+                <EditAiReviewCard
+                  state={editAiReview}
+                  preset={editAiPreset}
+                  applying={editAiApplying}
+                  enhancing={editAiAnalyzing}
+                  onToggle={toggleEditAiReviewItem}
+                  onApply={applyEditAiReview}
+                  onDiscard={() => { setEditAiReview(null); setEditAiTikTokVariants(null); }}
+                  onEnhance={activeAiConnected ? () => void enhanceEditAiReview() : undefined}
+                />
+              )}
               {messages.map((message) => {
                 const visibleText = message.role === 'assistant' ? cleanAssistantText(message.text) : message.text;
                 const showsCutApproval = message.id === pendingCutApprovalId;
                 return (
                   <article className={`chat-message ${message.role}`} key={message.id}>
-                    <span className="chat-role">{message.role === 'user' ? 'Você' : message.role === 'assistant' ? 'Edvid' : 'Sistema'}</span>
+                    <span className="chat-role">{message.role === 'user' ? 'Você' : message.role === 'assistant' ? 'EDIT AI' : 'Sistema'}</span>
                     <p>{visibleText || '...'}</p>
                     {showsCutApproval && (
                       <div className="clean-cut-gate">
@@ -5095,7 +5615,7 @@ export function App() {
                   que ele está escrevendo. */}
               {activeTurn && !messages.some((message) => message.id === `assistant:${activeTurn.turnId}`) && (
                 <article className="chat-message assistant pending">
-                  <span className="chat-role">Edvid</span>
+                  <span className="chat-role">EDIT AI</span>
                   <p className="chat-typing"><span /><span /><span /></p>
                 </article>
               )}
@@ -5125,7 +5645,7 @@ export function App() {
                 </div>
               )}
               {/* UM indicador para TUDO. Antes ele só enxergava o turno do
-                  chat e dizia "Pronto" enquanto o Edvid renderizava — o aluno
+                  chat e dizia "Pronto" enquanto o EDIT AI renderizava — o aluno
                   via o aplicativo trabalhando e o rodapé afirmando o
                   contrário. Agora o rótulo diz o que está acontecendo, e
                   "Pronto" só aparece quando nada está. */}
@@ -5357,6 +5877,10 @@ export function App() {
                   onApplyCorrections={applyTimelineCorrections}
                   applyingCorrections={sending}
                   onTimelineModelChange={handleTimelineModelChange}
+                  editAiCommitRef={editAiCommitModelRef}
+                  editAiPreviewOpsRef={editAiPreviewOpsRef}
+                  editAiTransactionRef={editAiTransactionRef}
+                  editAiActiveBrand={editAiActiveBrand}
                   onApplyTimelineEdits={applyTimelineEdits}
                   chatConnected={activeAiConnected}
                   imageAiConnected={imageAiConnected}
@@ -5389,7 +5913,7 @@ export function App() {
             </header>
 
             <p id="approval-description" className="approval-description">
-              O Edvid precisa desta autorização para continuar a tarefa. O processo ficará pausado até você decidir.
+              O EDIT AI precisa desta autorização para continuar a tarefa. O processo ficará pausado até você decidir.
             </p>
 
             <div className="approval-detail">
@@ -5443,7 +5967,7 @@ export function App() {
         <div className="modal-overlay" onClick={(event) => { if (event.target === event.currentTarget) setNameDialog(null); }}>
           <section className="name-dialog" role="dialog" aria-modal="true">
             <h2>{nameDialog.mode === 'create' ? 'Novo projeto' : 'Renomear projeto'}</h2>
-            <p>{nameDialog.mode === 'create' ? 'Dê um nome ao projeto e escolha a pasta com o vídeo.' : 'O novo nome aparece na lista e no topo do Edvid.'}</p>
+            <p>{nameDialog.mode === 'create' ? 'Dê um nome ao projeto e escolha a pasta com o vídeo.' : 'O novo nome aparece na lista e no topo do EDIT AI.'}</p>
             <input
               type="text"
               value={nameValue}
@@ -5476,6 +6000,14 @@ export function App() {
           </header>
 
           <div className="settings-page-body">
+            <BrandKitPanel
+              brands={editAiBrands}
+              activeId={editAiActiveBrandId}
+              onSelect={selectEditAiBrand}
+              onSave={saveEditAiBrand}
+              onDelete={deleteEditAiBrand}
+              onApply={(brand) => void applyEditAiBrand(brand)}
+            />
             <div className="settings-block">
               <h3>Geral</h3>
               <div className="settings-row">
@@ -5538,7 +6070,7 @@ export function App() {
 
             <div className="settings-block">
               <h3>MCPs</h3>
-              <p className="settings-note">Em breve: conexões MCP para ampliar o Edvid.</p>
+              <p className="settings-note">Em breve: conexões MCP para ampliar o EDIT AI.</p>
             </div>
           </div>
         </section>
@@ -5647,7 +6179,7 @@ export function App() {
                     )
                     : (
                       <>
-                        <p className="settings-note">Sem chave de API: o login abre no navegador e o Edvid gera com o crédito do seu plano.</p>
+                        <p className="settings-note">Sem chave de API: o login abre no navegador e o EDIT AI gera com o crédito do seu plano.</p>
                         <button
                           type="button"
                           className="account-action primary"

@@ -23,10 +23,10 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
-import {POPPINS, loadEdvidFonts} from './fonts';
+import {POPPINS, loadEditAiFonts} from './fonts';
 import {Sfx, useEditData} from './Main';
 
-loadEdvidFonts();
+loadEditAiFonts();
 const fontFamily = POPPINS;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 

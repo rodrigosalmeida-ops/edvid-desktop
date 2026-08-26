@@ -1,8 +1,8 @@
 {
-  "name": "@edvid/desktop",
-  "productName": "Edvid",
-  "version": "0.33.7",
-  "description": "Aplicativo desktop do editor de video por conversa Edvid",
+  "name": "@editai/desktop",
+  "productName": "EDIT AI",
+  "version": "1.0.0-editai.2",
+  "description": "Editor desktop de vídeo com IA para short-form, vendas e TikTok Shop",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
@@ -50,12 +50,20 @@
     "typecheck": "tsc --noEmit",
     "package": "npm run stage:node && npm run stage:uv && npm run stage:yt-dlp && npm run stage:codex && npm run build:ffmpeg && npm run build:ffmpeg:torchcodec && npm run stage:python-whisperx && npx --yes --package=node@22.23.2 -c \"electron-forge package\"",
     "make": "npm run stage:node && npm run stage:uv && npm run stage:yt-dlp && npm run stage:codex && npm run build:ffmpeg && npm run build:ffmpeg:torchcodec && npm run stage:python-whisperx && npm run prepare:forge-makers && npx --yes --package=node@22.23.2 -c \"electron-forge make\"",
-    "make:signed": "bash -c 'set -a && source ./signing.env && set +a && npm run make'",
-    "publish:update": "bash -c 'set -a && source ./signing.env && set +a && node scripts/publish-update.mjs'",
     "pack:runtimes": "node scripts/pack-runtimes.mjs",
-    "publish:runtimes": "bash -c 'set -a && source ./signing.env && set +a && node scripts/publish-runtimes.mjs'"
+    "verify:editai": "npm run typecheck && npm run test:timeline && npm run test:media && npm run test:helpers && npm run test:clean-cut && npm run test:phase2-data && npm run test:edit-data-edits && node scripts/verify-editai-release.mjs",
+    "verify:editai:release": "node scripts/verify-editai-release.mjs --release",
+    "configure:editai:release": "node scripts/configure-editai-release.mjs",
+    "publish:editai:runtimes": "node scripts/editai-publish-runtimes.mjs",
+    "publish:editai:update": "node scripts/editai-publish-update.mjs",
+    "build:editai:win:qa": "powershell -ExecutionPolicy Bypass -File scripts/editai-build-windows.ps1 -Mode qa",
+    "build:editai:win:release": "powershell -ExecutionPolicy Bypass -File scripts/editai-build-windows.ps1 -Mode release",
+    "inspect:editai:win": "powershell -ExecutionPolicy Bypass -File scripts/editai-inspect-windows-artifacts.ps1",
+    "smoke:editai:win": "powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1",
+    "smoke:editai:install": "powershell -ExecutionPolicy Bypass -File scripts/editai-install-smoke-windows.ps1",
+    "smoke:editai:media": "powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1"
   },
-  "author": "Creator Factory",
+  "author": "EDIT AI",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

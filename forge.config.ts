@@ -7,33 +7,34 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import path from 'node:path';
 
-const macSigningIdentity = process.env.EDVID_MAC_SIGN_IDENTITY?.trim();
+const macSigningIdentity = process.env.EDITAI_MAC_SIGN_IDENTITY?.trim();
 
 // Assinatura Windows via Azure Trusted Signing: o workflow do CI prepara o
 // signtool do SDK + o dlib do Trusted Signing e exporta estes dois envs; sem
 // eles o build sai sem assinatura (SmartScreen avisa, mas funciona). A
 // autenticacao vem de AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET no ambiente.
-const windowsSignToolPath = process.env.EDVID_WIN_SIGNTOOL?.trim();
-const windowsSignParams = process.env.EDVID_WIN_SIGN_PARAMS?.trim();
+const windowsSignToolPath = process.env.EDITAI_WIN_SIGNTOOL?.trim();
+const windowsSignParams = process.env.EDITAI_WIN_SIGN_PARAMS?.trim();
 const windowsSign =
   windowsSignToolPath && windowsSignParams
     ? { signToolPath: windowsSignToolPath, signWithParams: windowsSignParams }
     : undefined;
 
 // Notarizacao so entra quando as tres credenciais estiverem no ambiente:
-// EDVID_APPLE_ID (e-mail da conta), EDVID_APPLE_APP_PASSWORD (senha de app
-// gerada em appleid.apple.com) e EDVID_APPLE_TEAM_ID. Sem elas o build segue
+// EDITAI_APPLE_ID (e-mail da conta), EDITAI_APPLE_APP_PASSWORD (senha de app
+// gerada em appleid.apple.com) e EDITAI_APPLE_TEAM_ID. Sem elas o build segue
 // local (ad-hoc), como sempre.
-const appleId = process.env.EDVID_APPLE_ID?.trim();
-const appleAppPassword = process.env.EDVID_APPLE_APP_PASSWORD?.trim();
-const appleTeamId = process.env.EDVID_APPLE_TEAM_ID?.trim();
+const appleId = process.env.EDITAI_APPLE_ID?.trim();
+const appleAppPassword = process.env.EDITAI_APPLE_APP_PASSWORD?.trim();
+const appleTeamId = process.env.EDITAI_APPLE_TEAM_ID?.trim();
 const canNotarize = Boolean(macSigningIdentity && appleId && appleAppPassword && appleTeamId);
 
+const bundleEditAiRuntimes = process.env.EDITAI_BUNDLE_RUNTIMES === '1';
 const config: ForgeConfig = {
   packagerConfig: {
-    appBundleId: 'com.creatorfactory.edvid',
+    appBundleId: 'com.editai.desktop',
     appCategoryType: 'public.app-category.video',
-    icon: path.resolve('src/brand/edvid-icon'),
+    icon: path.resolve('src/brand/editai-icon'),
     asar: true,
     // Instalador magro: as ferramentas (resources/runtimes, 1,8 GB) NAO vao
     // no pacote — o aplicativo baixa o runtime pack sob demanda no primeiro
@@ -42,6 +43,7 @@ const config: ForgeConfig = {
       'resources/runtime-manifest.json',
       'resources/remotion-template',
       'resources/helpers',
+      ...(bundleEditAiRuntimes ? ['resources/runtimes'] : []),
     ],
     osxSign:
       process.platform === 'darwin'
@@ -70,16 +72,16 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
-      name: 'edvid',
-      setupIcon: path.resolve('src/brand/edvid-icon.ico'),
+      name: 'EditAI',
+      setupIcon: path.resolve('src/brand/editai-icon.ico'),
       // electron-winstaller 5.4+ assina Update.exe/Setup.exe com o mesmo
       // windowsSign do packager (que ja assinou o Edvid.exe do app).
       ...(windowsSign ? { windowsSign } : {}),
     }),
     new MakerDMG(
       {
-        background: path.resolve('src/brand/dmg-background.png'),
-        icon: path.resolve('src/brand/edvid-icon.icns'),
+        background: path.resolve('src/brand/dmg-background-editai.png'),
+        icon: path.resolve('src/brand/editai-icon.icns'),
         iconSize: 104,
         contents: (options) => [
           {

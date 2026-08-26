@@ -12,7 +12,7 @@ if (!window.edvidDesktop && import.meta.env.DEV) {
 const root = document.getElementById('root');
 
 if (!root) {
-  throw new Error('Elemento raiz do Edvid nao foi encontrado.');
+  throw new Error('Elemento raiz do EDIT AI nao foi encontrado.');
 }
 
 createRoot(root).render(

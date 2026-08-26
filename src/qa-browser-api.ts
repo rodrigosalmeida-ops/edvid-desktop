@@ -277,10 +277,21 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     removeRecentProject: async () => [],
     openProjectFolder: async () => {},
     refreshProjectWorkspace: async () => qaWorkspace,
+    getEditAiAnalysisContext: async () => ({
+      transcripts: [{
+        source: 'IMG_0001.MOV',
+        segments: [
+          { text: 'Seu vídeo perde vendas nos primeiros segundos', start: 0, end: 3.2 },
+          { text: 'porque a oferta demora para aparecer', start: 3.2, end: 7.3 },
+          { text: 'mostre o benefício e faça o CTA agora', start: 7.3, end: 10.7 },
+        ],
+      }],
+      ranges: [{ source: 'IMG_0001.MOV', start: 0, end: 10.7, label: 'Corte QA' }],
+    }),
     getCodexAccount: async () => (qaChatGptConnected
       ? {
           status: 'signed-in',
-          account: { type: 'chatgpt', email: 'qa@edvid.local', planType: 'qa' },
+          account: { type: 'chatgpt', email: 'qa@editai.local', planType: 'qa' },
           requiresOpenaiAuth: false,
         }
       : { status: 'signed-out', account: null, requiresOpenaiAuth: true }),
@@ -288,7 +299,7 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       qaChatGptConnected = true;
       return {
         status: 'signed-in',
-        account: { type: 'chatgpt', email: 'qa@edvid.local', planType: 'qa' },
+        account: { type: 'chatgpt', email: 'qa@editai.local', planType: 'qa' },
         requiresOpenaiAuth: false,
       };
     },

@@ -23,13 +23,13 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
-import {LORA, loadEdvidFonts} from './fonts';
+import {LORA, loadEditAiFonts} from './fonts';
 import {measureText} from '@remotion/layout-utils';
 import {useMemo} from 'react';
 import {useProjectData} from './data';
 import {activeSplitAt, useEditData} from './Main';
 
-loadEdvidFonts();
+loadEditAiFonts();
 const fontFamily = LORA;
 
 type Word = {text: string; startMs: number; endMs: number};

@@ -26,7 +26,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import {useMemo} from 'react';
-import {POPPINS, loadEdvidFonts} from './fonts';
+import {POPPINS, loadEditAiFonts} from './fonts';
 import {measureText} from '@remotion/layout-utils';
 import {type GraphicLayer, useProjectData} from './data';
 import {CustomGraphics} from './CustomGraphics';
@@ -34,7 +34,7 @@ import {StackedCaptions} from './StackedCaptions';
 import {ScatterCaptions} from './ScatterCaptions';
 import {SimpleCaptions, SIMPLE_VARIANTS} from './SimpleCaptions';
 
-loadEdvidFonts();
+loadEditAiFonts();
 const fontFamily = POPPINS;
 
 // ============ TYPES + DATA ====================================================
@@ -120,6 +120,8 @@ export type EditData = {
     // exactly two balanced lines and the size fitted to them (see twoLines /
     // fitHeadline). Anything in `lines` is joined back into one string first.
     text?: string;
+    // EDIT AI V0.8: fonte local do Brand Kit. Ausente mantém Poppins.
+    fontFamily?: string;
     // "outline" (default): white text + thick black stroke, no card — the
     //   MrBeast/TikTok headline.
     // "card": Poppins Black on a dark rounded card, UPPERCASE, optional logo row.
@@ -144,6 +146,8 @@ export type EditData = {
     startSec?: number;
     endSec?: number;
     fontSize: number;
+    // Brand Kit aplica esta fonte ao modo karaoke; presets artísticos mantêm tipografia própria.
+    fontFamily?: string;
     maxWords: number;
     safeWidth: number;
     paddingBottom: number;
@@ -180,6 +184,12 @@ export type EditData = {
     kind?: 'flash' | 'timeline' | 'script' | 'shapes' | 'custom';
     lines?: string[];
     intensity?: number;
+  }[];
+  // Elementos comerciais do EDIT AI. Opcional para manter projetos antigos 100% compatíveis.
+  commercialCallouts?: {
+    id: string; kind: 'cta' | 'price' | 'benefit'; start: number; end: number; text: string;
+    accent?: string; style?: 'solid' | 'pill' | 'banner'; position?: 'top' | 'center' | 'bottom';
+    fontFamily?: string;
   }[];
   soundtrack: {enabled: boolean; file: string; volume: number};
 };
@@ -540,6 +550,7 @@ const Karaoke: React.FC = () => {
   const D = useEditData();
   const {captions} = useProjectData();
   const C = D.captions;
+  const captionFontFamily = C.fontFamily ?? fontFamily;
   // Quebra em linhas memoizada: roda por quadro no Player e o measureText das
   // larguras nao e de graca.
   const LINES = useMemo(() => buildLines(captions as Caption[], C.maxWords), [captions, C.maxWords]);
@@ -553,7 +564,7 @@ const Karaoke: React.FC = () => {
         const lineText = line.map((w) => cleanW(w.text)).join(' ');
         const {width} = measureText({
           text: lineText,
-          fontFamily,
+          fontFamily: captionFontFamily,
           fontSize: C.fontSize,
           fontWeight: 900,
           letterSpacing: '-1px',
@@ -565,7 +576,7 @@ const Karaoke: React.FC = () => {
             <CaptionShell fromFrame={from}>
               <div
                 style={{
-                  fontFamily,
+                  fontFamily: captionFontFamily,
                   fontWeight: 900,
                   fontSize: C.fontSize,
                   color: 'white',
@@ -778,15 +789,15 @@ const HL_STYLES: Record<string, HlStyle> = {
   misto: {weights: [400, 900], cap: 55, safeW: 900, lh: 0.98, top: 300},
 };
 
-const hlWidth = (text: string, size: number, weight: number) =>
+const hlWidth = (text: string, size: number, weight: number, family = fontFamily) =>
   text
-    ? measureText({text, fontFamily, fontSize: size, fontWeight: weight, letterSpacing: '-1px'}).width
+    ? measureText({text, fontFamily: family, fontSize: size, fontWeight: weight, letterSpacing: '-1px'}).width
     : 0;
 
 // Balance by MEASURED width, not word count: "É assim que vai" and "ficar a sua
 // headline" are 4 words and 3 words but nearly the same width — counting words
 // would break it in the wrong place.
-function twoLines(text: string, weights: [number, number]): [string, string] {
+function twoLines(text: string, weights: [number, number], family = fontFamily): [string, string] {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length < 2) return [words[0] ?? '', ''];
   let best: [string, string] = [words[0], words.slice(1).join(' ')];
@@ -794,7 +805,7 @@ function twoLines(text: string, weights: [number, number]): [string, string] {
   for (let i = 1; i < words.length; i++) {
     const a = words.slice(0, i).join(' ');
     const b = words.slice(i).join(' ');
-    const d = Math.abs(hlWidth(a, 100, weights[0]) - hlWidth(b, 100, weights[1]));
+    const d = Math.abs(hlWidth(a, 100, weights[0], family) - hlWidth(b, 100, weights[1], family));
     if (d < bestDiff) {
       bestDiff = d;
       best = [a, b];
@@ -806,9 +817,9 @@ function twoLines(text: string, weights: [number, number]): [string, string] {
 // Width scales with size, but letterSpacing (-1px per gap) does NOT — so the
 // first estimate is off by a few px on long lines. One refinement pass at the
 // estimated size fixes that; iterating further buys nothing.
-function fitHeadline(lines: [string, string], s: HlStyle): number {
+function fitHeadline(lines: [string, string], s: HlStyle, family = fontFamily): number {
   const widest = (size: number) =>
-    Math.max(hlWidth(lines[0], size, s.weights[0]), hlWidth(lines[1], size, s.weights[1]));
+    Math.max(hlWidth(lines[0], size, s.weights[0], family), hlWidth(lines[1], size, s.weights[1], family));
   let size = Math.floor((s.safeW / Math.max(1, widest(100))) * 100);
   size = clamp(Math.floor((s.safeW / Math.max(1, widest(size))) * size), HL_MIN, s.cap);
   return size;
@@ -826,21 +837,22 @@ const HookInner: React.FC<{totalFrames: number; noInicio?: boolean}> = ({totalFr
   const styleId = H.style ?? 'outline';
   const S = HL_STYLES[styleId] ?? HL_STYLES.outline;
   const accent = H.accent ?? EDVID_ACCENT;
+  const headlineFontFamily = H.fontFamily ?? fontFamily;
   const raw = (H.text ?? (H.lines || []).join(' ')).trim();
-  const lines = twoLines(styleId === 'card' ? raw.toUpperCase() : raw, S.weights);
+  const lines = twoLines(styleId === 'card' ? raw.toUpperCase() : raw, S.weights, headlineFontFamily);
   // fontSizePx is a CEILING, never a fixed size. As a hard override it silently
   // defeats the whole point: at a size the text cannot fit in, the line wraps and
   // the headline becomes three lines again — which is exactly what happened with
   // the uppercase "card" style at the project's inherited fontSizePx of 66.
   const cap = H.fontSizePx ?? H.maxFontPx ?? S.cap;
-  const size = fitHeadline(lines, {...S, cap, safeW: H.safeWidth ?? S.safeW});
+  const size = fitHeadline(lines, {...S, cap, safeW: H.safeWidth ?? S.safeW}, headlineFontFamily);
   const lh = H.lineHeight ?? S.lh;
   const top = H.paddingTop ?? S.top;
   const shell: React.CSSProperties = {
     opacity: op,
     translate: `0px ${y}px`,
     textAlign: 'center',
-    fontFamily,
+    fontFamily: headlineFontFamily,
     lineHeight: lh,
     letterSpacing: -1,
     // the two-line promise is structural: if a fit is ever off, this overflows
@@ -893,11 +905,11 @@ const HookInner: React.FC<{totalFrames: number; noInicio?: boolean}> = ({totalFr
         <div style={{opacity: op, translate: `0px ${y}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28}}>
           {H.logo || H.sign ? (
             <div style={{display: 'flex', alignItems: 'center', gap: 34}}>
-              {H.logo ? <Img src={staticFile(H.logo)} style={{width: 300, borderRadius: 18, boxShadow: '0 12px 34px rgba(0,0,0,0.4)'}} /> : null}
+              {H.logo ? <Img src={H.logo.startsWith('data:image/') ? H.logo : staticFile(H.logo)} style={{width: 300, borderRadius: 18, boxShadow: '0 12px 34px rgba(0,0,0,0.4)'}} /> : null}
               {H.sign ? <Img src={staticFile(H.sign)} style={{width: 128, filter: 'drop-shadow(0 8px 20px rgba(0,0,0,0.45))'}} /> : null}
             </div>
           ) : null}
-          <div style={{background: '#232326', borderRadius: 24, padding: '28px 46px', textAlign: 'center', fontFamily, fontWeight: 900, fontSize: size, color: '#fff', lineHeight: lh, letterSpacing: -1, textShadow: '0 4px 20px rgba(0,0,0,0.55)', boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
+          <div style={{background: '#232326', borderRadius: 24, padding: '28px 46px', textAlign: 'center', fontFamily: headlineFontFamily, fontWeight: 900, fontSize: size, color: '#fff', lineHeight: lh, letterSpacing: -1, textShadow: '0 4px 20px rgba(0,0,0,0.55)', boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
             {lines.filter(Boolean).map((l, i) => (<div key={i}>{l}</div>))}
           </div>
         </div>
@@ -964,6 +976,71 @@ const PrerenderedGraphics: React.FC<{layers: GraphicLayer[]}> = ({layers}) => {
   );
 };
 
+// ============ EDIT AI COMMERCIAL CALLOUTS ====================================
+type CommercialCallout = NonNullable<EditData['commercialCallouts']>[number];
+const CommercialCalloutCard: React.FC<{item: CommercialCallout; frames: number}> = ({item, frames}) => {
+  const frame = useCurrentFrame();
+  const D = useEditData();
+  const accent = item.accent ?? D.hook.accent ?? D.captions.accent ?? EDVID_ACCENT;
+  const enterFrames = Math.max(1, Math.min(8, Math.floor(frames / 3)));
+  const exitStart = Math.max(enterFrames, frames - 7);
+  const enter = interpolate(frame, [0, enterFrames], [0, 1], {
+    extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic),
+  });
+  const exit = interpolate(frame, [exitStart, frames], [1, 0], {
+    extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.in(Easing.cubic),
+  });
+  const opacity = Math.min(enter, exit);
+  const offset = (1 - enter) * 26;
+  const position = item.position ?? (item.kind === 'price' ? 'top' : item.kind === 'cta' ? 'bottom' : 'center');
+  const vertical: React.CSSProperties = position === 'top'
+    ? {top: Math.round(D.height * 0.10)}
+    : position === 'bottom'
+      ? {bottom: Math.round(D.height * 0.14)}
+      : {top: '50%', transform: 'translateY(-50%)'};
+  const fontSize = item.kind === 'price' ? Math.round(D.width * 0.070) : Math.round(D.width * 0.047);
+  const solid = item.kind === 'cta' || item.style === 'solid';
+  const price = item.kind === 'price';
+  return (
+    <div style={{position: 'absolute', left: '7%', right: '7%', display: 'flex', justifyContent: 'center', pointerEvents: 'none', ...vertical}}>
+      <div style={{
+        maxWidth: '92%',
+        padding: price ? '18px 32px' : '16px 28px',
+        borderRadius: item.style === 'banner' ? 18 : 999,
+        background: solid ? accent : price ? 'rgba(255,255,255,0.96)' : 'rgba(12,15,20,0.90)',
+        color: solid ? '#ffffff' : price ? '#101318' : '#ffffff',
+        border: solid ? 'none' : `3px solid ${accent}`,
+        boxShadow: '0 12px 32px rgba(0,0,0,0.30)',
+        fontFamily: item.fontFamily ?? fontFamily, fontWeight: 900, fontSize, lineHeight: 1.08, textAlign: 'center',
+        letterSpacing: item.kind === 'cta' ? 0.6 : 0,
+        textTransform: item.kind === 'cta' ? 'uppercase' : 'none',
+        opacity,
+        transform: `translateY(${position === 'top' ? -offset : offset}px) scale(${0.96 + enter * 0.04})`,
+      }}>
+        {item.text}
+      </div>
+    </div>
+  );
+};
+const CommercialCallouts: React.FC = () => {
+  const D = useEditData();
+  const {fps} = useVideoConfig();
+  return (
+    <>
+      {(D.commercialCallouts ?? []).map((item) => {
+        const from = Math.max(0, Math.round(item.start * fps));
+        const frames = Math.max(1, Math.round((item.end - item.start) * fps));
+        if (!item.text?.trim() || frames < 1) return null;
+        return (
+          <Sequence key={item.id} from={from} durationInFrames={frames} layout="none">
+            <CommercialCalloutCard item={item} frames={frames} />
+          </Sequence>
+        );
+      })}
+    </>
+  );
+};
+
 // A FAIXA DE LEGENDA inteira dentro de uma janela.
 //
 // Recortar aqui, e nao dentro de cada estilo, e o que torna o trim da faixa
@@ -998,6 +1075,7 @@ export const Main: React.FC = () => {
       <Inserts />
       {graphicLayers?.length ? <PrerenderedGraphics layers={graphicLayers} /> : <CustomGraphics />}
       {D.hook.enabled ? <HookIntro /> : null}
+      <CommercialCallouts />
       {D.captions.enabled
         ? (
           <CaptionWindow>

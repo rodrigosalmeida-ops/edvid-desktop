@@ -33,6 +33,32 @@ export type EditOperation =
   | { op: 'set-caption-layout'; paddingBottom?: number; fontSize?: number }
   | { op: 'set-headline-layout'; paddingTop?: number; maxFontPx?: number }
   | { op: 'set-headline-text'; text: string }
+  // EDIT AI V0.5: operações visuais passam pelo MESMO funil puro/validado do
+  // restante do edit-data. O agente nunca escreve o JSON diretamente.
+  | { op: 'set-layer-enabled'; kind: 'captions' | 'hook' | 'soundtrack'; enabled: boolean }
+  | {
+      op: 'upsert-commercial-callout';
+      callout: {
+        id: string; kind: 'cta' | 'price' | 'benefit'; start: number; end: number; text: string;
+        accent?: string; style?: 'solid' | 'pill' | 'banner'; position?: 'top' | 'center' | 'bottom';
+        fontFamily?: string;
+      };
+    }
+  | { op: 'remove-commercial-callout'; id: string }
+  | {
+      // EDIT AI V0.8: operação INTERNA da UI. Não faz parte do AiEditPlan do agente.
+      op: 'set-editai-brand-style'; headlineFont: string; captionFont: string; accent: string; logoDataUrl?: string;
+    }
+  | {
+      // Usada somente pelo histórico interno do Brand Kit.
+      op: 'restore-editai-brand-style';
+      snapshot: { headlineFont?: string; captionFont?: string; hookAccent?: string; captionAccent?: string; hookLogo?: string };
+    }
+  | {
+      // EDIT AI V0.6: usada somente pelo histórico interno; não faz parte do AiEditPlan.
+      op: 'restore-editai-headline';
+      snapshot: { enabled?: boolean; text?: string; lines?: string[]; startSec?: number; endSec?: number };
+    }
   // TRIM das duas faixas de texto. Elas nao tem janela propria no arquivo por
   // padrao — a legenda vale o video inteiro e a headline sempre comecava no
   // quadro 0 —, entao o campo nasce aqui na primeira vez que o aluno arrasta
@@ -308,6 +334,92 @@ export function applyEditOperation(
     return { ok: true, data: { ...data, hook: { ...antes, text: texto, lines: [] } }, changed: true };
   }
 
+  if (operation.op === 'set-editai-brand-style') {
+    const allowedFonts = new Set(['Poppins', 'Inter', 'Playfair Display', 'Lora', 'Libre Baskerville']);
+    const headlineFont = allowedFonts.has(operation.headlineFont) ? operation.headlineFont : 'Poppins';
+    const captionFont = allowedFonts.has(operation.captionFont) ? operation.captionFont : 'Poppins';
+    const accent = /^#[0-9a-f]{6}$/iu.test(operation.accent) ? operation.accent.toUpperCase() : '#FF6B2C';
+    const hook = (data.hook ?? {}) as Record<string, unknown>;
+    const captions = (data.captions ?? {}) as Record<string, unknown>;
+    const logo = typeof operation.logoDataUrl === 'string' && operation.logoDataUrl.length <= 700_000 && /^data:image\/(?:png|jpeg|webp);base64,/u.test(operation.logoDataUrl) ? operation.logoDataUrl : hook.logo;
+    const nextHook = { ...hook, fontFamily: headlineFont, accent, logo };
+    const nextCaptions = { ...captions, fontFamily: captionFont, accent };
+    if (JSON.stringify(hook) === JSON.stringify(nextHook) && JSON.stringify(captions) === JSON.stringify(nextCaptions)) {
+      return { ok: true, data, changed: false };
+    }
+    return { ok: true, data: { ...data, hook: nextHook, captions: nextCaptions }, changed: true };
+  }
+  if (operation.op === 'restore-editai-brand-style') {
+    const hook = (data.hook ?? {}) as Record<string, unknown>;
+    const captions = (data.captions ?? {}) as Record<string, unknown>;
+    const nextHook = { ...hook };
+    const nextCaptions = { ...captions };
+    if (operation.snapshot.headlineFont === undefined) delete nextHook.fontFamily; else nextHook.fontFamily = operation.snapshot.headlineFont;
+    if (operation.snapshot.hookAccent === undefined) delete nextHook.accent; else nextHook.accent = operation.snapshot.hookAccent;
+    if (operation.snapshot.hookLogo === undefined) delete nextHook.logo; else nextHook.logo = operation.snapshot.hookLogo;
+    if (operation.snapshot.captionFont === undefined) delete nextCaptions.fontFamily; else nextCaptions.fontFamily = operation.snapshot.captionFont;
+    if (operation.snapshot.captionAccent === undefined) delete nextCaptions.accent; else nextCaptions.accent = operation.snapshot.captionAccent;
+    return { ok: true, data: { ...data, hook: nextHook, captions: nextCaptions }, changed: true };
+  }
+  if (operation.op === 'restore-editai-headline') {
+    const before = (data.hook ?? {}) as Record<string, unknown>;
+    const snapshot = operation.snapshot ?? {};
+    const text = String(snapshot.text ?? '').replace(/\s+/gu, ' ').trim().slice(0, 160);
+    const lines = Array.isArray(snapshot.lines)
+      ? snapshot.lines.filter((line): line is string => typeof line === 'string').slice(0, 8).map((line) => line.slice(0, 160))
+      : [];
+    const startSec = Number.isFinite(Number(snapshot.startSec)) ? round3(clamp(Number(snapshot.startSec), 0, durationSec || Number(snapshot.startSec))) : 0;
+    const rawEnd = Number.isFinite(Number(snapshot.endSec)) ? Number(snapshot.endSec) : durationSec;
+    const endSec = round3(clamp(rawEnd, startSec, durationSec || rawEnd));
+    const hook = { ...before, enabled: snapshot.enabled !== false, text, lines, startSec, endSec };
+    if (JSON.stringify(before) === JSON.stringify(hook)) return { ok: true, data, changed: false };
+    return { ok: true, data: { ...data, hook }, changed: true };
+  }
+  if (operation.op === 'set-layer-enabled') {
+    const before = (data[operation.kind] ?? {}) as Record<string, unknown>;
+    if (before.enabled === operation.enabled) return { ok: true, data, changed: false };
+    return { ok: true, data: { ...data, [operation.kind]: { ...before, enabled: operation.enabled } }, changed: true };
+  }
+  if (operation.op === 'upsert-commercial-callout') {
+    const raw = operation.callout;
+    const id = String(raw.id ?? '').trim().slice(0, 80);
+    const text = String(raw.text ?? '').replace(/\s+/gu, ' ').trim().slice(0, 120);
+    if (!id || !/^[a-z0-9:_-]+$/iu.test(id)) return { ok: false, reason: 'id de callout inválido' };
+    if (!text) return { ok: false, reason: 'callout sem texto' };
+    if (!['cta', 'price', 'benefit'].includes(raw.kind)) return { ok: false, reason: 'tipo de callout inválido' };
+    const originalStart = Number(raw.start);
+    const originalEnd = Number(raw.end);
+    if (!Number.isFinite(originalStart) || !Number.isFinite(originalEnd) || originalEnd <= originalStart) {
+      return { ok: false, reason: 'janela do callout ilegível' };
+    }
+    const start = round3(clamp(originalStart, 0, Math.max(0, (durationSec || originalEnd) - MIN_WINDOW)));
+    const end = round3(clamp(originalEnd, start + MIN_WINDOW, durationSec || originalEnd));
+    if (end - start < MIN_WINDOW) return { ok: false, reason: 'callout curto demais' };
+    const accent = typeof raw.accent === 'string' && /^#[0-9a-f]{6}$/iu.test(raw.accent) ? raw.accent : undefined;
+    const style = ['solid', 'pill', 'banner'].includes(String(raw.style)) ? raw.style : undefined;
+    const position = ['top', 'center', 'bottom'].includes(String(raw.position)) ? raw.position : undefined;
+    const allowedFonts = new Set(['Poppins', 'Inter', 'Playfair Display', 'Lora', 'Libre Baskerville']);
+    const fontFamily = allowedFonts.has(String(raw.fontFamily)) ? String(raw.fontFamily) : undefined;
+    const normalized = { id, kind: raw.kind, start, end, text, ...(accent ? { accent } : {}), ...(style ? { style } : {}), ...(position ? { position } : {}), ...(fontFamily ? { fontFamily } : {}) };
+    const before = Array.isArray(data.commercialCallouts) ? data.commercialCallouts as Record<string, unknown>[] : [];
+    const index = before.findIndex((item) => item && item.id === id);
+    const next = [...before];
+    if (index >= 0) {
+      if (JSON.stringify(before[index]) === JSON.stringify(normalized)) return { ok: true, data, changed: false };
+      next[index] = normalized;
+    } else {
+      next.push(normalized);
+    }
+    next.sort((a, b) => Number(a.start) - Number(b.start));
+    return { ok: true, data: { ...data, commercialCallouts: next }, changed: true };
+  }
+  if (operation.op === 'remove-commercial-callout') {
+    const id = String(operation.id ?? '').trim();
+    const before = Array.isArray(data.commercialCallouts) ? data.commercialCallouts as Record<string, unknown>[] : [];
+    const next = before.filter((item) => item && item.id !== id);
+    if (next.length === before.length) return { ok: true, data, changed: false };
+    return { ok: true, data: { ...data, commercialCallouts: next }, changed: true };
+  }
   if (operation.op === 'disable') {
     const antes = (data[operation.kind] ?? {}) as Record<string, unknown>;
     if (antes.enabled === false) return { ok: true, data, changed: false };
@@ -375,6 +487,11 @@ function emQuadros(operation: EditOperation, fps: number): EditOperation {
       return { ...operation, time: q(operation.time) };
     case 'split-at':
       return { ...operation, time: q(operation.time) };
+    case 'upsert-commercial-callout':
+      return {
+        ...operation,
+        callout: { ...operation.callout, start: q(operation.callout.start), end: q(operation.callout.end) },
+      };
     case 'set-caption-window':
     case 'set-headline-window':
       return {

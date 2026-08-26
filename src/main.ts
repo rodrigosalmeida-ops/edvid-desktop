@@ -99,6 +99,7 @@ import {
   resolveByteRange,
 } from './media-selection';
 import { resolveRuntime, runtimePackKey, type RuntimeResolution } from './runtime';
+import { editAiRuntimePack, editAiUpdateFeedUrl } from './editai/runtime-distribution';
 import type {
   ActiveModelState,
   AiProvider,
@@ -108,6 +109,7 @@ import type {
   CatalogState,
   ClaudeAccountState,
   CleanCutState,
+  EditAiAnalysisContext,
   CodexApprovalDecision,
   CodexEvent,
   CodexSendMessageInput,
@@ -489,10 +491,10 @@ function appRuntimeContext() {
 // O instalador magro nao embarca as ferramentas (FFmpeg, Python/WhisperX,
 // Node, Codex — 1,8 GB descomprimidos). O aplicativo baixa o pacote uma vez,
 // e de novo apenas quando o manifest de versoes mudar, para
-// userData/runtime/tools. Cada release do Edvid volta a pesar ~100 MB.
+// userData/runtime/tools. Cada release do EDIT AI volta a pesar ~100 MB.
 
-const RUNTIME_PACK_BASE_URL =
-  'https://pub-89ee05cdaf26477c8984a36be2b373fa.r2.dev/runtimes';
+// A URL e o SHA-256 do runtime pertencem ao EDIT AI e sao fixados no build.
+// Builds QA podem embarcar resources/runtimes e nao precisam de CDN.
 
 let runtimePackJob: Promise<RuntimePackState> | null = null;
 let runtimePackState: RuntimePackState = { status: 'unknown' };
@@ -528,17 +530,13 @@ function ensureRuntimePack(): Promise<RuntimePackState> {
     broadcastRuntimePackState({ status: 'checking' });
     if (await runtimePackIsReady()) return { status: 'ready' };
     const key = runtimePackKey();
-    const packName = `runtimes-${process.platform}-${process.arch}-${key}.tar.gz`;
-    const packUrl = `${RUNTIME_PACK_BASE_URL}/${packName}`;
-
-    // O sha256 publicado junto garante a integridade do download.
-    let expectedDigest = '';
-    try {
-      const shaResponse = await net.fetch(`${packUrl}.sha256`);
-      if (shaResponse.ok) expectedDigest = (await shaResponse.text()).trim().split(/\s+/)[0] ?? '';
-    } catch {
-      // Sem o arquivo de integridade seguimos apenas com HTTPS.
+    const descriptor = editAiRuntimePack(process.platform, process.arch);
+    if (!descriptor || descriptor.key !== key) {
+      throw new Error('Runtime do EDIT AI não foi configurado para esta versão/plataforma.');
     }
+    const packName = descriptor.file;
+    const packUrl = `${descriptor.baseUrl}/${packName}`;
+    const expectedDigest = descriptor.sha256;
 
     const stagingRoot = path.join(app.getPath('userData'), 'runtime');
     await mkdir(stagingRoot, { recursive: true });
@@ -579,7 +577,7 @@ function ensureRuntimePack(): Promise<RuntimePackState> {
       await rm(tarballPath, { force: true });
       throw error;
     }
-    if (expectedDigest && digest.digest('hex') !== expectedDigest) {
+    if (digest.digest('hex') !== expectedDigest) {
       await rm(tarballPath, { force: true });
       throw new Error('O pacote de ferramentas chegou corrompido. Tente de novo.');
     }
@@ -634,8 +632,8 @@ let pythonSiteDirectory: string | null = null;
 async function writePythonSiteCustomize(): Promise<string | null> {
   const siteDirectory = path.join(app.getPath('userData'), 'runtime', 'pythonsite');
   const script = [
-    '# Gerado pelo Edvid Desktop. Alteracoes manuais sao sobrescritas.',
-    '# Garante que as ferramentas do Edvid venham primeiro no PATH de qualquer',
+    '# Gerado pelo EDIT AI Desktop. Alteracoes manuais sao sobrescritas.',
+    '# Garante que as ferramentas do EDIT AI venham primeiro no PATH de qualquer',
     '# processo Python do pacote (o whisperx chama "ffmpeg" por nome).',
     'import os',
     '',
@@ -663,7 +661,7 @@ async function writePythonSiteCustomize(): Promise<string | null> {
 async function requireRuntimePack(): Promise<void> {
   const state = await ensureRuntimePack();
   if (state.status !== 'ready') {
-    throw new Error(state.error || 'As ferramentas do Edvid ainda estão sendo preparadas.');
+    throw new Error(state.error || 'As ferramentas do EDIT AI ainda estão sendo preparadas.');
   }
   // Escrito uma vez por sessao, antes de qualquer agente montar o ambiente.
   pythonSiteDirectory ??= await writePythonSiteCustomize();
@@ -1678,7 +1676,7 @@ const FONT_USER_AGENT =
 // frames do OffthreadVideo, e uma requisicao de fonte que entra nessa fila
 // pode nunca ser atendida — o delayRender das fontes estoura e derruba o
 // render inteiro depois de minutos. Com data URI nao existe requisicao.
-const FONTS_CSS_VERSION = 'Edvid fonts v2 (woff2 embutido)';
+const FONTS_CSS_VERSION = 'EDIT AI fonts v2 (woff2 embutido)';
 
 async function downloadRemotionFonts(fontsDirectory: string): Promise<void> {
   await mkdir(fontsDirectory, { recursive: true });
@@ -1712,7 +1710,7 @@ async function downloadRemotionFonts(fontsDirectory: string): Promise<void> {
   if (blocks.length === 0) throw new Error('Nenhuma fonte foi baixada.');
   await writeFile(
     path.join(fontsDirectory, 'fonts.css'),
-    `/* ${FONTS_CSS_VERSION} — gerado pelo Edvid Desktop para render offline. */\n${blocks.join('\n')}\n`,
+    `/* ${FONTS_CSS_VERSION} — gerado pelo EDIT AI Desktop para render offline. */\n${blocks.join('\n')}\n`,
   );
 }
 
@@ -2580,6 +2578,69 @@ async function cleanCutSources(projectDirectory: string): Promise<MediaCandidate
   );
 }
 
+async function readEditAiAnalysisContext(projectDirectory: string): Promise<EditAiAnalysisContext> {
+  const editDirectory = path.join(projectDirectory, EDIT_DIR);
+  const transcriptDirectory = path.join(editDirectory, 'transcricao_raw');
+  const transcriptFiles = (await readdir(transcriptDirectory).catch(() => [] as string[]))
+    .filter((name) => name.toLowerCase().endsWith('.json'))
+    .sort((a, b) => a.localeCompare(b));
+  const transcripts: EditAiAnalysisContext['transcripts'] = [];
+  for (const file of transcriptFiles) {
+    try {
+      const parsed = JSON.parse(await readFile(path.join(transcriptDirectory, file), 'utf8')) as { segments?: unknown };
+      if (!Array.isArray(parsed.segments)) continue;
+      const compactSegments: EditAiAnalysisContext['transcripts'][number]['segments'] = [];
+      for (const item of parsed.segments) {
+        if (!item || typeof item !== 'object') continue;
+        const segment = item as Record<string, unknown>;
+        const start = Number(segment.start);
+        const end = Number(segment.end);
+        const text = asText(segment.text) || undefined;
+        const words = Array.isArray(segment.words)
+          ? segment.words.flatMap((word) => {
+              if (!word || typeof word !== 'object') return [];
+              const raw = word as Record<string, unknown>;
+              const wordStart = Number(raw.start);
+              const wordEnd = Number(raw.end);
+              const value = asText(raw.word);
+              return value && Number.isFinite(wordStart) && Number.isFinite(wordEnd) && wordEnd > wordStart
+                ? [{ word: value, start: wordStart, end: wordEnd }]
+                : [];
+            })
+          : undefined;
+        if (!text && !words?.length) continue;
+        compactSegments.push({
+          text,
+          start: Number.isFinite(start) ? start : undefined,
+          end: Number.isFinite(end) ? end : undefined,
+          words,
+        });
+      }
+      transcripts.push({ source: path.basename(file, path.extname(file)), segments: compactSegments });
+    } catch {
+      // Um JSON incompleto não invalida os outros vídeos do projeto.
+    }
+  }
+  const ranges: EditAiAnalysisContext['ranges'] = [];
+  try {
+    const parsed = JSON.parse(await readFile(path.join(editDirectory, 'edl.json'), 'utf8')) as { ranges?: unknown };
+    if (Array.isArray(parsed.ranges)) {
+      for (const item of parsed.ranges) {
+        if (!item || typeof item !== 'object') continue;
+        const range = item as Record<string, unknown>;
+        const start = Number(range.start);
+        const end = Number(range.end);
+        const source = asText(range.source);
+        if (!source || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+        ranges.push({ source, start, end, label: asText(range.beat) || undefined });
+      }
+    }
+  } catch {
+    // Projeto ainda sem corte limpo: a interface explica o próximo passo.
+  }
+  return { transcripts, ranges };
+}
+
 function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
   if (cleanCutJob?.directory === projectDirectory) return cleanCutJob.promise;
   const promise = (async (): Promise<CleanCutState> => {
@@ -2688,7 +2749,7 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
 // AJUSTES DA TIMELINE aplicados pelo APLICATIVO.
 //
 // Isto era um pedido ao agente: "atualize o edl.json com estes ranges e
-// re-renderize". Ele escrevia o EDL, dizia que o Edvid renderizaria e nada
+// re-renderize". Ele escrevia o EDL, dizia que o EDIT AI renderizaria e nada
 // acontecia — o video continuava o antigo. Pior: o J-Cut seguinte montou o
 // audio a partir do EDL NOVO e colou no video VELHO, e o som saiu 3,9s fora
 // do lugar. Recortar segundo uma lista de intervalos e exatamente o que o
@@ -2956,7 +3017,7 @@ async function buildPhase2(
   const python = resolveRuntime('python', appRuntimeContext());
   const ffprobe = resolveRuntime('ffprobe', appRuntimeContext());
   if (!python.command || !ffprobe.command) {
-    throw new Error('As ferramentas do Edvid não estão disponíveis nesta instalação.');
+    throw new Error('As ferramentas do EDIT AI não estão disponíveis nesta instalação.');
   }
   const environment = agentToolsEnvironment();
   const editDirectory = path.join(projectDirectory, EDIT_DIR);
@@ -3682,7 +3743,7 @@ function applyJcutToProject(projectDirectory: string): Promise<JcutApplyResult> 
     const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
     const ffprobe = resolveRuntime('ffprobe', appRuntimeContext());
     if (!ffmpeg.command || !ffprobe.command) {
-      return { applied: false, cuts: 0, error: 'As ferramentas de vídeo do Edvid não estão disponíveis.' };
+      return { applied: false, cuts: 0, error: 'As ferramentas de vídeo do EDIT AI não estão disponíveis.' };
     }
     const edl = await readEdlDocument(projectDirectory);
     const ranges = Array.isArray(edl?.document.ranges) ? edl.document.ranges : [];
@@ -3912,7 +3973,7 @@ async function readStoredCatalog(): Promise<StoredCatalog> {
   // gratuitas foram removidas, o "ollama" guardado aqui continuava sendo
   // escrito como model_provider no config.toml — e com um provedor
   // customizado ativo o Codex responde `account: null` no account/read, ou
-  // seja, o Edvid dizia que o ChatGPT NAO estava conectado mesmo com o login
+  // seja, o EDIT AI dizia que o ChatGPT NAO estava conectado mesmo com o login
   // feito e o token no disco. Foi o defeito que o aluno relatou.
   const conhecido = (id: string): boolean => catalogEntry(id) !== null;
   const chat = asText(stored.chatProviderId);
@@ -4057,7 +4118,7 @@ async function enableSoundtrack(publicDirectory: string, fileName: string): Prom
 // Rede de seguranca antes do render: o edit-data aponta uma trilha que nao
 // esta em public/? Se a musica existe em edit/musica/, o app leva para la. Sem
 // isso o render morre com "404 ao baixar public/trilha.mp3" — aconteceu em uso
-// real quando o agente nao copiou o arquivo que o Edvid tinha gerado.
+// real quando o agente nao copiou o arquivo que o EDIT AI tinha gerado.
 async function ensureSoundtrackFile(projectDirectory: string, publicDirectory: string): Promise<void> {
   const file = path.join(publicDirectory, 'edit-data.json');
   const document = JSON.parse(await readFile(file, 'utf8')) as
@@ -4080,7 +4141,7 @@ async function ensureSoundtrackFile(projectDirectory: string, publicDirectory: s
 
 // --- Geracao de TRILHA pedida pelo agente ----------------------------------
 // O agente escreve edit/musica/pedidos.json quando o aluno liga a trilha com
-// IA nos estilos; o Edvid gera pelo Treblo fora do sandbox e salva o arquivo.
+// IA nos estilos; o EDIT AI gera pelo Treblo fora do sandbox e salva o arquivo.
 async function fulfillMusicRequests(projectDirectory: string): Promise<{ done: number; error?: string }> {
   const musicDirectory = path.join(projectDirectory, 'edit', 'musica');
   const requestsFile = path.join(musicDirectory, 'pedidos.json');
@@ -4196,7 +4257,7 @@ async function fulfillMusicRequests(projectDirectory: string): Promise<{ done: n
 
 // O USO da imagem (tela cheia, faixa de cima, faixa de baixo) mora em
 // src/image-format.ts, junto com o tamanho que cada provedor aceita. O agente
-// nomeia o uso; quem escolhe pixel e o Edvid.
+// nomeia o uso; quem escolhe pixel e o EDIT AI.
 let imageGenJob: { directory: string; promise: Promise<ImageGenState> } | null = null;
 // Fila propria para video: um clipe leva minutos e nao pode segurar a fila das
 // imagens, que levam segundos.
@@ -4214,7 +4275,7 @@ type ImageRequestEntry = { arquivo: string; prompt: string; uso: ImageUse | null
 
 // ChatGPT conectado por CHAVE tambem gera imagem — pela API de imagens da
 // OpenAI (gpt-image-2, pago por imagem), chamada direta do app. A chave vive
-// no auth.json que o proprio app-server guarda no CODEX_HOME do Edvid.
+// no auth.json que o proprio app-server guarda no CODEX_HOME do EDIT AI.
 async function readCodexStoredApiKey(): Promise<string | null> {
   try {
     const parsed = JSON.parse(
@@ -4259,7 +4320,7 @@ async function generateOpenAiImage(
 }
 
 // --- Baixar o que o hub gerou ----------------------------------------------
-// O hub devolve um endereco temporario; quem guarda o arquivo e o Edvid.
+// O hub devolve um endereco temporario; quem guarda o arquivo e o EDIT AI.
 async function downloadTo(url: string, target: string): Promise<void> {
   const response = await net.fetch(url);
   if (!response.ok) throw new Error(`o download do arquivo falhou (HTTP ${response.status})`);
@@ -4281,7 +4342,7 @@ async function downloadTo(url: string, target: string): Promise<void> {
 //      do audio.
 async function ingestClip(source: string, target: string): Promise<void> {
   const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
-  if (!ffmpeg.command) throw new Error('o FFmpeg do Edvid não está pronto');
+  if (!ffmpeg.command) throw new Error('o FFmpeg do EDIT AI não está pronto');
   await mkdir(path.dirname(target), { recursive: true });
   await runFfmpeg(ffmpeg.command, ffmpeg.argsPrefix, [
     '-y', '-i', source,
@@ -4296,7 +4357,7 @@ async function ingestClip(source: string, target: string): Promise<void> {
 
 // --- Geracao de VIDEO pedida pelo agente ------------------------------------
 // Mesmo contrato das imagens: o agente escreve edit/clipes/pedidos.json com o
-// QUE quer, e o Edvid resolve o COMO — modelo, proporcao, duracao, silencio e
+// QUE quer, e o EDIT AI resolve o COMO — modelo, proporcao, duracao, silencio e
 // arquivo no lugar. Ver mcp-hub.ts para por que isto nao mora no agente.
 type VideoRequestEntry = { arquivo: string; prompt: string; uso: ImageUse | null; segundos: number };
 
@@ -4318,7 +4379,7 @@ async function readVideoRequests(projectDirectory: string): Promise<VideoRequest
         prompt,
         uso: imageUse(asText(item.uso)),
         // Sem duracao declarada, o padrao e o que a maioria dos b-rolls do
-        // Edvid ocupa: um trecho curto atras da legenda.
+        // EDIT AI ocupa: um trecho curto atras da legenda.
         segundos: Number.isFinite(segundos) && segundos > 0 ? segundos : 4,
       }];
     });
@@ -4745,7 +4806,7 @@ function promptDaFaixa(prompt: string, uso: ImageUse, isVideo: boolean): string 
   return [prompt.trim(), enquadramento, SEM_TEXTO].filter(Boolean).join('\n\n');
 }
 
-// O aluno DESCREVE a faixa e o Edvid gera.
+// O aluno DESCREVE a faixa e o EDIT AI gera.
 //
 // Este caminho existe porque sem agente conectado ninguem escrevia
 // pedidos.json — e o espaco vazio ficava vazio para sempre, enquanto o
@@ -5030,6 +5091,37 @@ function checkRuntime(
   });
 }
 
+async function runEditAiSmokeIfRequested(): Promise<boolean> {
+  if (!process.argv.includes('--editai-smoke')) return false;
+  const outputPrefix = '--editai-smoke-output=';
+  const outputArg = process.argv.find((arg) => arg.startsWith(outputPrefix));
+  const outputPath = outputArg ? path.resolve(outputArg.slice(outputPrefix.length)) : null;
+  const runtimePackReady = await runtimePackIsReady().catch(() => false);
+  const runtimes = await Promise.all(runtimeCommands.map(({ name, args }) => {
+    const resolution = resolveRuntime(name, appRuntimeContext());
+    return checkRuntime(resolution, args);
+  }));
+  const ok = runtimePackReady && runtimes.every((item) => item.available);
+  const report = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    ok,
+    platform: process.platform,
+    arch: process.arch,
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron,
+    runtimePackReady,
+    runtimes,
+  };
+  if (outputPath) {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  console.log('[EDIT AI SMOKE]', JSON.stringify(report));
+  app.exit(ok ? 0 : 23);
+  return true;
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle('desktop:get-info', () => ({
     platform: process.platform,
@@ -5097,7 +5189,7 @@ function registerIpcHandlers(): void {
     const isRecent = projects.some(
       (project) => path.resolve(project.directory) === requestedDirectory,
     ) || qa?.directory === requestedDirectory;
-    if (!isRecent) throw new Error('Este projeto nao esta na lista recente do Edvid.');
+    if (!isRecent) throw new Error('Este projeto nao esta na lista recente do EDIT AI.');
     return openProject(requestedDirectory, qa?.directory !== requestedDirectory);
   });
 
@@ -5111,6 +5203,14 @@ function registerIpcHandlers(): void {
       return openProject(requestedDirectory, false);
     },
   );
+
+  ipcMain.handle('editai:analysis-context', async (_event, input: { directory?: string }) => {
+    const requestedDirectory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(requestedDirectory)) {
+      throw new Error('Abra o projeto antes de analisar retenção.');
+    }
+    return readEditAiAnalysisContext(requestedDirectory);
+  });
 
   ipcMain.handle(
     'timeline:save',
@@ -5227,9 +5327,9 @@ function registerIpcHandlers(): void {
     if (!projectDirectory) throw new Error('Escolha uma pasta de projeto.');
     const resolvedProjectDirectory = path.resolve(projectDirectory);
     if (!selectedProjectDirectories.has(resolvedProjectDirectory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
-    if (!text) throw new Error('Escreva uma mensagem para o Edvid.');
+    if (!text) throw new Error('Escreva uma mensagem para o EDIT AI.');
     // O lembrete de lingua vai colado em CADA turno, e nao so nas instrucoes
     // iniciais: modelo pequeno esquece o topo do contexto e responde em
     // ingles. O aluno nao ve esta linha — a interface mostra o que ele
@@ -5330,7 +5430,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('music:fulfill', async (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     return fulfillMusicRequests(directory);
   });
@@ -5343,7 +5443,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('preview:data', async (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     const remotionDirectory = path.join(directory, 'edit', 'remotion');
     const publicDirectory = path.join(remotionDirectory, 'public');
@@ -5437,7 +5537,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('preview:edit', async (_event, input: { directory?: string; operations?: unknown }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     const operations = Array.isArray(input.operations) ? (input.operations as EditOperation[]) : [];
     if (!operations.length) throw new Error('Nenhum ajuste para aplicar.');
@@ -5460,7 +5560,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('preview:pick-split-media', async (_event, input: { directory?: string; index?: unknown }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     const index = Number(input.index);
     if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
@@ -5477,14 +5577,14 @@ function registerIpcHandlers(): void {
   });
 
   // Mesmo espaco vazio, outra origem: em vez de apontar um arquivo, o aluno
-  // DESCREVE o que quer ver e o Edvid gera. Ver generateSplitMedia.
+  // DESCREVE o que quer ver e o EDIT AI gera. Ver generateSplitMedia.
   ipcMain.handle('preview:generate-split-media', async (
     _event,
     input: { directory?: string; index?: unknown; prompt?: unknown; kind?: unknown },
   ) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     const index = Number(input.index);
     if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
@@ -5503,7 +5603,7 @@ function registerIpcHandlers(): void {
   ) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     const index = Number(input.index);
     if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
@@ -5513,7 +5613,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     return fulfillVideoRequests(directory);
   });
@@ -5521,7 +5621,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('image:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     return fulfillImageRequests(directory);
   });
@@ -5529,7 +5629,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('jcut:apply', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     return applyJcutToProject(directory);
   });
@@ -5537,7 +5637,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('jcut:sync', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     return syncJcutForProject(directory);
   });
@@ -5545,7 +5645,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('animations:pending-custom', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do Edvid.');
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
     }
     return pendingCustomAnimations(directory);
   });
@@ -5709,7 +5809,7 @@ function createWindow(): void {
     minWidth: 1060,
     minHeight: 700,
     backgroundColor: '#090b10',
-    title: 'Edvid',
+    title: 'EDIT AI',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -5755,29 +5855,21 @@ function createWindow(): void {
   }
 }
 
-// --- Login do aluno (Creator Factory / Supabase) ---------------------------
+// --- Login do aluno (EDIT AI / Supabase) ---------------------------
 // O aluno entra com o MESMO e-mail/senha da area de membros: autenticacao
 // direta no Supabase Auth da plataforma com a anon key (chave publica,
 // protegida pelas RLS). O direito de uso e a matricula ativa no curso
-// IA Edit Pro, lida pela politica existente enrollments_select_own_or_admin.
+// EDIT AI, lida pela politica existente enrollments_select_own_or_admin.
 // Sem as duas chaves abaixo o gate fica desligado e o app se comporta como
 // sempre. A senha nunca e persistida; guardamos apenas o refresh token.
 
-const MEMBER_SUPABASE_URL =
-  process.env.EDVID_SUPABASE_URL?.trim() ||
-  // URL publica do projeto Supabase da Creator Factory.
-  'https://pvefvoskgqthaazucuol.supabase.co';
-const MEMBER_SUPABASE_ANON_KEY =
-  process.env.EDVID_SUPABASE_ANON_KEY?.trim() ||
-  // Anon key publica do projeto (a mesma que o site entrega ao navegador;
-  // protegida pelas RLS — a service_role jamais entra aqui).
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2ZWZ2b3NrZ3F0aGFhenVjdW9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzOTUyNDgsImV4cCI6MjA5Nzk3MTI0OH0.meYSpQTVUQf2a3dlgFe8LCjOApJkle2Hk6dhvrkpMaY';
-// Matriculas que dao direito ao Edvid. O slug e o estavel; o titulo cobre o
-// caso de o curso ser recriado com slug novo.
-const MEMBER_ACCESS_SLUGS = new Set(['ia-edit-pro-thpgfw']);
-const MEMBER_ACCESS_TITLE = 'ia edit pro';
-// Ficar offline nao pode trancar o aluno na hora: a ultima validacao vale
-// por este periodo.
+const MEMBER_SUPABASE_URL = process.env.EDITAI_SUPABASE_URL?.trim() || '';
+const MEMBER_SUPABASE_ANON_KEY = process.env.EDITAI_SUPABASE_ANON_KEY?.trim() || '';
+const MEMBER_ACCESS_SLUGS = new Set(
+  (process.env.EDITAI_ACCESS_SLUGS || '').split(',').map((item) => item.trim()).filter(Boolean),
+);
+const MEMBER_ACCESS_TITLE = process.env.EDITAI_ACCESS_TITLE?.trim().toLocaleLowerCase('pt-BR') || '';
+// Sem configuração própria o gate fica unconfigured; a UI standalone V0.3+ não bloqueia o editor.
 const MEMBER_OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 let memberAuthState: MemberAuthState = { status: 'unconfigured' };
@@ -5924,7 +6016,7 @@ async function requestMemberTokensOnce(body: Record<string, string>, grantType: 
     const message = /invalid login credentials/iu.test(raw)
       ? 'E-mail ou senha incorretos. Use os mesmos dados da área de membros.'
       : /email not confirmed/iu.test(raw)
-        ? 'Confirme seu e-mail na Creator Factory antes de entrar.'
+        ? 'Confirme seu e-mail na EDIT AI antes de entrar.'
         : raw || 'Não foi possível entrar.';
     return { kind: 'denied', message };
   }
@@ -6097,11 +6189,7 @@ async function memberBoot(): Promise<void> {
 // assinatura de producao (Squirrel.Mac recusa apps ad-hoc) e um feed JSON
 // hospedado; sem o feed configurado, nada acontece. O formato do feed sai de
 // scripts/generate-update-feed.mjs a cada release.
-const UPDATE_FEED_URL =
-  process.env.EDVID_UPDATE_FEED_URL?.trim() ||
-  // Bucket R2 publico da Creator Factory (scripts/publish-update.mjs publica
-  // o feed.json e o ZIP de cada release nesta URL).
-  'https://pub-89ee05cdaf26477c8984a36be2b373fa.r2.dev/feed.json';
+const UPDATE_FEED_URL = editAiUpdateFeedUrl();
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 let appUpdateState: AppUpdateState = { status: 'idle' };
 
@@ -6114,7 +6202,7 @@ function broadcastAppUpdateState(state: AppUpdateState): void {
 
 // O MESMO id do forge.config.ts (appBundleId). O Squirrel.Mac nomeia a pasta
 // de cache dele a partir daqui, e e nela que a versao baixada fica esperando.
-const APP_BUNDLE_ID = 'com.creatorfactory.edvid';
+const APP_BUNDLE_ID = 'com.editai.desktop';
 
 /**
  * A versao que JA ESTA BAIXADA e esperando o app encerrar.
@@ -6228,8 +6316,9 @@ void app.whenReady().then(async () => {
   // Os caches precisam existir antes do Codex iniciar: eles entram como
   // writable_roots do sandbox e como HF_HOME/MPLCONFIGDIR dos runtimes.
   await prepareCacheDirectories().catch((error: unknown) => {
-    console.warn('Nao foi possivel preparar os caches do Edvid:', error);
+    console.warn('Nao foi possivel preparar os caches do EDIT AI:', error);
   });
+  if (await runEditAiSmokeIfRequested()) return;
   setupAutoUpdate();
   void memberBoot();
   // Quem esta conectado por MCP so se descobre lendo o cofre de token. Sem

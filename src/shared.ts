@@ -155,6 +155,20 @@ export type ProjectWorkspace = {
   overlays: ProjectOverlays | null;
 };
 
+// Dados não sensíveis que o renderer usa para calcular retenção localmente.
+// Nenhum caminho absoluto nem credencial cruza esta fronteira.
+export type EditAiTranscriptWord = { word?: string; start?: number; end?: number };
+export type EditAiTranscriptSegment = {
+  text?: string;
+  start?: number;
+  end?: number;
+  words?: EditAiTranscriptWord[];
+};
+export type EditAiAnalysisContext = {
+  transcripts: Array<{ source: string; segments: EditAiTranscriptSegment[] }>;
+  ranges: Array<{ source: string; start: number; end: number; label?: string }>;
+};
+
 export type WhisperModelState = {
   status: 'unknown' | 'downloading' | 'ready' | 'error';
   model: string;
@@ -441,6 +455,7 @@ export type EdvidDesktopApi = {
   removeRecentProject: (directory: string) => Promise<ProjectSummary[]>;
   openProjectFolder: (directory: string) => Promise<void>;
   refreshProjectWorkspace: (directory: string) => Promise<ProjectWorkspace>;
+  getEditAiAnalysisContext: (directory: string) => Promise<EditAiAnalysisContext>;
   getCodexAccount: () => Promise<CodexAccountState>;
   loginWithChatGPT: () => Promise<CodexAccountState>;
   cancelChatGPTLogin: () => Promise<CodexAccountState>;

@@ -60,17 +60,17 @@ export function looksEnglish(text: string): boolean {
 // --- Limpeza do que e tecnico ----------------------------------------------
 
 const TOOL_PLAIN: Record<string, string> = {
-  ffmpeg: 'o Edvid',
-  ffprobe: 'o Edvid',
+  ffmpeg: 'o EDIT AI',
+  ffprobe: 'o EDIT AI',
   whisperx: 'a transcrição',
   remotion: 'o motor de edição',
-  npm: 'as ferramentas do Edvid',
-  node: 'as ferramentas do Edvid',
-  python: 'as ferramentas do Edvid',
-  python3: 'as ferramentas do Edvid',
-  uv: 'as ferramentas do Edvid',
-  'yt-dlp': 'as ferramentas do Edvid',
-  tsc: 'as ferramentas do Edvid',
+  npm: 'as ferramentas do EDIT AI',
+  node: 'as ferramentas do EDIT AI',
+  python: 'as ferramentas do EDIT AI',
+  python3: 'as ferramentas do EDIT AI',
+  uv: 'as ferramentas do EDIT AI',
+  'yt-dlp': 'as ferramentas do EDIT AI',
+  tsc: 'as ferramentas do EDIT AI',
   chromium: 'o motor de edição',
 };
 
@@ -86,7 +86,7 @@ function plainForFile(filePath: string): string {
   if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(extension)) return 'a imagem';
   if (extension === 'json') return 'os dados da edição';
   if (['tsx', 'ts', 'js', 'jsx'].includes(extension)) return 'o código da animação';
-  if (extension === 'py') return 'as ferramentas do Edvid';
+  if (extension === 'py') return 'as ferramentas do EDIT AI';
   return 'o arquivo';
 }
 
@@ -120,7 +120,7 @@ export function stripTechnical(input: string): string {
     .filter((line) => !/^\s*[$>#]\s*\S/u.test(line))
     .join('\n');
   // Variavel de ambiente das ferramentas e opcao de linha de comando.
-  text = text.replace(/\$(?:env:)?EDVID_[A-Z_]+/gu, 'as ferramentas do Edvid');
+  text = text.replace(/\$(?:env:)?EDVID_[A-Z_]+/gu, 'as ferramentas do EDIT AI');
   text = text.replace(/(?:^|\s)--?[a-z][\w-]*(?:=\S+)?/giu, ' ');
   // Objeto JSON solto no meio da frase e par "campo": valor.
   text = text.replace(/\{[^{}]*"[^"]+"\s*:[^{}]*\}/gu, ' ');
@@ -139,7 +139,7 @@ export function stripTechnical(input: string): string {
   // Mencao solta da ferramenta vira linguagem de gente.
   text = text.replace(
     /\*{0,2}\b(ffmpeg|ffprobe|whisperx|remotion|npm|node|python3?|uv|yt-dlp|tsc|chromium)\b\*{0,2}/giu,
-    (_match, tool: string) => TOOL_PLAIN[tool.toLocaleLowerCase('pt-BR')] ?? 'as ferramentas do Edvid',
+    (_match, tool: string) => TOOL_PLAIN[tool.toLocaleLowerCase('pt-BR')] ?? 'as ferramentas do EDIT AI',
   );
   text = fixContractions(text);
   // Sobras da limpeza: espaco duplo, bullet vazio, pontuacao solta.
@@ -174,7 +174,7 @@ export function sanitizeAssistantText(input: string): SanitizedMessage {
 // --- ERRO DE PROVEDOR VIRANDO PORTUGUES ------------------------------------
 // O erro cru do provedor chegava ao chat como veio: em ingles, com URL de
 // documentacao e jargao. Caso real, palavra por palavra, dentro de uma bolha
-// do Edvid: "You exceeded your current quota, please check your plan and
+// do EDIT AI: "You exceeded your current quota, please check your plan and
 // billing details. For more information on this error, head to:
 // https://ai.google.dev/gemini-api/docs/rate-limits". Isso quebra as duas
 // regras da conversa (portugues e nada de termo tecnico) e, pior, nao diz ao
@@ -185,7 +185,7 @@ const RATE = /rate limit|too many requests|429/iu;
 const KEY = /api key not valid|invalid api key|incorrect api key|unauthorized|authentication_error|permission denied/iu;
 const OFFLINE = /sem conexão|network|fetch failed|enotfound|econnrefused|timeout/iu;
 
-// `alternativa` e a saida que o aluno TEM no Edvid agora, nao um conselho
+// `alternativa` e a saida que o aluno TEM no EDIT AI agora, nao um conselho
 // generico: sem isso a mensagem so informa que deu errado.
 export function providerErrorMessage(raw: string, provider: string): string {
   const text = String(raw ?? '').trim();
@@ -197,7 +197,7 @@ export function providerErrorMessage(raw: string, provider: string): string {
     return `O ${quem} pediu para esperar: muitos pedidos em pouco tempo. Tente de novo em alguns minutos.`;
   }
   if (KEY.test(text)) {
-    return `O ${quem} recusou a chave. Confira a chave nas configurações do Edvid.`;
+    return `O ${quem} recusou a chave. Confira a chave nas configurações do EDIT AI.`;
   }
   if (OFFLINE.test(text)) {
     return `Não consegui falar com o ${quem}. Verifique a internet e tente de novo.`;

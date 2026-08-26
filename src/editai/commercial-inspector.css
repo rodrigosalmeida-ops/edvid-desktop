@@ -1,0 +1,48 @@
+.editai-commercial-inspector {
+  position: absolute;
+  z-index: 24;
+  top: 12px;
+  right: 12px;
+  width: 260px;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 14px;
+  background: rgba(12,15,20,.94);
+  box-shadow: 0 18px 48px rgba(0,0,0,.34);
+  backdrop-filter: blur(18px);
+}
+.editai-inspector-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.editai-inspector-head > div { display:flex; flex-direction:column; gap:2px; }
+.editai-inspector-head small { color:#6b7481; font-size:8px; font-weight:900; letter-spacing:1.2px; }
+.editai-inspector-head strong { font-size:13px; }
+.editai-kind-dot { width:10px; height:10px; border-radius:50%; background:#ff8a3d; box-shadow:0 0 0 5px rgba(255,119,19,.08); }
+.editai-kind-dot.cta { background:#47d7d9; box-shadow:0 0 0 5px rgba(9,181,183,.08); }
+.editai-kind-dot.benefit { background:#d7c847; box-shadow:0 0 0 5px rgba(215,200,71,.08); }
+.editai-commercial-inspector label { display:flex; flex-direction:column; gap:5px; margin:0 0 10px; }
+.editai-commercial-inspector label > span, .editai-inspector-meta span { color:#77818e; font-size:8px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; }
+.editai-commercial-inspector input, .editai-commercial-inspector textarea, .editai-commercial-inspector select {
+  width:100%; box-sizing:border-box; border:1px solid rgba(255,255,255,.1); border-radius:9px; padding:8px 9px;
+  color:#e7ebef; background:rgba(255,255,255,.045); font-size:10px; outline:none;
+}
+.editai-commercial-inspector textarea { resize:vertical; min-height:60px; line-height:1.35; }
+.editai-commercial-inspector input:focus, .editai-commercial-inspector textarea:focus, .editai-commercial-inspector select:focus { border-color:rgba(9,181,183,.55); box-shadow:0 0 0 2px rgba(9,181,183,.08); }
+.editai-inspector-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.editai-color-row { display:grid; grid-template-columns:42px 1fr; gap:7px; }
+.editai-color-row input[type=color] { min-height:34px; padding:4px; }
+.editai-color-row button { border:1px solid rgba(9,181,183,.2); border-radius:9px; color:#8edfe0; background:rgba(9,181,183,.07); font-size:9px; cursor:pointer; }
+.editai-inspector-meta { display:flex; align-items:center; justify-content:space-between; margin:3px 0 11px; padding:8px 9px; border-radius:9px; background:rgba(255,255,255,.035); }
+.editai-inspector-meta strong { font-family:ui-monospace,'SF Mono',monospace; font-size:10px; }
+.editai-inspector-delete { width:100%; padding:8px 10px; border:1px solid rgba(255,85,85,.24); border-radius:9px; color:#ff9b9b; background:rgba(255,85,85,.07); font-size:9px; font-weight:800; cursor:pointer; }
+.editai-inspector-hint { display:block; margin-top:9px; color:#596270; font-size:8px; line-height:1.45; }
+.editai-commercial-chip.editable { cursor:grab; user-select:none; touch-action:none; }
+.editai-commercial-chip.editable:active { cursor:grabbing; }
+.editai-commercial-chip.editable::before, .editai-commercial-chip.editable::after {
+  content:''; position:absolute; top:0; bottom:0; width:7px; opacity:0; background:rgba(255,255,255,.28);
+}
+.editai-commercial-chip.editable::before { left:0; border-radius:6px 0 0 6px; cursor:ew-resize; }
+.editai-commercial-chip.editable::after { right:0; border-radius:0 6px 6px 0; cursor:ew-resize; }
+.editai-commercial-chip.editable:hover::before, .editai-commercial-chip.editable:hover::after,
+.editai-commercial-chip.selected::before, .editai-commercial-chip.selected::after { opacity:1; }
+.editor-workspace { position:relative; }

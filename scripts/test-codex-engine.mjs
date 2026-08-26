@@ -57,8 +57,8 @@ try {
   assert.ok(config.includes('model = "gpt-oss:120b"'), 'o modelo passa a ser o do motor');
   // Id PREFIXADO: `ollama` é reservado no Codex e o config inteiro seria
   // recusado com "Built-in providers cannot be overridden".
-  assert.ok(config.includes('model_provider = "edvid-ollama"'), 'o provedor precisa ir prefixado');
-  assert.ok(config.includes('[model_providers.edvid-ollama]'), 'a seção do provedor precisa existir');
+  assert.ok(config.includes('model_provider = "editai-ollama"'), 'o provedor precisa ir prefixado');
+  assert.ok(config.includes('[model_providers.editai-ollama]'), 'a seção do provedor precisa existir');
   assert.ok(!/model_provider = "ollama"/.test(config), 'nunca usar o id reservado');
   // `chat` foi descontinuado: com ele o Codex recusa o config e volta à OpenAI.
   assert.ok(config.includes('wire_api = "responses"'), 'wire_api precisa ser responses');

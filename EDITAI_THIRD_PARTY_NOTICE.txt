@@ -1,0 +1,23 @@
+EDIT AI - THIRD PARTY NOTICE
+
+This product contains modified portions of Edvid Desktop.
+Original Edvid Desktop copyright notice and MIT license are preserved in LICENSE.
+No Edvid/Creator Factory/IA Edit Pro trademark or course material is licensed by the MIT software grant.
+
+Patch target: upstream Edvid Desktop 0.33.7 / commit db71373.
+
+EDIT AI V0.4 adds a local retention-analysis bridge over WhisperX/EDL data and a review-before-apply UI.
+
+EDIT AI V0.5 adds validated commercial callouts (CTA, price and benefit) to edit-data and the shared Remotion preview/render composition.
+
+EDIT AI V0.6 adds composite timeline/visual history and a commercial callout timeline track.
+
+EDIT AI V0.7 adds draggable/resizable commercial callouts and a dedicated Portuguese inspector.
+
+EDIT AI V0.8 adds a local-first Brand Kit, project brand association and font/color propagation to commercial overlays, headline and karaoke captions.
+
+EDIT AI V0.9 adds a factual TikTok Shop analysis engine and local A/B review variants. Commercial facts are derived from transcript evidence and remain review-before-apply.
+
+EDIT AI V1.0 separates third-party membership/update infrastructure, adds EDIT AI-owned runtime distribution metadata, strict embedded SHA-256 verification and Windows QA/release build pipelines.
+
+Runtime and model licensing is inventoried in docs/legal/DEPENDENCY_LICENSE_AUDIT.md. The QA installer is not approved for public commercial distribution until the GPL/LGPL source-notice package and Remotion eligibility gates recorded there are closed.

@@ -31,8 +31,8 @@ const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 // Porta de callback registrada do Claude Code (o authorize aceita qualquer
 // porta de loopback — RFC 8252). Se estiver ocupada, caimos para o fluxo
-// manual: o site mostra o codigo e o aluno cola no Edvid. O env existe para
-// as sondas de teste nao disputarem a porta com um Edvid aberto.
+// manual: o site mostra o codigo e o aluno cola no EDIT AI. O env existe para
+// as sondas de teste nao disputarem a porta com um EDIT AI aberto.
 const OAUTH_CALLBACK_PORT = Number(process.env.EDVID_OAUTH_CALLBACK_PORT) || 54545;
 const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_CALLBACK_PORT}/callback`;
 const OAUTH_MANUAL_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
@@ -160,7 +160,7 @@ function runCommand(
 export type ClaudeAgentDeps = {
   // userData/runtime/claude: node_modules com o SDK pinado.
   runtimeDirectory: string;
-  // CLAUDE_CONFIG_DIR proprio do Edvid: sessoes e estado isolados de
+  // CLAUDE_CONFIG_DIR proprio do EDIT AI: sessoes e estado isolados de
   // qualquer instalacao de Claude Code que o usuario tenha na maquina.
   configDirectory: string;
   // Tokens da conta do aluno (0600), mesmo padrao do member-auth.json.
@@ -353,7 +353,7 @@ export class ClaudeAgent {
             `callback invalido (codigo ${code ? 'presente' : 'ausente'}, state ${returnedState === login.state ? 'confere' : 'diverge'}, login ${this.pendingLogin === login ? 'ativo' : 'encerrado'})`,
           );
           response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-          response.end(page('Requisição de login inválida', 'Volte ao Edvid e tente de novo.'));
+          response.end(page('Requisição de login inválida', 'Volte ao EDIT AI e tente de novo.'));
           return;
         }
         login.busy = true;
@@ -366,7 +366,7 @@ export class ClaudeAgent {
         response.end(
           page(
             'Quase lá',
-            'Pode fechar esta aba e voltar para o Edvid — o login está sendo concluído no aplicativo (pode levar até um minuto).',
+            'Pode fechar esta aba e voltar para o EDIT AI — o login está sendo concluído no aplicativo (pode levar até um minuto).',
           ),
         );
         this.broadcast({ status: 'waiting-for-browser', email: null, manual: login.manual, finishing: true });
@@ -379,7 +379,7 @@ export class ClaudeAgent {
     });
   }
 
-  // Fluxo manual: o site exibiu "codigo#estado" e o aluno colou no Edvid.
+  // Fluxo manual: o site exibiu "codigo#estado" e o aluno colou no EDIT AI.
   async submitLoginCode(pasted: string): Promise<ClaudeAccountState> {
     const login = this.pendingLogin;
     if (!login) return this.readAccount();
@@ -495,7 +495,7 @@ export class ClaudeAgent {
         (payload.error && typeof payload.error === 'object' && typeof payload.error.message === 'string' && payload.error.message) ||
         'O Claude recusou o login. Tente de novo.';
       this.logLogin(`troca de token (${body.grant_type}): HTTP ${response.status} — ${detail}`);
-      // 429 aqui NAO e culpa do aluno nem defeito do Edvid: o endpoint esta
+      // 429 aqui NAO e culpa do aluno nem defeito do EDIT AI: o endpoint esta
       // saudavel (sondado — codigo invalido devolve 400 invalid_grant), e a
       // Anthropic esta limitando a troca de token. As tentativas com espera
       // ja rodaram e nao adiantaram, entao a saida honesta e dizer o que
@@ -623,7 +623,7 @@ export class ClaudeAgent {
         path.join(this.deps.runtimeDirectory, 'package.json'),
         `${JSON.stringify(
           {
-            name: 'edvid-claude-runtime',
+            name: 'editai-claude-runtime',
             version: '1.0.0',
             private: true,
             dependencies: { [CLAUDE_SDK_PACKAGE]: CLAUDE_SDK_VERSION },
@@ -688,7 +688,7 @@ export class ClaudeAgent {
   private buildEnvironment(auth: Record<string, string>): Record<string, string | undefined> {
     const environment: Record<string, string | undefined> = { ...process.env };
     // Nenhuma credencial ou configuracao de Claude da maquina do usuario
-    // pode vazar para o agente do Edvid (ANTHROPIC_API_KEY teria precedencia
+    // pode vazar para o agente do EDIT AI (ANTHROPIC_API_KEY teria precedencia
     // sobre o token do aluno, por exemplo).
     for (const key of Object.keys(environment)) {
       if (key.startsWith('ANTHROPIC_') || key.startsWith('CLAUDE_')) delete environment[key];
@@ -826,14 +826,14 @@ export class ClaudeAgent {
         cwd: projectDirectory,
         abortController: abort,
         includePartialMessages: true,
-        // O prompt do Claude Code + o contrato do Edvid, identico ao Codex.
+        // O prompt do Claude Code + o contrato do EDIT AI, identico ao Codex.
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
           append: `${EDVID_INSTRUCTIONS}${CLAUDE_EXTRA_INSTRUCTIONS}`,
         },
         // Nada do ~/.claude do usuario entra aqui: sem settings, hooks,
-        // CLAUDE.md ou MCPs da maquina — o Edvid define tudo.
+        // CLAUDE.md ou MCPs da maquina — o EDIT AI define tudo.
         settingSources: [],
         permissionMode: 'acceptEdits',
         disallowedTools: ['WebSearch', 'WebFetch'],

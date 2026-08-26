@@ -29,6 +29,7 @@ const api: EdvidDesktopApi = {
   openProjectFolder: (directory) => ipcRenderer.invoke('project:open-folder', { directory }),
   refreshProjectWorkspace: (directory) =>
     ipcRenderer.invoke('project:refresh-workspace', { directory }),
+  getEditAiAnalysisContext: (directory) => ipcRenderer.invoke('editai:analysis-context', { directory }),
   getCodexAccount: () => ipcRenderer.invoke('codex:account'),
   loginWithChatGPT: () => ipcRenderer.invoke('codex:login'),
   cancelChatGPTLogin: () => ipcRenderer.invoke('codex:login-cancel'),

@@ -16,12 +16,12 @@
  * Data: public/captions.json (word level) — no extra generation step.
  */
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
-import {BASKERVILLE, INTER, POPPINS, loadEdvidFonts} from './fonts';
+import {BASKERVILLE, INTER, POPPINS, loadEditAiFonts} from './fonts';
 import {measureText} from '@remotion/layout-utils';
 import {useProjectData} from './data';
 import {captionPaddingBottomAt, useEditData} from './Main';
 
-loadEdvidFonts();
+loadEditAiFonts();
 
 const OFFWHITE = '#f4f1e9';
 

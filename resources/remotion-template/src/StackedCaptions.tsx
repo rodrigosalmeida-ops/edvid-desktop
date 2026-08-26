@@ -24,12 +24,12 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
-import {PLAYFAIR, POPPINS, loadEdvidFonts} from './fonts';
+import {PLAYFAIR, POPPINS, loadEditAiFonts} from './fonts';
 import {useProjectData} from './data';
 import {activeSplitAt, useEditData} from './Main';
 import {PencilOutline} from './PencilOutline';
 
-loadEdvidFonts();
+loadEditAiFonts();
 
 const WHITE_GRAD: React.CSSProperties = {
   backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #ffffff 46%, #cfcfcf 100%)',

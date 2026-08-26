@@ -114,7 +114,7 @@ export type GeminiAgentDeps = {
   runtimeDirectory: string;
   // Chave do aluno (0600), mesmo padrao dos demais provedores.
   authFile: string;
-  // Settings de SISTEMA controladas pelo Edvid (GEMINI_CLI_SYSTEM_SETTINGS_PATH):
+  // Settings de SISTEMA controladas pelo EDIT AI (GEMINI_CLI_SYSTEM_SETTINGS_PATH):
   // desligam o gate de confianca de pasta e a telemetria.
   systemSettingsFile: string;
   toolsEnvironment: () => NodeJS.ProcessEnv;
@@ -307,7 +307,7 @@ export class GeminiAgent {
         path.join(this.deps.runtimeDirectory, 'package.json'),
         `${JSON.stringify(
           {
-            name: 'edvid-gemini-runtime',
+            name: 'editai-gemini-runtime',
             version: '1.0.0',
             private: true,
             dependencies: { [GEMINI_PACKAGE]: GEMINI_CLI_VERSION },
@@ -611,7 +611,7 @@ export class GeminiAgent {
 
     const prompt = session.instructed
       ? text
-      : `Instruções do Edvid — valem para a sessão inteira:\n${EDVID_INSTRUCTIONS}${GEMINI_EXTRA_INSTRUCTIONS}\n\n---\n\nMensagem do aluno:\n${text}`;
+      : `Instruções do EDIT AI — valem para a sessão inteira:\n${EDVID_INSTRUCTIONS}${GEMINI_EXTRA_INSTRUCTIONS}\n\n---\n\nMensagem do aluno:\n${text}`;
     session.instructed = true;
 
     const finish = (status: 'completed' | 'interrupted' | 'failed', error?: string): void => {
