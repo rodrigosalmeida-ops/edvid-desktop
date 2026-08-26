@@ -11,7 +11,7 @@ const warnings = [];
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const exists = (file) => fs.existsSync(path.join(root, file));
 
-for (const file of ['package.json','package-lock.json','forge.config.ts','src/main.ts','LICENSE','EDITAI_THIRD_PARTY_NOTICE.txt','docs/legal/DEPENDENCY_LICENSE_AUDIT.md','docs/releases/EDITAI_RC2_SOURCE.md','resources/runtime-manifest.json','resources/editai-distribution.json','scripts/editai-inspect-windows-artifacts.ps1','scripts/editai-smoke-windows.ps1','scripts/editai-install-smoke-windows.ps1','scripts/editai-media-smoke-windows.ps1','.github/workflows/editai-rc2-windows.yml']) {
+for (const file of ['package.json','package-lock.json','forge.config.ts','src/main.ts','LICENSE','EDITAI_THIRD_PARTY_NOTICE.txt','docs/legal/DEPENDENCY_LICENSE_AUDIT.md','docs/releases/EDITAI_RC2_SOURCE.md','resources/runtime-manifest.json','resources/editai-distribution.json','scripts/editai-inspect-windows-artifacts.ps1','scripts/editai-smoke-windows.ps1','scripts/editai-install-smoke-windows.ps1','scripts/editai-media-smoke-windows.ps1','scripts/editai-e2e-real-video-windows.ps1','scripts/test-editai-commercial-evidence.mjs','.github/workflows/editai-rc2-windows.yml']) {
   if (!exists(file)) errors.push(`arquivo obrigatório ausente: ${file}`);
 }
 if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
@@ -64,8 +64,10 @@ if (!qaWorkflow.includes('actions/upload-artifact@v4')) errors.push('workflow Wi
 if (!qaWorkflow.includes('npm run smoke:editai:win')) errors.push('workflow Windows QA não executa smoke do executável');
 if (!qaWorkflow.includes('npm run smoke:editai:install')) errors.push('workflow Windows QA não executa smoke do Setup instalado');
 if (!qaWorkflow.includes('npm run smoke:editai:media')) errors.push('workflow Windows QA não executa media smoke');
+if (!qaWorkflow.includes('npm run smoke:editai:e2e')) errors.push('workflow Windows QA não executa E2E com vídeo real');
 if (!qaWorkflow.includes('EDIT-AI-Setup.exe')) errors.push('workflow não exige o nome canônico EDIT-AI-Setup.exe');
 if (!main.includes('runEditAiSmokeIfRequested')) errors.push('modo --editai-smoke não integrado no main process');
+if (!main.includes('runEditAiE2eIfRequested')) errors.push('modo --editai-e2e não integrado no main process');
 
 const license = read('LICENSE');
 if (!/MIT License/iu.test(license) && !/permission is hereby granted/iu.test(license)) warnings.push('LICENSE não parece conter o texto MIT completo nesta cópia.');

@@ -80,6 +80,24 @@ jobs:
         shell: powershell
         run: npm run smoke:editai:install
 
+      - name: Media smoke with installed EDIT AI runtime
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1 -SmokeReportPath out\editai-installed-smoke.json -OutputPath out\editai-installed-media-smoke.json
+
+      - name: Cache EDIT AI WhisperX models and Remotion runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Roaming\EDIT AI\cache\huggingface
+            ~\AppData\Roaming\EDIT AI\runtime\remotion
+            ~\AppData\Local\uv
+          key: editai-e2e-runtime-v1-${{ hashFiles('resources/runtime-manifest.json', 'resources/remotion-template/package.json', 'scripts/editai-e2e-real-video-windows.ps1') }}
+          save-always: true
+
+      - name: Real video E2E with installed EDIT AI
+        shell: powershell
+        run: npm run smoke:editai:e2e
+
       - name: Build RC2 evidence report
         shell: powershell
         run: |
@@ -89,7 +107,7 @@ jobs:
           $nupkg = Get-ChildItem $root -File -Filter '*.nupkg' | Select-Object -First 1
           $releases = Get-Item (Join-Path $root 'RELEASES') -ErrorAction Stop
           if (-not $nupkg) { throw 'EDIT AI .nupkg não foi gerado.' }
-          foreach ($reportName in @('editai-smoke.json','editai-media-smoke.json','editai-installed-smoke.json','editai-install-smoke.json','editai-windows-artifacts.json')) {
+          foreach ($reportName in @('editai-smoke.json','editai-media-smoke.json','editai-installed-smoke.json','editai-install-smoke.json','editai-installed-media-smoke.json','editai-e2e-real-report.json','editai-e2e-real-summary.json','editai-windows-artifacts.json')) {
             $reportPath = Join-Path $PWD "out\$reportName"
             if (-not (Test-Path $reportPath)) { throw "Relatório obrigatório ausente: $reportName" }
           }
@@ -114,6 +132,8 @@ jobs:
             mediaSmoke = $true
             squirrelInstall = $true
             installedSmoke = $true
+            installedMediaSmoke = $true
+            realVideoE2E = $true
           }
           $evidence | ConvertTo-Json -Depth 6 | Set-Content out\editai-rc2-windows-evidence.json -Encoding UTF8
           Get-Content out\editai-rc2-windows-evidence.json
@@ -132,4 +152,8 @@ jobs:
             out/editai-installed-smoke.json
             out/editai-install-smoke.json
             out/editai-media-smoke.json
+            out/editai-installed-media-smoke.json
+            out/editai-e2e-real-report.json
+            out/editai-e2e-real-summary.json
+            out/editai-e2e-real/**
             out/editai-rc2-windows-evidence.json

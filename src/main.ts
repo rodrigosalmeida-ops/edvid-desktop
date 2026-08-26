@@ -71,7 +71,7 @@ import {
   transientStatus,
   type MemberEntitlement,
 } from './member-auth-policy';
-import { EDIT_DIR, RENDER_DIR, nextRenderVersion } from './project-layout';
+import { EDIT_DIR, RENDER_DIR, finalVideoName, nextRenderVersion } from './project-layout';
 import { SOUNDTRACK_VOLUME, musicBrief } from './music-brief';
 import {
   applySplitPlan,
@@ -139,6 +139,7 @@ import {
   PREVIEW_SOURCE_ID,
   asText,
   deriveSegments,
+  edlRangesFromModel,
   migrateEdlToModel,
   modelFromSegments,
   modelFromSourceFiles,
@@ -146,6 +147,11 @@ import {
   sanitizeTimelineModel,
   type EdlDocument,
 } from './timeline-model';
+import { analyzeEditAiContext } from './editai/analysis-context';
+import { EDIT_AI_DEFAULT_BRAND, stylePatchForBrand } from './editai/brand-kit';
+import { editDataOperationsForPlan } from './editai/overlay-operations';
+import { buildTikTokShopVariants } from './editai/tiktok-shop-engine';
+import { applyAiEditPlan } from './editai/timeline-operations';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -5122,6 +5128,263 @@ async function runEditAiSmokeIfRequested(): Promise<boolean> {
   return true;
 }
 
+function commandLineValue(prefix: string): string | null {
+  const value = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length).trim();
+  return value ? path.resolve(value) : null;
+}
+
+async function fileSha256(filePath: string): Promise<string> {
+  const digest = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const input = createReadStream(filePath);
+    input.on('data', (chunk) => digest.update(chunk));
+    input.on('error', reject);
+    input.on('end', resolve);
+  });
+  return digest.digest('hex');
+}
+
+async function renderEditAiE2ePreview(projectDirectory: string): Promise<string> {
+  const runtime = await ensureRemotionRuntime();
+  if (runtime.status !== 'ready') {
+    throw new Error(runtime.status === 'error' ? runtime.error : 'Motor de preview indisponivel.');
+  }
+  await scaffoldRemotionProject(projectDirectory);
+  const node = resolveRuntime('node', appRuntimeContext());
+  if (!node.command) throw new Error('Node interno nao esta disponivel para o preview E2E.');
+  const remotionDirectory = path.join(projectDirectory, EDIT_DIR, 'remotion');
+  const output = path.join(remotionDirectory, 'out', 'editai-e2e-preview.png');
+  await mkdir(path.dirname(output), { recursive: true });
+  await runResolved(
+    node,
+    [
+      path.join(remotionDirectory, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'),
+      'still',
+      'Reels',
+      output,
+      '--frame=30',
+      '--timeout=120000',
+    ],
+    remotionDirectory,
+    {
+      PATH: [path.dirname(node.command), process.env.PATH].filter(Boolean).join(path.delimiter),
+    },
+  );
+  await stat(output);
+  return output;
+}
+
+/**
+ * Gate E2E executado pelo proprio binario instalado. Nao usa mocks nem um
+ * segundo pipeline de render: chama as mesmas funcoes de WhisperX, timeline,
+ * TikTok Shop, Brand Kit e Remotion usadas pela interface.
+ */
+async function runEditAiE2eIfRequested(): Promise<boolean> {
+  if (!process.argv.includes('--editai-e2e')) return false;
+  const input = commandLineValue('--editai-e2e-input=');
+  const outputReport = commandLineValue('--editai-e2e-output=');
+  const requestedProject = commandLineValue('--editai-e2e-project=');
+  const report: Record<string, unknown> = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    productName: 'EDIT AI',
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    ok: false,
+    steps: [] as Array<Record<string, unknown>>,
+  };
+  const steps = report.steps as Array<Record<string, unknown>>;
+  const mark = (name: string, detail: Record<string, unknown> = {}) => {
+    steps.push({ name, status: 'pass', at: new Date().toISOString(), ...detail });
+  };
+  let exitCode = 31;
+
+  try {
+    if (!input || !outputReport) {
+      throw new Error('Informe --editai-e2e-input e --editai-e2e-output.');
+    }
+    const inputInfo = await stat(input);
+    if (!inputInfo.isFile()) throw new Error('O video de entrada E2E nao e um arquivo.');
+
+    const projectDirectory = requestedProject
+      ? requestedProject
+      : await mkdtemp(path.join(os.tmpdir(), 'editai-e2e-'));
+    if (requestedProject) {
+      const existing = await readdir(projectDirectory).catch(() => [] as string[]);
+      if (existing.length > 0) throw new Error('A pasta E2E informada precisa estar vazia.');
+      await mkdir(projectDirectory, { recursive: true });
+    }
+    const source = path.join(projectDirectory, `entrada${path.extname(input).toLowerCase() || '.mp4'}`);
+    await copyFile(input, source);
+    mark('import', {
+      input: path.basename(source),
+      bytes: inputInfo.size,
+      sha256: await fileSha256(source),
+    });
+
+    const runtimePack = await ensureRuntimePack();
+    if (runtimePack.status !== 'ready') {
+      throw new Error(runtimePack.status === 'error' ? runtimePack.error : 'Runtime pack nao ficou pronto.');
+    }
+    mark('runtime-pack');
+
+    const whisperModel = await ensureWhisperModel();
+    if (whisperModel.status !== 'ready') {
+      throw new Error(whisperModel.status === 'error' ? whisperModel.error : 'Modelo WhisperX nao ficou pronto.');
+    }
+    const cleanCut = await runCleanCut(projectDirectory);
+    if (cleanCut.status !== 'pronto') throw new Error(cleanCut.error || 'WhisperX/corte limpo falhou.');
+    const transcriptPath = path.join(projectDirectory, EDIT_DIR, 'transcricao_raw', 'entrada.json');
+    const transcriptDocument = JSON.parse(await readFile(transcriptPath, 'utf8')) as { segments?: unknown[] };
+    const transcriptWords = (transcriptDocument.segments ?? []).flatMap((segment) => {
+      if (!segment || typeof segment !== 'object') return [];
+      const words = (segment as { words?: unknown }).words;
+      return Array.isArray(words) ? words : [];
+    });
+    if (transcriptWords.length < 5) throw new Error('WhisperX nao produziu palavras alinhadas suficientes.');
+    mark('whisperx', { model: WHISPERX_MODEL_NAME, alignedWords: transcriptWords.length });
+    mark('clean-cut', { summary: cleanCut.summary ?? '' });
+
+    const workspace = await openProject(projectDirectory, false, 'EDIT AI E2E');
+    if (!workspace.timelineModel) throw new Error('A timeline real nao foi criada a partir do EDL.');
+    const context = await readEditAiAnalysisContext(projectDirectory);
+    const localAnalysis = analyzeEditAiContext(context, 'tiktok_shop');
+    const variants = buildTikTokShopVariants(localAnalysis);
+    const evidenceKinds = new Set(variants.evidence.map((item) => item.kind));
+    const requiredEvidence = ['hook', 'benefit', 'price', 'cta', 'proof'];
+    const missingEvidence = requiredEvidence.filter((kind) => !evidenceKinds.has(kind as never));
+    if (missingEvidence.length) {
+      throw new Error(`Evidencias comerciais ausentes na transcricao real: ${missingEvidence.join(', ')}.`);
+    }
+    mark('tiktok-shop-a-b', {
+      variants: variants.variants.map((variant) => ({
+        id: variant.id,
+        strategy: variant.strategy,
+        operations: variant.plan.operations.length,
+        overlays: variant.plan.overlays?.length ?? 0,
+        targetDurationS: variant.targetDurationS,
+      })),
+      evidence: variants.evidence.map(({ kind, text, start, end, exact }) => ({ kind, text, start, end, exact })),
+    });
+
+    const selectedVariant = variants.variants[1];
+    const sourceDurations = Object.fromEntries(workspace.sources.map((item) => [item.id, item.duration]));
+    const appliedPlan = applyAiEditPlan(workspace.timelineModel, selectedVariant.plan, sourceDurations);
+    let effectiveModel = workspace.timelineModel;
+    if (appliedPlan.applied.length > 0) {
+      effectiveModel = appliedPlan.model;
+      const appliedCut = await applyTimelineRanges(projectDirectory, edlRangesFromModel(effectiveModel));
+      if (appliedCut.status !== 'pronto') throw new Error(appliedCut.error || 'Aplicacao da timeline A/B falhou.');
+    }
+    const finalWorkspace = await openProject(projectDirectory, false, 'EDIT AI E2E');
+    effectiveModel = finalWorkspace.timelineModel ?? effectiveModel;
+    const timelineMeta = projectTimelineMeta.get(projectDirectory);
+    const timelinePath = timelineMeta?.timelinePath ?? path.join(projectDirectory, EDIT_DIR, 'timeline.json');
+    await writeFile(timelinePath, `${JSON.stringify({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      edlFingerprint: timelineMeta?.edlFingerprint ?? null,
+      mediaFingerprint: timelineMeta?.mediaFingerprint ?? null,
+      model: effectiveModel,
+    }, null, 2)}\n`);
+    mark('timeline', {
+      variant: selectedVariant.id,
+      appliedOperations: appliedPlan.applied.length,
+      rejectedOperations: appliedPlan.rejected.length,
+      durationBefore: appliedPlan.durationBefore,
+      durationAfter: appliedPlan.durationAfter,
+      file: path.relative(projectDirectory, timelinePath),
+    });
+
+    const brand = EDIT_AI_DEFAULT_BRAND;
+    const brandStyle = stylePatchForBrand(brand);
+    const style: ProjectStyleState = {
+      edit: 'limpa',
+      splitMedia: 'nenhum',
+      headline: brandStyle.headline,
+      headlineText: selectedVariant.openingEvidence?.text ?? '',
+      captions: brandStyle.captions,
+      accent: brandStyle.accent,
+      elements: {
+        tracking: true,
+        zoomAuto: brandStyle.elements.zoomAuto,
+        zoomCuts: brandStyle.elements.zoomCuts,
+        flashCut: true,
+        musicAI: false,
+      },
+      note: 'E2E real TikTok Shop A/B',
+    };
+    await buildPhase2(projectDirectory, style);
+    const editDataPath = path.join(projectDirectory, EDIT_DIR, 'remotion', 'public', 'edit-data.json');
+    const editData = JSON.parse(await readFile(editDataPath, 'utf8')) as Record<string, unknown>;
+    const visualOperations = editDataOperationsForPlan(selectedVariant.plan, brand);
+    const visualResult = applyEditOperations(editData, visualOperations);
+    if (!visualResult.ok) throw new Error(`Brand Kit/callouts falhou: ${visualResult.reason}`);
+    await writeFile(editDataPath, `${JSON.stringify(visualResult.data, null, 2)}\n`);
+    const callouts = Array.isArray(visualResult.data.commercialCallouts)
+      ? visualResult.data.commercialCallouts as Array<{ kind?: unknown }>
+      : [];
+    const calloutKinds = new Set(callouts.map((item) => String(item.kind)));
+    for (const kind of ['benefit', 'price', 'cta']) {
+      if (!calloutKinds.has(kind)) throw new Error(`Callout ${kind} nao foi materializado no Remotion.`);
+    }
+    mark('brand-kit-captions-callouts', {
+      brand: brand.name,
+      captions: style.captions,
+      accent: style.accent,
+      visualOperations: visualOperations.length,
+      callouts: [...calloutKinds],
+    });
+
+    const preview = await renderEditAiE2ePreview(projectDirectory);
+    mark('preview-remotion', {
+      file: path.relative(projectDirectory, preview),
+      bytes: (await stat(preview)).size,
+      sha256: await fileSha256(preview),
+    });
+
+    const render = await renderPhase2(projectDirectory);
+    if (render.status !== 'ready' || !render.output) throw new Error(render.error || 'Render Remotion nao ficou pronto.');
+    const rendered = path.join(projectDirectory, EDIT_DIR, RENDER_DIR, render.output);
+    const renderedInfo = await stat(rendered);
+    const probeRuntime = resolveRuntime('ffprobe', appRuntimeContext());
+    if (!probeRuntime.command) throw new Error('FFprobe nao esta disponivel para validar o export.');
+    const probe = await inspectVideo(probeRuntime.command, probeRuntime.argsPrefix, rendered);
+    const published = path.join(projectDirectory, finalVideoName(path.basename(projectDirectory)));
+    await stat(published);
+    mark('remotion-export', {
+      output: path.relative(projectDirectory, rendered),
+      published: path.basename(published),
+      bytes: renderedInfo.size,
+      sha256: await fileSha256(rendered),
+      durationS: Number(probe.format?.duration) || null,
+      width: probe.streams?.[0]?.width ?? null,
+      height: probe.streams?.[0]?.height ?? null,
+    });
+
+    report.ok = true;
+    report.projectDirectory = projectDirectory;
+    report.selectedVariant = selectedVariant.id;
+    report.renderedVideo = rendered;
+    report.publishedVideo = published;
+    report.previewImage = preview;
+    report.evidenceCount = variants.evidence.length;
+    exitCode = 0;
+  } catch (error) {
+    report.error = error instanceof Error ? error.message : String(error);
+    steps.push({ name: 'e2e', status: 'fail', at: new Date().toISOString(), error: report.error });
+  }
+
+  if (outputReport) {
+    await mkdir(path.dirname(outputReport), { recursive: true });
+    await writeFile(outputReport, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  console.log('[EDIT AI E2E]', JSON.stringify(report));
+  app.exit(exitCode);
+  return true;
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle('desktop:get-info', () => ({
     platform: process.platform,
@@ -6319,6 +6582,7 @@ void app.whenReady().then(async () => {
     console.warn('Nao foi possivel preparar os caches do EDIT AI:', error);
   });
   if (await runEditAiSmokeIfRequested()) return;
+  if (await runEditAiE2eIfRequested()) return;
   setupAutoUpdate();
   void memberBoot();
   // Quem esta conectado por MCP so se descobre lendo o cofre de token. Sem

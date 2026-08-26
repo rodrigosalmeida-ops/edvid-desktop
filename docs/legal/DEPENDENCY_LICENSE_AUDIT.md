@@ -29,6 +29,7 @@ Este documento é um inventário técnico de conformidade, não aconselhamento j
 | Node.js / npm | 26.7.0 / 11.19.0 | MIT + licenças de terceiros | O runtime deve manter `LICENSE` e notices distribuídos pelo Node/npm. |
 | Codex App Server | 0.147.0 / commit fixado no manifesto | Apache-2.0 | O stage valida hash da licença e deve preservá-la no runtime. |
 | Fontes Poppins, Inter, Playfair Display, Lora e Libre Baskerville | arquivos locais do template | SIL Open Font License 1.1 | Preservar arquivos OFL e autoria junto ao template/runtime. |
+| edge-tts | 7.2.8, somente fixture do CI | LGPL-3.0 | Usado transitoriamente para gerar a fala do vídeo E2E no runner; não entra no instalador, runtime, MP4 exportado nem artefato de distribuição. |
 | Ícones, logo e fundo EDIT AI | assets próprios do RC2 | autoria EDIT AI | Não reutilizam marca ou assets do IA Edit PRO. |
 | SFX do template | herdados do repositório MIT do Edvid | MIT do repositório, salvo notice específico | Manter a atribuição do upstream; qualquer asset futuro precisa de origem/licença registrada antes do merge. |
 
