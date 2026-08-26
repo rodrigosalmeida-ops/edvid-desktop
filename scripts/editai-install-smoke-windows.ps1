@@ -17,7 +17,7 @@ if (-not $SetupPath) {
 }
 
 Write-Host "[EDIT AI] instalando via Squirrel: $SetupPath"
-$setupProcess = Start-Process -FilePath $SetupPath -PassThru
+$setupProcess = Start-Process -FilePath $SetupPath -ArgumentList @('--silent') -PassThru
 if (-not $setupProcess.WaitForExit($InstallTimeoutSeconds * 1000)) {
   try { $setupProcess.Kill() } catch {}
   throw "Setup excedeu ${InstallTimeoutSeconds}s."
