@@ -43,6 +43,11 @@ const BENEFIT_RE = /\b(resolve|ajuda|melhora|reduz|aumenta|protege|hidrata|forta
 const PROOF_RE = /\b(test(?:ei|amos)|uso|usando|resultado|antes|depois|olha como|funcionou|comprov|avalia[cç][aã]o|cliente|vendeu|vendas?)\b/iu;
 const CTA_RE = /\b(confira|veja|carrinho|compre|comprar|garanta|aproveite|clique|clica|link|pe[cç]a|pedido|toque|adicione)\b/iu;
 const PRICE_MATCH_RE = /(?:r\$\s?\d{1,6}(?:[.\s]\d{3})*(?:[,.]\d{1,2})?|\b\d{1,6}[,.]\d{2}\s*(?:reais?)?\b)/iu;
+const PT_NUMBER = '(?:um|uma|dois|duas|tres|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|cem|cento|duzentos|trezentos|quatrocentos|quinhentos|seiscentos|setecentos|oitocentos|novecentos|mil)';
+const SPOKEN_PRICE_RE = new RegExp(
+  `\\b${PT_NUMBER}(?:\\s+(?:e\\s+)?${PT_NUMBER}){0,5}\\s+reais?(?:\\s+e\\s+${PT_NUMBER}(?:\\s+(?:e\\s+)?${PT_NUMBER}){0,2}\\s+centavos?)?\\b`,
+  'iu',
+);
 const PRODUCT_HINT_RE = /\b(?:(?:produto|kit)\s+(?:da|do|de)\s+|(?:shampoo|condicionador|m[aá]scara|creme|perfume|pote|panela|balan[cç]a|ferramenta|power\s*bank)\s+)([\p{L}\p{N}][\p{L}\p{N}-]*(?:\s+[\p{L}\p{N}][\p{L}\p{N}-]*){0,2})/iu;
 
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
@@ -117,7 +122,7 @@ function extractEvidence(transcript: readonly TranscriptSegment[]): TikTokShopEv
     if (BENEFIT_RE.test(segment.text)) out.push(evidence('benefit', segment, Math.max(55, strength)));
     if (PROOF_RE.test(segment.text)) out.push(evidence('proof', segment, Math.max(50, strength)));
     if (CTA_RE.test(segment.text)) out.push(evidence('cta', segment, Math.max(60, strength)));
-    const price = segment.text.match(PRICE_MATCH_RE)?.[0];
+    const price = segment.text.match(PRICE_MATCH_RE)?.[0] ?? segment.text.match(SPOKEN_PRICE_RE)?.[0];
     if (price) out.push(evidence('price', segment, Math.max(70, strength), price));
   }
   const dedup = new Map<string, TikTokShopEvidence>();
