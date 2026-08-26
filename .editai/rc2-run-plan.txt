@@ -1,0 +1,1 @@
+RC2 application gate: reconstruct verified bundle -> node scripts/apply-editai-v10-rc2.mjs -> npm run verify:editai -> Windows QA build -> executable smoke -> media smoke -> installed smoke.
