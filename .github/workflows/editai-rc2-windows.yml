@@ -14,6 +14,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 360
     env:
+      GH_TOKEN: ${{ github.token }}
       EDITAI_RC2_SOURCE_SHA256: 9f79813ec7ea2315efd75272264f4d6947a4731dc2444faef9f4b828209f88f9
       EDITAI_UPSTREAM_COMMIT: db71373c2613333a80f399e864655c5891a9ea3b
 
