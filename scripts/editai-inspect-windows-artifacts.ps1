@@ -10,13 +10,13 @@ $SetupPath = Join-Path $Dir 'EDIT-AI-Setup.exe'
 $Setup = if (Test-Path $SetupPath -PathType Leaf) { Get-Item $SetupPath } else { $null }
 $Releases = Join-Path $Dir 'RELEASES'
 $Nupkgs = @(Get-ChildItem -Path $Dir -File -Filter '*.nupkg')
-if (-not $Setup) { throw 'EDIT-AI-Setup.exe do Squirrel não encontrado.' }
-if (-not (Test-Path $Releases)) { throw 'Arquivo RELEASES não encontrado.' }
+if (-not $Setup) { throw 'EDIT-AI-Setup.exe do Squirrel nao encontrado.' }
+if (-not (Test-Path $Releases)) { throw 'Arquivo RELEASES nao encontrado.' }
 if ($Nupkgs.Count -lt 1) { throw 'Nenhum .nupkg encontrado.' }
 
 $Signature = Get-AuthenticodeSignature -FilePath $Setup.FullName
 if ($RequireSignature -and $Signature.Status -ne 'Valid') {
-  throw "Assinatura do Setup inválida/ausente: $($Signature.Status)"
+  throw "Assinatura do Setup invalida/ausente: $($Signature.Status)"
 }
 
 function File-Info([System.IO.FileInfo]$File) {

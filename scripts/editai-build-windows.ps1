@@ -18,10 +18,10 @@ function Invoke-Checked {
 }
 
 if ($env:OS -ne 'Windows_NT') { throw 'Este pipeline deve rodar em Windows x64.' }
-if ([Environment]::Is64BitOperatingSystem -ne $true) { throw 'Windows 64 bits obrigatório.' }
+if ([Environment]::Is64BitOperatingSystem -ne $true) { throw 'Windows 64 bits obrigatorio.' }
 
 if (-not (Test-Path 'node_modules')) {
-  Write-Host '[EDIT AI] Instalando dependências npm...'
+  Write-Host '[EDIT AI] Instalando dependencias npm...'
   if (Test-Path 'package-lock.json') {
     Invoke-Checked 'npm ci' { npm ci }
   } else {
@@ -69,12 +69,12 @@ if ($Mode -eq 'release') {
     Write-Host '[EDIT AI] 6/10 publicando runtime'
     Invoke-Checked 'publish runtime' { node scripts/editai-publish-runtimes.mjs }
   } else {
-    Write-Host '[EDIT AI] 6/10 runtime não publicado (-PublishRuntime no release final)'
+    Write-Host '[EDIT AI] 6/10 runtime nao publicado (-PublishRuntime no release final)'
   }
 } else {
-  Write-Host '[EDIT AI] 4/10 QA fat: runtime ficará dentro do app'
+  Write-Host '[EDIT AI] 4/10 QA fat: runtime ficara dentro do app'
   $env:EDITAI_BUNDLE_RUNTIMES = '1'
-  Write-Host '[EDIT AI] 5/10 distribuição remota não é necessária'
+  Write-Host '[EDIT AI] 5/10 distribuicao remota nao e necessaria'
   Write-Host '[EDIT AI] 6/10 sem upload para QA'
 }
 
@@ -93,7 +93,7 @@ if ($GeneratedSetup) {
   Move-Item -Path $GeneratedSetup.FullName -Destination $CanonicalSetup -Force
 }
 if (-not (Test-Path $CanonicalSetup -PathType Leaf)) {
-  throw 'O Forge não gerou o instalador canônico EDIT-AI-Setup.exe.'
+  throw 'O Forge nao gerou o instalador canonico EDIT-AI-Setup.exe.'
 }
 
 Write-Host '[EDIT AI] 9/12 verificando artefatos e assinatura'
@@ -102,25 +102,25 @@ if ($Mode -eq 'release' -and -not $AllowUnsignedRelease) {
 } else {
   & powershell -ExecutionPolicy Bypass -File scripts/editai-inspect-windows-artifacts.ps1
 }
-if ($LASTEXITCODE -ne 0) { throw 'Inspeção dos artefatos Windows falhou.' }
+if ($LASTEXITCODE -ne 0) { throw 'Inspecao dos artefatos Windows falhou.' }
 
 if ($Mode -eq 'qa') {
-  Write-Host '[EDIT AI] 10/12 smoke test do executável empacotado'
+  Write-Host '[EDIT AI] 10/12 smoke test do executavel empacotado'
   & powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1
-  if ($LASTEXITCODE -ne 0) { throw 'Smoke test do executável empacotado falhou.' }
+  if ($LASTEXITCODE -ne 0) { throw 'Smoke test do executavel empacotado falhou.' }
   & powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1
   if ($LASTEXITCODE -ne 0) { throw 'Media smoke FFmpeg/FFprobe falhou.' }
 } else {
-  Write-Host '[EDIT AI] 10/12 smoke empacotado será executado no QA antes da promoção'
+  Write-Host '[EDIT AI] 10/12 smoke empacotado sera executado no QA antes da promocao'
 }
 
 if ($Mode -eq 'release' -and $PublishUpdate) {
   Write-Host '[EDIT AI] 11/12 publicando Setup + canal Squirrel'
   Invoke-Checked 'publish update' { node scripts/editai-publish-update.mjs }
 } else {
-  Write-Host '[EDIT AI] 11/12 publicação do app ignorada'
+  Write-Host '[EDIT AI] 11/12 publicacao do app ignorada'
 }
 
-Write-Host '[EDIT AI] 12/12 concluído'
+Write-Host '[EDIT AI] 12/12 concluido'
 Write-Host 'Artefatos: out/make/squirrel.windows/x64'
-Write-Host 'Teste obrigatório: instalar o EDIT-AI-Setup.exe em uma VM Windows limpa e executar vídeo real.'
+Write-Host 'Teste obrigatorio: instalar o EDIT-AI-Setup.exe em uma VM Windows limpa e executar video real.'

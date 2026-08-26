@@ -10,7 +10,7 @@ $StartedAt = Get-Date
 if (-not $SetupPath) {
   $dir = Join-Path $Root 'out\make\squirrel.windows\x64'
   $setup = Get-Item -Path (Join-Path $dir 'EDIT-AI-Setup.exe') -ErrorAction SilentlyContinue
-  if (-not $setup) { throw 'EDIT-AI-Setup.exe não encontrado.' }
+  if (-not $setup) { throw 'EDIT-AI-Setup.exe nao encontrado.' }
   $SetupPath = $setup.FullName
 } else {
   $SetupPath = (Resolve-Path $SetupPath).Path
@@ -55,9 +55,9 @@ while ((Get-Date) -lt $deadline -and -not $appExe) {
   }
   if (-not $appExe) { Start-Sleep -Seconds 2 }
 }
-if (-not $appExe) { throw 'Instalação terminou, mas o executável instalado não foi localizado no LocalAppData.' }
+if (-not $appExe) { throw 'Instalacao terminou, mas o executavel instalado nao foi localizado no LocalAppData.' }
 
-# Setup pode abrir a aplicação na primeira instalação; encerra somente processos do diretório instalado.
+# Setup pode abrir a aplicacao na primeira instalacao; encerra somente processos do diretorio instalado.
 Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
   try {
     if ($_.Path -and $_.Path.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -83,4 +83,4 @@ $summary = [ordered]@{
 $summaryPath = Join-Path $Root 'out\editai-install-smoke.json'
 $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
 Write-Host "[EDIT AI] install smoke PASS: $appExe"
-Write-Host "[EDIT AI] relatório: $summaryPath"
+Write-Host "[EDIT AI] relatorio: $summaryPath"
