@@ -78,10 +78,31 @@ if ($Mode -eq 'release') {
   Write-Host '[EDIT AI] 6/10 sem upload para QA'
 }
 
-Write-Host '[EDIT AI] 7/10 preparando Maker Squirrel'
+Write-Host '[EDIT AI] 7/12 preparando Maker Squirrel'
 Invoke-Checked 'prepare:forge-makers' { npm run prepare:forge-makers }
-Write-Host '[EDIT AI] 8/11 gerando Windows x64'
-Invoke-Checked 'electron-forge make' { npx --yes --package=node@22.23.2 -c "electron-forge make --platform=win32 --arch=x64" }
+Write-Host '[EDIT AI] 8/12 gerando pacote QA fat para smoke de runtimes'
+Invoke-Checked 'electron-forge package fat' { npx --yes --package=node@22.23.2 -c "electron-forge package --platform=win32 --arch=x64" }
+
+if ($Mode -eq 'qa') {
+  Write-Host '[EDIT AI] 9/12 smoke do pacote fat antes do instalador thin'
+  & powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1
+  if ($LASTEXITCODE -ne 0) { throw 'Smoke test do executavel empacotado falhou.' }
+  & powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1
+  if ($LASTEXITCODE -ne 0) { throw 'Media smoke FFmpeg/FFprobe falhou.' }
+}
+
+# Squirrel.Windows nao e adequado para embutir o runtime PyTorch/WhisperX de
+# aproximadamente 1 GB no .nupkg. O instalador real fica thin; no QA o gate de
+# instalacao hidrata o app instalado com o mesmo runtime staged e verificado.
+$FatPackage = Join-Path $Root 'out\EDIT AI-win32-x64'
+$PreservedFatPackage = Join-Path $Root 'out\EDIT AI-fat-win32-x64'
+if ($Mode -eq 'qa' -and (Test-Path $FatPackage)) {
+  if (Test-Path $PreservedFatPackage) { Remove-Item -Recurse -Force $PreservedFatPackage }
+  Move-Item -Path $FatPackage -Destination $PreservedFatPackage
+}
+$env:EDITAI_BUNDLE_RUNTIMES = '0'
+Write-Host '[EDIT AI] 10/12 gerando instalador Squirrel thin Windows x64'
+Invoke-Checked 'electron-forge make thin' { npx --yes --package=node@22.23.2 -c "electron-forge make --platform=win32 --arch=x64" }
 
 $SquirrelDir = Join-Path $Root 'out\make\squirrel.windows\x64'
 $GeneratedSetup = Get-ChildItem -Path $SquirrelDir -File -Filter '*Setup.exe' |
@@ -96,7 +117,7 @@ if (-not (Test-Path $CanonicalSetup -PathType Leaf)) {
   throw 'O Forge nao gerou o instalador canonico EDIT-AI-Setup.exe.'
 }
 
-Write-Host '[EDIT AI] 9/12 verificando artefatos e assinatura'
+Write-Host '[EDIT AI] 11/12 verificando artefatos e assinatura'
 if ($Mode -eq 'release' -and -not $AllowUnsignedRelease) {
   & powershell -ExecutionPolicy Bypass -File scripts/editai-inspect-windows-artifacts.ps1 -RequireSignature
 } else {
@@ -104,23 +125,13 @@ if ($Mode -eq 'release' -and -not $AllowUnsignedRelease) {
 }
 if ($LASTEXITCODE -ne 0) { throw 'Inspecao dos artefatos Windows falhou.' }
 
-if ($Mode -eq 'qa') {
-  Write-Host '[EDIT AI] 10/12 smoke test do executavel empacotado'
-  & powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1
-  if ($LASTEXITCODE -ne 0) { throw 'Smoke test do executavel empacotado falhou.' }
-  & powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1
-  if ($LASTEXITCODE -ne 0) { throw 'Media smoke FFmpeg/FFprobe falhou.' }
-} else {
-  Write-Host '[EDIT AI] 10/12 smoke empacotado sera executado no QA antes da promocao'
-}
-
 if ($Mode -eq 'release' -and $PublishUpdate) {
-  Write-Host '[EDIT AI] 11/12 publicando Setup + canal Squirrel'
+  Write-Host '[EDIT AI] 12/12 publicando Setup + canal Squirrel'
   Invoke-Checked 'publish update' { node scripts/editai-publish-update.mjs }
 } else {
-  Write-Host '[EDIT AI] 11/12 publicacao do app ignorada'
+  Write-Host '[EDIT AI] 12/12 publicacao do app ignorada'
 }
 
-Write-Host '[EDIT AI] 12/12 concluido'
+Write-Host '[EDIT AI] concluido'
 Write-Host 'Artefatos: out/make/squirrel.windows/x64'
 Write-Host 'Teste obrigatorio: instalar o EDIT-AI-Setup.exe em uma VM Windows limpa e executar video real.'
