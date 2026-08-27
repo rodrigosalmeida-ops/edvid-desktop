@@ -76,6 +76,10 @@ jobs:
         shell: powershell
         run: npm run smoke:editai:media
 
+      - name: Prepare full-runtime standalone EDIT AI executable
+        shell: powershell
+        run: npm run package:editai:standalone:win
+
       - name: Install via Squirrel and smoke installed EDIT AI
         shell: powershell
         run: npm run smoke:editai:install
@@ -158,3 +162,14 @@ jobs:
             out/editai-e2e-real-summary.json
             out/editai-e2e-real/**
             out/editai-rc2-windows-evidence.json
+            out/editai-standalone-evidence.json
+
+      - name: Upload executable EDIT AI standalone with bundled runtimes
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edit-ai-standalone-windows-x64-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          path: out/EDIT AI-fat-win32-x64/**
