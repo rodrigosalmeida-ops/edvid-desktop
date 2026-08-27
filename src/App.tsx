@@ -121,6 +121,7 @@ import { LivePreview, type PlayerRef } from './live-preview';
 import { remapLiveData, virtualWindows } from './virtual-cut';
 import { activeSplitIndexAt, type EditOperation, type OverlayKind } from './edit-data-edits';
 import { SPLIT_DIVIDER } from './image-format';
+import { applyPlaybackRate, REVIEW_SPEEDS, type ReviewSpeed } from './playback-speed';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
 import {
   VIDEO_TRACK_ID,
@@ -836,6 +837,18 @@ function EditorWorkspace({
   }, [liveDirectory]);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
+  // Velocidade de REVISÃO: só como o aluno assiste. Guardada em ref porque
+  // setVideoToProgramme lê o valor a cada troca de segmento durante o play,
+  // fora do ciclo de render do React.
+  const [reviewSpeed, setReviewSpeed] = useState<ReviewSpeed>(1);
+  const reviewSpeedRef = useRef<ReviewSpeed>(1);
+  useEffect(() => {
+    reviewSpeedRef.current = reviewSpeed;
+    // Reaplica na hora: sem esperar a próxima troca de segmento do playhead.
+    const video = videoRef.current;
+    const segment = programmeRef.current[mappedIndexRef.current];
+    if (video && segment) applyPlaybackRate(video, segment.speed || 1, reviewSpeed);
+  }, [reviewSpeed]);
   const [markIn, setMarkIn] = useState<number | null>(null);
   const [draftRange, setDraftRange] = useState<{ start: number; end: number } | null>(null);
   const [draftNote, setDraftNote] = useState('');
@@ -1565,7 +1578,7 @@ function EditorWorkspace({
     activeSourceIdRef.current = segment.sourceId;
     setActiveSourceId(segment.sourceId);
     const video = videoRef.current;
-    if (video) video.playbackRate = segment.speed || 1;
+    if (video) applyPlaybackRate(video, segment.speed || 1, reviewSpeedRef.current);
     if (nextUrl && nextUrl !== currentUrl) {
       // O src muda; o seek acontece quando os novos metadados carregarem.
       pendingVideoSeekRef.current = { sourceTime, resume };
@@ -1729,6 +1742,12 @@ function EditorWorkspace({
     livePlayerRef.current?.pause();
     const stepFps = liveActiveRef.current ? liveFpsRef.current : Math.max(fps, 1);
     seek(currentTimeRef.current + frames / stepFps);
+  }
+
+  function stepReviewSpeed(direction: -1 | 1) {
+    const index = REVIEW_SPEEDS.indexOf(reviewSpeed);
+    const nextIndex = Math.min(REVIEW_SPEEDS.length - 1, Math.max(0, index + direction));
+    setReviewSpeed(REVIEW_SPEEDS[nextIndex]);
   }
 
   function toggleMute() {
@@ -2425,6 +2444,13 @@ function EditorWorkspace({
         changeZoom(1);
         return;
       }
+      if (key === ',' || key === '.') {
+        event.preventDefault();
+        const index = REVIEW_SPEEDS.indexOf(reviewSpeedRef.current);
+        const nextIndex = key === ',' ? Math.max(0, index - 1) : Math.min(REVIEW_SPEEDS.length - 1, index + 1);
+        setReviewSpeed(REVIEW_SPEEDS[nextIndex]);
+        return;
+      }
       if (key === 'm') {
         event.preventDefault();
         if (markIn === null) setInPoint();
@@ -2552,6 +2578,7 @@ function EditorWorkspace({
                     playerRef={livePlayerRef}
                     onPlayerReady={() => setLiveReady((count) => count + 1)}
                     controls={false}
+                    playbackRate={reviewSpeed}
                   />
                   {/* A ALCA DA DIVISA: aparece quando a agulha esta dentro de
                       uma tela dividida. Arrastar move a divisa NO QUADRO — a
@@ -3440,6 +3467,21 @@ function EditorWorkspace({
               <span>{(Math.round(zoom * 10) / 10).toLocaleString('pt-BR')}×</span>
               <button type="button" onClick={() => changeZoom(Math.round(zoom) + 1)} disabled={zoom >= 8} title="Aumentar zoom (+)">+</button>
               <button type="button" className="fit" onClick={() => changeZoom(1)} disabled={zoom <= 1} title="Ver a timeline inteira (0)">Fit</button>
+            </div>
+            <div className="review-speed" aria-label="Velocidade de revisão">
+              <button
+                type="button"
+                onClick={() => stepReviewSpeed(-1)}
+                disabled={!media || reviewSpeed === REVIEW_SPEEDS[0]}
+                title="Revisar mais devagar (,)"
+              >−</button>
+              <span>{reviewSpeed}×</span>
+              <button
+                type="button"
+                onClick={() => stepReviewSpeed(1)}
+                disabled={!media || reviewSpeed === REVIEW_SPEEDS[REVIEW_SPEEDS.length - 1]}
+                title="Revisar mais rápido (.)"
+              >+</button>
             </div>
             <button type="button" className="transport-button" onClick={toggleMute} disabled={!media} title={muted ? 'Ativar áudio' : 'Silenciar'}>
               <Icon name={muted ? 'volumeOff' : 'volume'} />

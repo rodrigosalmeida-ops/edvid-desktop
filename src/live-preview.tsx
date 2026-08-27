@@ -66,6 +66,7 @@ export function LivePreview({
   playerRef,
   onPlayerReady,
   controls = true,
+  playbackRate = 1,
 }: {
   data: NonNullable<LivePreviewData>;
   // A TIMELINE comanda: o EditorWorkspace segura o ref e liga play, agulha e
@@ -74,6 +75,10 @@ export function LivePreview({
   playerRef?: React.RefObject<PlayerRef | null>;
   onPlayerReady?: () => void;
   controls?: boolean;
+  // Velocidade de REVISÃO: só como se assiste a prévia ao vivo no Player. O
+  // Remotion sempre renderiza a exportação a 1x via durationInFrames/fps,
+  // então isso nunca muda a duração nem os quadros do arquivo final.
+  playbackRate?: number;
 }) {
   const [composition, setComposition] = useState<CompositionModule | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -146,6 +151,7 @@ export function LivePreview({
         compositionHeight={height}
         style={{ width: '100%', height: '100%' }}
         controls={controls}
+        playbackRate={playbackRate}
         clickToPlay
         acknowledgeRemotionLicense
         renderPoster={() => null}
