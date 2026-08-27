@@ -5,9 +5,9 @@
 //
 // Saida: out/runtime-packs/runtimes-<plat>-<arch>-<chave>.tar.gz (+ .sha256)
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,14 +33,65 @@ const packName = `runtimes-${platformKey}-${key}.tar.gz`;
 const packPath = path.join(outDirectory, packName);
 
 console.log(`Empacotando ${platformKey} (chave ${key})...`);
-// O tar leva o diretorio da plataforma com o proprio nome na raiz do
-// arquivo: extrair em userData/runtime/tools reproduz o layout dos resources.
-const result = spawnSync(
-  'tar',
-  ['-czf', packPath, '-C', path.join(projectRoot, 'resources', 'runtimes'), platformKey],
-  { stdio: 'inherit' },
-);
-if (result.status !== 0) process.exit(result.status ?? 1);
+// IMPORTANTE: nao passe packPath para `tar -czf <arquivo>`. O bsdtar do
+// Windows pode confundir IDs de arquivo em arvores enormes (PyTorch tem
+// milhares de entradas) e marcar um arquivo-fonte legitimo como "archive
+// itself", pulando-o silenciosamente. Foi assim que
+// torch/ao/nn/sparse/quantized/utils.py ficou fora do runtime comercial e o
+// WhisperX quebrou no E2E. Escrever o tar em stdout elimina completamente a
+// comparacao do arquivo de saida contra as entradas da arvore.
+await rm(packPath, { force: true });
+await new Promise((resolve, reject) => {
+  const output = createWriteStream(packPath, { flags: 'wx' });
+  const child = spawn(
+    'tar',
+    ['-czf', '-', '-C', path.join(projectRoot, 'resources', 'runtimes'), platformKey],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  let settled = false;
+  const fail = async (error) => {
+    if (settled) return;
+    settled = true;
+    child.kill();
+    output.destroy();
+    await rm(packPath, { force: true }).catch(() => {});
+    reject(error);
+  };
+  child.on('error', fail);
+  output.on('error', fail);
+  child.stdout.on('error', fail);
+  child.stdout.pipe(output);
+  child.on('close', (code) => {
+    if (settled) return;
+    if (code !== 0) {
+      void fail(new Error(`tar terminou com exit ${code ?? 'desconhecido'}`));
+      return;
+    }
+    output.end(() => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    });
+  });
+});
+
+// Gate de integridade estrutural. O SHA-256 prova que o download nao mudou,
+// mas nao prova que o arquivo foi criado completo. Quando o runtime contem
+// WhisperX, confirme no proprio tar as duas entradas que detectam exatamente
+// a corrupcao observada no Windows comercial antes de publicar o pack.
+const criticalEntries = [
+  `${platformKey}/python-whisperx/python/Lib/site-packages/whisperx/__init__.py`,
+  `${platformKey}/python-whisperx/python/Lib/site-packages/torch/ao/nn/sparse/quantized/utils.py`,
+];
+for (const entry of criticalEntries) {
+  const sourceEntry = path.join(runtimesDirectory, ...entry.slice(platformKey.length + 1).split('/'));
+  if (!(await stat(sourceEntry).catch(() => null))) continue;
+  const check = spawnSync('tar', ['-tzf', packPath, entry], { stdio: 'ignore' });
+  if (check.status !== 0) {
+    await rm(packPath, { force: true });
+    throw new Error(`runtime pack incompleto: entrada critica ausente: ${entry}`);
+  }
+}
 
 const digest = createHash('sha256');
 await new Promise((resolve, reject) => {
