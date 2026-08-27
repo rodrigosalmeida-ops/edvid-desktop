@@ -326,7 +326,31 @@ try {
   );
   assert.equal(modelRemovesMaterial(multiCut, durations), true);
 
-  console.log('test:timeline-model ok — migração, razor, trim, delete, programa, espelho multi-fonte, evidência de corte e ranges validados.');
+  // --- Bastidor A/B: próximo segmento pronto antes da fronteira ---
+  const urls = new Map([['A', 'edvid://a'], ['B', 'edvid://b']]);
+  const urlOf = (id) => urls.get(id) ?? null;
+  const prog = [
+    { clipId: 'c1', timelineStart: 0, timelineEnd: 4, sourceId: 'A', sourceIn: 10, speed: 1 },
+    { clipId: 'c2', timelineStart: 4, timelineEnd: 6, sourceId: 'B', sourceIn: 2, speed: 2 },
+    { clipId: 'c3', timelineStart: 8, timelineEnd: 9, sourceId: 'A', sourceIn: 30, speed: 1 },
+  ];
+  const plano = model.standbyPlanFor(prog, 0, false, urlOf);
+  assert.deepEqual(plano, { index: 1, sourceId: 'B', url: 'edvid://b', sourceTime: 2, speed: 2 });
+  const planoGap = model.standbyPlanFor(prog, 2, true, urlOf);
+  assert.equal(planoGap.index, 2);
+  assert.equal(planoGap.sourceTime, 30);
+  assert.equal(model.standbyPlanFor(prog, 2, false, urlOf), null);
+  assert.equal(model.standbyPlanFor(prog, 0, false, () => null), null);
+  assert.equal(model.standbyPlanFor(prog, -1, true, urlOf), null);
+  assert.equal(model.standbyPlanMatches(plano, prog, urlOf), true);
+  assert.equal(model.standbyPlanMatches(plano, [prog[0], { ...prog[1], sourceIn: 2.4 }, prog[2]], urlOf), false);
+  assert.equal(model.standbyPlanMatches(plano, [prog[0], prog[2]], urlOf), false);
+  assert.equal(
+    model.standbyPlanMatches(plano, prog, (id) => (id === 'B' ? 'edvid://b-proxy' : urlOf(id))),
+    false,
+  );
+
+  console.log('test:timeline-model ok — migração, razor, trim, delete, programa, espelho multi-fonte, evidência de corte, ranges e bastidor validados.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
