@@ -108,12 +108,12 @@ jobs:
           $inArchive = ($listing | Select-String -SimpleMatch 'ao/nn/sparse/quantized/utils.py')
           Write-Host "[diagnose] (B) presente na listagem do .tar.gz: $([bool]$inArchive)"
           if (-not $stagedOk) {
-            throw '[diagnose] torch.ao/.../utils.py ja falta ANTES do empacotamento — bug fica em stage-python-whisperx.mjs (uv pip install).'
+            throw '[diagnose] torch.ao/.../utils.py ja falta ANTES do empacotamento - bug fica em stage-python-whisperx.mjs (uv pip install).'
           }
           if ($stagedOk -and -not $inArchive) {
-            throw '[diagnose] arquivo staged mas AUSENTE do .tar.gz — bug fica em pack-runtimes.mjs (tar -czf).'
+            throw '[diagnose] arquivo staged mas AUSENTE do .tar.gz - bug fica em pack-runtimes.mjs (tar -czf).'
           }
-          Write-Host '[diagnose] (A) e (B) OK — arquivo sobrevive ate o pacote publicado. Bug deve estar na extracao no app instalado (checkpoint C).'
+          Write-Host '[diagnose] (A) e (B) OK - arquivo sobrevive ate o pacote publicado. Bug deve estar na extracao no app instalado (checkpoint C).'
 
       - name: Publish immutable runtime pack to GitHub Release
         shell: powershell
@@ -123,7 +123,7 @@ jobs:
           $sidecar = Get-Item "$($pack.FullName).sha256" -ErrorAction Stop
           if (-not $pack) { throw 'Runtime pack comercial ausente.' }
           # "gh release view" escreve no stderr quando a release ainda nao
-          # existe (esperado no primeiro run) — com ErrorActionPreference
+          # existe (esperado no primeiro run) - com ErrorActionPreference
           # Stop isso vira erro terminante mesmo redirecionado com "*> $null",
           # entao a checagem some antes do "if" abaixo rodar. Continue so
           # nesta sondagem, restaura Stop antes de qualquer coisa que precise
@@ -159,7 +159,7 @@ jobs:
           # Checkpoint C do diagnostico acima: (A) staged e (B) dentro do
           # .tar.gz ja foram confirmados presentes. Se sumir so aqui, o bug
           # esta na extracao real (tar -xzf em src/main.ts) ou em algo do
-          # proprio Windows/AV nesta maquina — nao no empacotamento do EDIT AI.
+          # proprio Windows/AV nesta maquina - nao no empacotamento do EDIT AI.
           $extracted = Join-Path $env:APPDATA 'EDIT AI\runtime\tools\win32-x64\python-whisperx\python\Lib\site-packages\torch\ao\nn\sparse\quantized\utils.py'
           $extractedOk = Test-Path $extracted
           Write-Host "[diagnose] (C) presente apos extracao no app instalado: $extractedOk ($extracted)"
@@ -167,13 +167,13 @@ jobs:
             $torchRoot = Join-Path $env:APPDATA 'EDIT AI\runtime\tools\win32-x64\python-whisperx\python\Lib\site-packages\torch'
             if (Test-Path $torchRoot) {
               $aoCount = (Get-ChildItem -Recurse -File (Join-Path $torchRoot 'ao') -ErrorAction SilentlyContinue | Measure-Object).Count
-              Write-Host "[diagnose] torch\ao existe mas tem $aoCount arquivo(s) — comparar com a listagem (B) acima."
+              Write-Host "[diagnose] torch\ao existe mas tem $aoCount arquivo(s) - comparar com a listagem (B) acima."
             } else {
               Write-Host '[diagnose] a propria pasta torch\ao nao existe apos extracao.'
             }
             throw '[diagnose] arquivo estava no .tar.gz publicado mas sumiu na extracao do app instalado (tar -xzf em src/main.ts, ou AV/antivirus do runner).'
           }
-          Write-Host '[diagnose] (C) OK — o arquivo sobreviveu a extracao real. A causa do ModuleNotFoundError nao e este arquivo especifico; precisa investigar outro import na cadeia.'
+          Write-Host '[diagnose] (C) OK - o arquivo sobreviveu a extracao real. A causa do ModuleNotFoundError nao e este arquivo especifico; precisa investigar outro import na cadeia.'
 
       - name: Prove runtime came from the public release
         shell: powershell
