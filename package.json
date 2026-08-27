@@ -63,7 +63,8 @@
     "smoke:editai:win": "powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1",
     "smoke:editai:install": "powershell -ExecutionPolicy Bypass -File scripts/editai-install-smoke-windows.ps1",
     "smoke:editai:media": "powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1",
-    "smoke:editai:e2e": "powershell -ExecutionPolicy Bypass -File scripts/editai-e2e-real-video-windows.ps1"
+    "smoke:editai:e2e": "powershell -ExecutionPolicy Bypass -File scripts/editai-e2e-real-video-windows.ps1",
+    "package:editai:standalone:win": "powershell -ExecutionPolicy Bypass -File scripts/editai-package-standalone-windows.ps1"
   },
   "author": "EDIT AI",
   "license": "MIT",
