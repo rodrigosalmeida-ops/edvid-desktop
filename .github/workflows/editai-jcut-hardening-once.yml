@@ -44,7 +44,7 @@ jobs:
               // Se há trims/deletes pendentes, materialize-os primeiro; caso
               // contrário o refresh após o J-Cut releria o EDL antigo e poderia
               // descartar os ajustes recém-feitos na timeline.
-              if (cutsPendingRef.current) {
+              if (cutsPending) {
                 setJcutBusy(true);
                 const applied = await applyTimelineEdits().catch(() => false);
                 setJcutBusy(false);
@@ -104,7 +104,7 @@ jobs:
             const mainSource = readFileSync(path.join(projectRoot, 'src', 'main.ts'), 'utf8');
             assert.match(
               appSource,
-              /async function applyJcut[\\s\\S]{0,1800}?cutsPendingRef\\.current[\\s\\S]{0,1000}?applyTimelineEdits\\(\\)/u,
+              /async function applyJcut[\\s\\S]{0,1800}?if \\(cutsPending\\)[\\s\\S]{0,1000}?applyTimelineEdits\\(\\)/u,
               'J-Cut precisa aplicar ajustes pendentes da timeline primeiro',
             );
             assert.match(
