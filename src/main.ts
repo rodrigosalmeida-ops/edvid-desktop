@@ -4181,8 +4181,17 @@ function resolveJcutSource(
   if (!mapped) return null;
   const absolutePath = path.isAbsolute(mapped) ? path.resolve(mapped) : path.resolve(projectDirectory, mapped);
   const relative = path.relative(projectDirectory, absolutePath);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return absolutePath;
+  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) return absolutePath;
+
+  // O EDL guarda o caminho absoluto da época em que foi criado. Se a
+  // pasta do projeto foi movida/renomeada ou aberta em outra máquina,
+  // preserve a contenção e tente o mesmo nome DENTRO da pasta atual.
+  const fileName = path.basename(mapped);
+  if (!fileName || fileName === '.' || fileName === path.sep) return null;
+  const insideProject = path.resolve(projectDirectory, fileName);
+  const fallbackRelative = path.relative(projectDirectory, insideProject);
+  if (!fallbackRelative || fallbackRelative.startsWith('..') || path.isAbsolute(fallbackRelative)) return null;
+  return insideProject;
 }
 
 // O alvo primario e o corte limpo mais recente FORA de edit/remotion/public
