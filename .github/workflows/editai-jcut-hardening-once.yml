@@ -96,6 +96,37 @@ jobs:
           if import_old not in test_text:
               raise SystemExit('Guard failed: test-jcut fs import changed')
           test_text = test_text.replace(import_old, import_new, 1)
+
+          esbuild_const = "const ESBUILD = path.join(projectRoot, 'node_modules', 'esbuild', 'bin', 'esbuild');\n"
+          if esbuild_const not in test_text:
+              raise SystemExit('Guard failed: ESBUILD constant changed')
+          test_text = test_text.replace(esbuild_const, '', 1)
+
+          esbuild_old = """  // O entrypoint JS do esbuild é executado pelo próprio Node para não depender
+            // dos shims .bin (esbuild.cmd no Windows), que execFileSync não abre de
+            // forma portável sem shell.
+            execFileSync(process.execPath, [ESBUILD,
+              path.join(projectRoot, 'src', 'jcut.ts'),
+              '--bundle', '--platform=node', '--format=esm',
+              `--outfile=${path.join(work, 'jcut.mjs')}`,
+            ], { stdio: 'inherit' });
+          """.replace('            ', '  ')
+          esbuild_new = """  // Use a API JS do esbuild, não o shim .cmd nem o binário nativo. Assim o
+            // mesmo teste roda em Windows, Linux e macOS sem shell específico.
+            const { buildSync } = await import('esbuild');
+            buildSync({
+              entryPoints: [path.join(projectRoot, 'src', 'jcut.ts')],
+              bundle: true,
+              platform: 'node',
+              format: 'esm',
+              outfile: path.join(work, 'jcut.mjs'),
+              logLevel: 'silent',
+            });
+          """.replace('            ', '  ')
+          if esbuild_old not in test_text:
+              raise SystemExit('Guard failed: esbuild launcher block changed')
+          test_text = test_text.replace(esbuild_old, esbuild_new, 1)
+
           marker = "  // --- Plano: clamps e recusas -------------------------------------------\n"
           contract = """  // Contratos de integração: o renderer não pode rodar J-Cut sobre um EDL
             // anterior aos ajustes pendentes, e um projeto movido deve poder reencontrar
