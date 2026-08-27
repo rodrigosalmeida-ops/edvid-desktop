@@ -80,12 +80,15 @@ import {
   type PlanSegment,
 } from './edit-plan';
 import { previewFrames, previewPlan } from './phase2-preview';
+import { remapLiveData, virtualWindows } from './virtual-cut';
 import {
   cleanCutArgs,
   cleanCutSummary,
   ffmpegCutArgs,
   orderSources,
   parseEdl,
+  quantizeRanges,
+  roundedFps,
   whisperxArgs,
 } from './clean-cut';
 import { consolidateProjectFolder, publishFinalVideo, pruneRenders } from './project-files';
@@ -2714,6 +2717,7 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
             media: source.absolutePath,
             model: WHISPERX_MODEL_NAME,
             outputDirectory: transcriptDirectory,
+            launcher: path.join(helpersDirectory(), 'whisperx_launcher.py'),
           })],
           environment,
           45 * 60_000,
@@ -2938,6 +2942,44 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
   return promise;
 }
 
+async function remapPhase2DataAfterCut(
+  projectDirectory: string,
+  anterior: ReadonlyArray<{ source: string; start: number; end: number }>,
+  novos: ReadonlyArray<{ source: string; start: number; end: number }>,
+  fps: number,
+): Promise<void> {
+  const publicDirectory = path.join(projectDirectory, EDIT_DIR, 'remotion', 'public');
+  const editDataFile = path.join(publicDirectory, 'edit-data.json');
+  let editData: Record<string, unknown> | null = null;
+  try {
+    editData = JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (!editData) return;
+  const windows = virtualWindows({
+    pending: novos.map((range) => ({ sourceId: range.source, start: range.start, end: range.end })),
+    applied: anterior,
+    fps,
+  });
+  if (!windows) return;
+  const readJson = async (name: string): Promise<unknown> => {
+    try { return JSON.parse(await readFile(path.join(publicDirectory, name), 'utf8')) as unknown; }
+    catch { return null; }
+  };
+  const captions = (await readJson('captions.json')) ?? [];
+  const segments = ((await readJson('segments.json')) as { segments?: Array<{ start: number; dur: number }> } | null) ?? { segments: [] };
+  const track = (await readJson('track.json')) as { points?: unknown[] } | null;
+  const out = remapLiveData({ editData, captions, segments, track }, windows);
+  delete (out.editData as Record<string, unknown>).baseWindows;
+  await writeFile(editDataFile, `${JSON.stringify(out.editData, null, 2)}\n`);
+  await writeFile(path.join(publicDirectory, 'captions.json'), `${JSON.stringify(out.captions, null, 2)}\n`);
+  await writeFile(path.join(publicDirectory, 'segments.json'), `${JSON.stringify(out.segments, null, 2)}\n`);
+  if (out.track && (out.track.points?.length ?? 0) > 0) {
+    await writeFile(path.join(publicDirectory, 'track.json'), `${JSON.stringify(out.track)}\n`);
+  }
+}
+
 // AJUSTES DA TIMELINE aplicados pelo APLICATIVO.
 //
 // Isto era um pedido ao agente: "atualize o edl.json com estes ranges e
@@ -2955,11 +2997,11 @@ async function applyTimelineRanges(
     if (!ranges.length) throw new Error('Não há nenhum trecho para manter na linha do tempo.');
     await requireRuntimePack();
     const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
+    const ffprobe = resolveRuntime('ffprobe', appRuntimeContext());
     if (!ffmpeg.command) throw new Error('O motor de corte não está disponível nesta instalação.');
     const existing = await readEdlDocument(projectDirectory);
     if (!existing) throw new Error('Faça o corte limpo antes de ajustar a linha do tempo.');
 
-    // Cada fonte citada pelos trechos vira uma entrada do FFmpeg, uma vez só.
     const inputs: string[] = [];
     const sourceIndex: Record<string, number> = {};
     for (const range of ranges) {
@@ -2972,39 +3014,76 @@ async function applyTimelineRanges(
       inputs.push(resolved);
     }
 
-    broadcastCleanCut({ status: 'cortando' });
+    const firstInput = inputs[0];
+    const inspected = firstInput && ffprobe.command
+      ? await inspectVideo(ffprobe.command, ffprobe.argsPrefix, firstInput).catch(() => null)
+      : null;
+    const measured = parseFrameRate(inspected?.streams?.[0]?.avg_frame_rate || inspected?.streams?.[0]?.r_frame_rate);
+    const fps = roundedFps(measured || 30);
+    const quantized = quantizeRanges(ranges.map((range) => ({
+      source: range.sourceId,
+      beat: range.label,
+      start: range.start,
+      end: range.end,
+    })), fps);
+
+    const parsedCurrent = parseEdl(existing.document);
+    const sameRanges = Boolean(parsedCurrent)
+      && parsedCurrent!.ranges.length === quantized.length
+      && parsedCurrent!.ranges.every((range, index) =>
+        range.source === quantized[index].source
+        && Math.abs(range.start - quantized[index].start) < 1e-6
+        && Math.abs(range.end - quantized[index].end) < 1e-6);
+
     const editDirectory = path.join(projectDirectory, EDIT_DIR);
     const output = path.join(editDirectory, 'corte_limpo.mp4');
+    if (sameRanges && ffprobe.command) {
+      const current = await inspectVideo(ffprobe.command, ffprobe.argsPrefix, output).catch(() => null);
+      const rate = String(current?.streams?.[0]?.avg_frame_rate ?? '');
+      if (rate === `${fps}/1`) {
+        return { status: 'pronto', summary: 'Os cortes já estavam aplicados — nada a refazer.' };
+      }
+    }
+
+    broadcastCleanCut({ status: 'cortando' });
     await runFfmpeg(
       ffmpeg.command,
       ffmpeg.argsPrefix,
       ffmpegCutArgs({
         inputs,
-        ranges: ranges.map((range) => ({
-          source: range.sourceId, beat: range.label, start: range.start, end: range.end,
-        })),
+        ranges: quantized,
         sourceIndex,
         output,
+        fps,
+        audioFadeSeconds: 0.03,
       }),
       60 * 60_000,
     );
 
-    // O EDL passa a descrever o video que ACABOU de sair, e o J-Cut antigo
-    // deixa de valer: o audio dele foi calculado para outro corte.
     const document = { ...existing.document } as Record<string, unknown>;
-    document.ranges = ranges.map((range, index) => ({
-      source: range.sourceId,
-      beat: range.label || `Bloco ${String(index + 1).padStart(2, '0')}`,
-      start: Number(range.start.toFixed(3)),
-      end: Number(range.end.toFixed(3)),
+    document.ranges = quantized.map((range, index) => ({
+      source: range.source,
+      beat: range.beat || `Bloco ${String(index + 1).padStart(2, '0')}`,
+      start: range.start,
+      end: range.end,
+      ...(range.gain_db ? { gain_db: range.gain_db } : {}),
     }));
     document.total_duration_s = Number(
-      ranges.reduce((total, range) => total + (range.end - range.start), 0).toFixed(3),
+      quantized.reduce((total, range) => total + (range.end - range.start), 0).toFixed(6),
     );
     delete document.jcut_timeline;
     await writeFile(existing.path, `${JSON.stringify(document, null, 2)}\n`);
     await rm(jcutMarkerPath(projectDirectory), { force: true });
     await rm(path.join(editDirectory, 'corte_limpo-sem-jcut-tmp.mp4'), { force: true });
+
+    if (parsedCurrent) {
+      await remapPhase2DataAfterCut(
+        projectDirectory,
+        parsedCurrent.ranges,
+        quantized.map((range) => ({ source: range.source, start: range.start, end: range.end })),
+        fps,
+      ).catch(() => {});
+    }
 
     const kept = Number(document.total_duration_s);
     const minutes = Math.floor(Math.round(kept) / 60);
@@ -5977,6 +6056,19 @@ function registerIpcHandlers(): void {
       renderPending = true; // sem carimbo: nunca renderizou este estado
     }
 
+    let appliedEdl: Array<{ source: string; start: number; end: number }> = [];
+    try {
+      const doc = await readEdlDocument(directory);
+      const parsed = doc ? parseEdl(doc.document) : null;
+      appliedEdl = (parsed?.ranges ?? []).map((range) => ({
+        source: range.source,
+        start: range.start,
+        end: range.end,
+      }));
+    } catch {
+      // Sem EDL, a prévia mapeada continua sendo o fallback.
+    }
+
     return {
       editData,
       renderPending,
@@ -5990,6 +6082,7 @@ function registerIpcHandlers(): void {
       graphicLayers,
       bespokeGraphics: bespoke,
       layersReady,
+      edl: { ranges: appliedEdl },
     };
   });
 
