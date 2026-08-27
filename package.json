@@ -24,7 +24,7 @@
     "test:scaffold": "node scripts/test-scaffold.mjs",
     "test:fingerprint": "node scripts/test-fingerprint.mjs",
     "test:ai-catalog": "node scripts/test-ai-catalog.mjs",
-    "test:codex-engine": "node scripts/smoke-codex-app-server.mjs",
+    "test:codex-engine": "node scripts/test-codex-engine.mjs",
     "test:render-message": "node scripts/test-render-message.mjs",
     "test:split-layout": "node scripts/test-split-layout.mjs",
     "test:chat-language": "node scripts/test-chat-language.mjs",
