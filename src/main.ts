@@ -157,6 +157,15 @@ import { EDIT_AI_DEFAULT_BRAND, stylePatchForBrand } from './editai/brand-kit';
 import { editDataOperationsForPlan } from './editai/overlay-operations';
 import { buildTikTokShopVariants } from './editai/tiktok-shop-engine';
 import { applyAiEditPlan } from './editai/timeline-operations';
+import { FilaDeTrabalho } from './work-queue';
+
+// Proxy e waveform disputam a mesma CPU/disco que o resto do app. Sem um
+// limite, abrir um projeto com varias fontes pesadas (ProRes, HEVC) dispara
+// um FFmpeg por fonte de uma vez e a interface trava. A largura acompanha os
+// nucleos da maquina, mas nunca passa de 3 — mais que isso satura I/O antes
+// de ajudar. Cada tarefa ainda entra e sai da fila sozinha: dedup, progresso
+// e cleanup continuam nas funcoes que a chamam, a fila so serializa o spawn.
+const filaTrabalhoPesado = new FilaDeTrabalho(Math.min(3, Math.max(1, Math.ceil((os.cpus()?.length ?? 4) / 2))));
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -984,7 +993,10 @@ async function ensurePreviewProxy(
     const partial = `${destination}.partial.mp4`;
     proxyState({ status: 'building', name, progress: 0 });
     try {
-      await new Promise<void>((resolve, reject) => {
+      // A fila so limita QUANTOS ffmpeg rodam ao mesmo tempo — o pedido ja
+      // esta marcado como "building" acima, o dedup em proxyJobs continua
+      // valendo, e cancelamento/erro seguem tratados no catch/finally de fora.
+      await filaTrabalhoPesado.adicionar(() => new Promise<void>((resolve, reject) => {
         const child = spawn(
           ffmpeg.command as string,
           [...ffmpeg.argsPrefix, ...proxyArgs({ entrada: absolutePath, saida: partial })],
@@ -1006,7 +1018,7 @@ async function ensurePreviewProxy(
             ? resolve()
             : reject(new Error(errorText.trim().split(/\r?\n/u).at(-1) || `ffmpeg saiu com ${code}`))
         ));
-      });
+      }));
       await rename(partial, destination);
       proxyState({ status: 'ready', name });
       return destination;
@@ -1648,7 +1660,9 @@ function waveformCacheDirectory(): string {
 function extractWaveformPeaks(mediaPath: string): Promise<number[] | null> {
   const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
   if (!ffmpeg.command) return Promise.resolve(null);
-  return new Promise((resolve) => {
+  // Mesma fila do proxy: onda e proxy competem pelo mesmo FFmpeg/CPU, entao
+  // dividem o limite de spawns simultaneos em vez de cada um ter o seu.
+  return filaTrabalhoPesado.adicionar(() => new Promise((resolve) => {
     const child = spawn(
       ffmpeg.command as string,
       [
@@ -1691,7 +1705,7 @@ function extractWaveformPeaks(mediaPath: string): Promise<number[] | null> {
       if (bucketCount > 0) peaks.push(Math.round(bucketPeak * 1000) / 1000);
       resolve(code === 0 && peaks.length > 0 ? peaks : null);
     });
-  });
+  }));
 }
 
 async function readSourceWaveform(mediaUrl: string): Promise<SourceWaveform | null> {
