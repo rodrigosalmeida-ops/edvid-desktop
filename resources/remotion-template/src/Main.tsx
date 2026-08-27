@@ -355,8 +355,7 @@ export const DynamicVideo: React.FC<{src?: string; frameOffset?: number; transpa
           transform: `translate(${tx.toFixed(2)}px, ${ty.toFixed(2)}px) scale(${S.toFixed(4)})`,
         }}
       >
-        {getRemotionEnvironment().isRendering ? (
-          {(() => {
+        {(() => {
           const baseWindows = src === 'cut.mp4'
             ? ((D as unknown as {baseWindows?: {from: number; srcStart: number; dur: number}[]}).baseWindows ?? null)
             : null;
@@ -364,30 +363,21 @@ export const DynamicVideo: React.FC<{src?: string; frameOffset?: number; transpa
             return <OffthreadVideo src={staticFile(src)} transparent={transparent} style={{width, height}} />;
           }
           return baseWindows.map((w, i) => (
-            <Sequence key={i} from={Math.round(w.from * fps)} durationInFrames={Math.max(1, Math.round(w.dur * fps))} layout="none">
-              <OffthreadVideo src={staticFile(src)} trimBefore={Math.round(w.srcStart * fps)} transparent={transparent} style={{width, height}} />
+            <Sequence
+              key={i}
+              from={Math.round(w.from * fps)}
+              durationInFrames={Math.max(1, Math.round(w.dur * fps))}
+              premountFor={SPLIT_PREMOUNT}
+            >
+              <OffthreadVideo
+                src={staticFile(src)}
+                trimBefore={Math.round(w.srcStart * fps)}
+                transparent={transparent}
+                style={{width, height}}
+              />
             </Sequence>
           ));
         })()}
-        ) : (
-          // NA PREVIA a base atrasa UM QUADRO de proposito. O VIDEO_LAG foi
-          // MEDIDO no render: o OffthreadVideo desenha o corte um quadro
-          // atrasado, e todos os overlays (split, flash, zoom, legendas)
-          // seguem essa convencao com +1. O <video> da previa, parado, mostra
-          // o quadro exato — a cena trocava no quadro N e a tela dividida
-          // (certa para o render) soltava no N+1, um quadro de descompasso
-          // visivel no passo a passo (relato com prints). Atrasar a base aqui
-          // faz previa e render desenharem o MESMO filme, fronteira a
-          // fronteira. O quadro 0 congela em 0, como no render.
-          <>
-            <Sequence from={0} durationInFrames={1} layout="none">
-              <OffthreadVideo src={staticFile(src)} transparent={transparent} style={{width, height}} />
-            </Sequence>
-            <Sequence from={1} layout="none">
-              <OffthreadVideo src={staticFile(src)} transparent={transparent} style={{width, height}} />
-            </Sequence>
-          </>
-        )}
         {children}
       </div>
     </AbsoluteFill>
