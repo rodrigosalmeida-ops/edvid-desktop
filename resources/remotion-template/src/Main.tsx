@@ -356,7 +356,19 @@ export const DynamicVideo: React.FC<{src?: string; frameOffset?: number; transpa
         }}
       >
         {getRemotionEnvironment().isRendering ? (
-          <OffthreadVideo src={staticFile(src)} transparent={transparent} style={{width, height}} />
+          {(() => {
+          const baseWindows = src === 'cut.mp4'
+            ? ((D as unknown as {baseWindows?: {from: number; srcStart: number; dur: number}[]}).baseWindows ?? null)
+            : null;
+          if (!baseWindows?.length) {
+            return <OffthreadVideo src={staticFile(src)} transparent={transparent} style={{width, height}} />;
+          }
+          return baseWindows.map((w, i) => (
+            <Sequence key={i} from={Math.round(w.from * fps)} durationInFrames={Math.max(1, Math.round(w.dur * fps))} layout="none">
+              <OffthreadVideo src={staticFile(src)} trimBefore={Math.round(w.srcStart * fps)} transparent={transparent} style={{width, height}} />
+            </Sequence>
+          ));
+        })()}
         ) : (
           // NA PREVIA a base atrasa UM QUADRO de proposito. O VIDEO_LAG foi
           // MEDIDO no render: o OffthreadVideo desenha o corte um quadro
