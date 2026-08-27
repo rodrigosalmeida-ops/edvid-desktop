@@ -17,9 +17,9 @@ jobs:
     timeout-minutes: 360
     env:
       GH_TOKEN: ${{ github.token }}
-      EDITAI_BUILD_RUN_ID: '33013533038'
-      EDITAI_BUILD_ARTIFACT: edit-ai-rc2-windows-9
-      EDITAI_BUILD_COMMIT: 68a56f4919284950f16632a46a32bc5425b40407
+      EDITAI_BUILD_RUN_ID: '33025556126'
+      EDITAI_BUILD_ARTIFACT: edit-ai-rc2-windows-11
+      EDITAI_BUILD_COMMIT: 9bef29e0443416b01fea57efa1da967be0569568
       EDITAI_UPSTREAM_COMMIT: db71373c2613333a80f399e864655c5891a9ea3b
       EDITAI_RC2_SOURCE_SHA256: 9f79813ec7ea2315efd75272264f4d6947a4731dc2444faef9f4b828209f88f9
 
@@ -40,6 +40,14 @@ jobs:
       - name: Verify recovered installer identity
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/editai-inspect-windows-artifacts.ps1
+
+      - name: Restore verified EDIT AI runtime for installed QA
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/runtimes/win32-x64
+            .runtime-cache
+          key: editai-rc2-win-runtime-v4-${{ hashFiles('resources/runtime-manifest.json', 'scripts/stage-*.mjs', 'scripts/fetch-ffmpeg-win.mjs', 'scripts/editai-ci-stage-torchcodec-prebuilt.mjs') }}
 
       - name: Install silently via Squirrel and smoke installed EDIT AI
         shell: powershell
