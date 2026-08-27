@@ -3019,6 +3019,17 @@ async function buildPhase2(
   projectDirectory: string,
   style: ProjectStyleState,
 ): Promise<{ splits: number; flashes: number }> {
+  // buildPhase2 tambem e chamado por fluxos headless/E2E, que nao passam pela
+  // tela de estilos responsavel por aquecer o Remotion. Montar o scaffold antes
+  // de o runtime existir deixava public/fonts sem origem e falhava em lstat.
+  const remotion = await ensureRemotionRuntime();
+  if (remotion.status !== 'ready') {
+    throw new Error(
+      remotion.status === 'error'
+        ? remotion.error
+        : 'O motor de render ainda nao ficou pronto.',
+    );
+  }
   await scaffoldRemotionProject(projectDirectory);
   const python = resolveRuntime('python', appRuntimeContext());
   const ffprobe = resolveRuntime('ffprobe', appRuntimeContext());
