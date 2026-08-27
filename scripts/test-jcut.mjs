@@ -13,10 +13,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const platformKey = `${process.platform}-${process.arch}`;
 const FFMPEG = path.join(projectRoot, 'resources', 'runtimes', platformKey, 'ffmpeg', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+const ESBUILD = path.join(projectRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild');
 const work = mkdtempSync(path.join(tmpdir(), 'edvid-jcut-test-'));
 
 try {
-  execFileSync(path.join(projectRoot, 'node_modules', '.bin', 'esbuild'), [
+  execFileSync(ESBUILD, [
     path.join(projectRoot, 'src', 'jcut.ts'),
     '--bundle', '--platform=node', '--format=esm',
     `--outfile=${path.join(work, 'jcut.mjs')}`,
