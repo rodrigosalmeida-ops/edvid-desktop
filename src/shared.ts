@@ -348,6 +348,7 @@ export type LivePreviewData = {
   graphicLayers: Array<{ src: string; start: number; end: number }> | null;
   bespokeGraphics: boolean;
   layersReady: boolean;
+  edl?: { ranges: Array<{ source: string; start: number; end: number }> };
 } | null;
 
 export type JcutApplyResult = {
