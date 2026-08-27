@@ -1,7 +1,8 @@
 param(
   [string]$ExecutablePath,
   [string]$OutputPath,
-  [int]$TimeoutSeconds = 120
+  [int]$TimeoutSeconds = 120,
+  [switch]$EnsureRuntimePack
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -30,7 +31,9 @@ Remove-Item $OutputPath -Force -ErrorAction SilentlyContinue
 
 Write-Host "[EDIT AI] smoke executavel: $Exe"
 $arg = "--editai-smoke-output=$OutputPath"
-$process = Start-Process -FilePath $Exe -ArgumentList @('--editai-smoke', $arg) -PassThru
+$arguments = @('--editai-smoke', $arg)
+if ($EnsureRuntimePack) { $arguments += '--editai-smoke-ensure-runtime' }
+$process = Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru
 if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
   try { $process.Kill() } catch {}
   throw "Smoke test excedeu ${TimeoutSeconds}s."

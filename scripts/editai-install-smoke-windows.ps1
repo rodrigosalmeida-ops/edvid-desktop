@@ -3,7 +3,8 @@ param(
   [int]$InstallTimeoutSeconds = 3600,
   [int]$SmokeTimeoutSeconds = 180,
   [int]$BootstrapTimeoutSeconds = 300,
-  [string]$RuntimeSource
+  [string]$RuntimeSource,
+  [switch]$DownloadRuntimePack
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -33,6 +34,7 @@ $directUpdaterStarted = $false
 $smokePassed = $false
 $lastAttempt = [DateTime]::MinValue
 $runtimeHydrated = $false
+$runtimePreparationChecked = $false
 New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
 while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   $roots = @(
@@ -85,8 +87,8 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   }
 
   if ($appExe -and ((Get-Date) - $lastAttempt).TotalSeconds -ge 15) {
-    if (-not $runtimeHydrated) {
-      if (-not $RuntimeSource) {
+    if (-not $runtimePreparationChecked) {
+      if (-not $RuntimeSource -and -not $DownloadRuntimePack) {
         $defaultRuntimeSource = Join-Path $Root 'resources\runtimes\win32-x64'
         if (Test-Path $defaultRuntimeSource) { $RuntimeSource = $defaultRuntimeSource }
       }
@@ -105,8 +107,9 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
             Write-Host "[EDIT AI] runtime QA verificado copiado: $runtimeDestination"
           }
         }
+        $runtimeHydrated = $true
       }
-      $runtimeHydrated = $true
+      $runtimePreparationChecked = $true
     }
     # O Setup pode abrir o app. Encerra apenas esse executavel antes do smoke;
     # Update.exe/Squirrel precisam continuar vivos ate finalizar a extracao.
@@ -119,7 +122,15 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
     }
     Start-Sleep -Seconds 1
     $lastAttempt = Get-Date
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'editai-smoke-windows.ps1') -ExecutablePath $appExe -OutputPath $report -TimeoutSeconds $SmokeTimeoutSeconds
+    $smokeArguments = @(
+      '-ExecutionPolicy', 'Bypass',
+      '-File', (Join-Path $PSScriptRoot 'editai-smoke-windows.ps1'),
+      '-ExecutablePath', $appExe,
+      '-OutputPath', $report,
+      '-TimeoutSeconds', $SmokeTimeoutSeconds
+    )
+    if ($DownloadRuntimePack) { $smokeArguments += '-EnsureRuntimePack' }
+    & powershell @smokeArguments
     if ($LASTEXITCODE -eq 0) {
       $smokePassed = $true
       break

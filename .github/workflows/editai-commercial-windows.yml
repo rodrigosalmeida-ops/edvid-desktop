@@ -1,0 +1,219 @@
+name: EDIT AI Commercial Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - editai-v1
+
+permissions:
+  contents: write
+
+jobs:
+  commercial-windows:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[commercial-release]') }}
+    runs-on: windows-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EDITAI_RUNTIME_TAG: editai-runtime-1.0.0-editai.2
+      EDITAI_RELEASE_TAG: editai-v1.0.0-editai.2-commercial-preview
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      EDITAI_ATS_ENDPOINT: ${{ secrets.EDITAI_ATS_ENDPOINT }}
+      EDITAI_ATS_ACCOUNT: ${{ secrets.EDITAI_ATS_ACCOUNT }}
+      EDITAI_ATS_PROFILE: ${{ secrets.EDITAI_ATS_PROFILE }}
+
+    steps:
+      - name: Checkout EDIT AI commercial source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache staged EDIT AI runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/runtimes/win32-x64
+            .runtime-cache
+          key: editai-rc2-win-runtime-v4-${{ hashFiles('resources/runtime-manifest.json', 'scripts/stage-*.mjs', 'scripts/fetch-ffmpeg-win.mjs', 'scripts/editai-ci-stage-torchcodec-prebuilt.mjs') }}
+
+      - name: Verify EDIT AI source
+        run: npm run verify:editai
+
+      - name: Stage verified FFmpeg 7.1 LGPL shared runtime
+        run: node scripts/editai-ci-stage-torchcodec-prebuilt.mjs
+
+      - name: Prepare optional Azure Trusted Signing
+        if: ${{ env.AZURE_CLIENT_ID != '' && env.EDITAI_ATS_ENDPOINT != '' && env.EDITAI_ATS_ACCOUNT != '' && env.EDITAI_ATS_PROFILE != '' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          nuget install Microsoft.Trusted.Signing.Client -ExcludeVersion -OutputDirectory ats-client
+          $dlib = (Get-ChildItem -Recurse ats-client -Filter Azure.CodeSigning.Dlib.dll | Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1).FullName
+          if (-not $dlib) { throw 'Azure.CodeSigning.Dlib.dll nao encontrado.' }
+          $metadata = Join-Path $PWD 'ats-metadata.json'
+          @{
+            Endpoint = $env:EDITAI_ATS_ENDPOINT
+            CodeSigningAccountName = $env:EDITAI_ATS_ACCOUNT
+            CertificateProfileName = $env:EDITAI_ATS_PROFILE
+          } | ConvertTo-Json | Set-Content $metadata -Encoding ascii
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1).FullName
+          if (-not $signtool) { throw 'signtool.exe nao encontrado.' }
+          "EDITAI_WIN_SIGNTOOL=$signtool" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+          "EDITAI_WIN_SIGN_PARAMS=/v /fd SHA256 /tr http://timestamp.acr.microsoft.com /td SHA256 /dlib `"$dlib`" /dmdf `"$metadata`"" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+
+      - name: Build thin commercial installer and runtime pack
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtimeBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:EDITAI_RUNTIME_TAG"
+          $releaseBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:EDITAI_RELEASE_TAG"
+          $env:EDITAI_RUNTIME_PACK_BASE_URL = $runtimeBase
+          $env:EDITAI_UPDATE_BASE_URL = $releaseBase
+          $env:EDITAI_WINDOWS_UPDATE_BASE_URL = $releaseBase
+          $arguments = @('-ExecutionPolicy', 'Bypass', '-File', 'scripts/editai-build-windows.ps1', '-Mode', 'release')
+          if (-not $env:EDITAI_WIN_SIGNTOOL) { $arguments += '-AllowUnsignedRelease' }
+          & powershell @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Build comercial falhou.' }
+
+      - name: Publish immutable runtime pack to GitHub Release
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pack = Get-ChildItem out\runtime-packs -File -Filter '*.tar.gz' | Select-Object -First 1
+          $sidecar = Get-Item "$($pack.FullName).sha256" -ErrorAction Stop
+          if (-not $pack) { throw 'Runtime pack comercial ausente.' }
+          gh release view $env:EDITAI_RUNTIME_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:EDITAI_RUNTIME_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'EDIT AI Runtime 1.0 Windows x64' --notes 'Runtime versionado do EDIT AI: FFmpeg, Node, uv, yt-dlp, Codex e Python/WhisperX. Integridade validada pelo SHA-256 embutido no aplicativo.'
+          }
+          gh release upload $env:EDITAI_RUNTIME_TAG $pack.FullName $sidecar.FullName --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Publicacao do runtime pack falhou.' }
+
+      - name: Verify public runtime download
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $distribution = Get-Content resources\editai-distribution.json -Raw | ConvertFrom-Json
+          $item = $distribution.runtimePacks.'win32-x64'
+          $url = "$($distribution.runtimePackBaseUrl)/$($item.file)"
+          $response = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing
+          if ($response.StatusCode -ne 200) { throw "Runtime publico respondeu HTTP $($response.StatusCode)." }
+          Write-Host "[EDIT AI] runtime publico: $url"
+
+      - name: Install thin Setup and download runtime like a real customer
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/editai-install-smoke-windows.ps1 -DownloadRuntimePack -SmokeTimeoutSeconds 1800
+
+      - name: Prove runtime came from the public release
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $install = Get-Content out\editai-install-smoke.json -Raw | ConvertFrom-Json
+          $smoke = Get-Content out\editai-installed-smoke.json -Raw | ConvertFrom-Json
+          if ($install.runtimeHydrated) { throw 'Gate comercial usou runtime local; download publico nao foi provado.' }
+          if (-not $smoke.runtimePackReady -or -not $smoke.ok) { throw 'Runtime publico nao ficou pronto no aplicativo instalado.' }
+          Write-Host '[EDIT AI] download publico do runtime: PASS'
+
+      - name: Media smoke with downloaded runtime
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1 -SmokeReportPath out\editai-installed-smoke.json -OutputPath out\editai-commercial-media-smoke.json
+
+      - name: Cache WhisperX models and Remotion runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Roaming\EDIT AI\cache\huggingface
+            ~\AppData\Roaming\EDIT AI\runtime\remotion
+            ~\AppData\Local\uv
+          key: editai-e2e-runtime-v1-${{ hashFiles('resources/runtime-manifest.json', 'resources/remotion-template/package.json', 'scripts/editai-e2e-real-video-windows.ps1') }}
+
+      - name: Real customer-path video E2E
+        shell: powershell
+        run: npm run smoke:editai:e2e
+
+      - name: Build commercial evidence
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $PWD 'out\make\squirrel.windows\x64'
+          $setup = Get-Item (Join-Path $dir 'EDIT-AI-Setup.exe')
+          $nupkg = Get-ChildItem $dir -File -Filter '*.nupkg' | Select-Object -First 1
+          $releases = Get-Item (Join-Path $dir 'RELEASES')
+          $pack = Get-ChildItem out\runtime-packs -File -Filter '*.tar.gz' | Select-Object -First 1
+          $distribution = Get-Content resources\editai-distribution.json -Raw | ConvertFrom-Json
+          $signature = Get-AuthenticodeSignature $setup.FullName
+          $feed = @{
+            currentRelease = '1.0.0-editai.2'
+            productName = 'EDIT AI'
+            windowsUpdateBaseUrl = $distribution.windowsUpdateBaseUrl
+          }
+          $feed | ConvertTo-Json | Set-Content (Join-Path $dir 'feed.json') -Encoding UTF8
+          $evidence = [ordered]@{
+            schemaVersion = 1
+            generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+            productName = 'EDIT AI'
+            version = '1.0.0-editai.2'
+            commit = $env:GITHUB_SHA
+            setupName = $setup.Name
+            setupBytes = $setup.Length
+            setupSha256 = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            setupSignature = [string]$signature.Status
+            runtimePackName = $pack.Name
+            runtimePackBytes = $pack.Length
+            runtimePackSha256 = (Get-FileHash $pack.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            runtimePackUrl = "$($distribution.runtimePackBaseUrl)/$($pack.Name)"
+            runtimeDownloadedByInstalledApp = $true
+            localRuntimeHydration = $false
+            mediaSmoke = $true
+            realVideoE2E = $true
+            releaseChannel = 'github-commercial-preview'
+          }
+          $evidence | ConvertTo-Json -Depth 6 | Set-Content out\editai-commercial-evidence.json -Encoding UTF8
+          Get-Content out\editai-commercial-evidence.json
+
+      - name: Publish commercial preview installer
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $PWD 'out\make\squirrel.windows\x64'
+          $assets = @(
+            (Join-Path $dir 'EDIT-AI-Setup.exe'),
+            (Get-ChildItem $dir -File -Filter '*.nupkg' | Select-Object -First 1).FullName,
+            (Join-Path $dir 'RELEASES'),
+            (Join-Path $dir 'feed.json'),
+            (Join-Path $PWD 'out\editai-commercial-evidence.json')
+          )
+          gh release view $env:EDITAI_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:EDITAI_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'EDIT AI 1.0 Commercial Preview - Windows x64' --notes 'Instalador comercial leve validado em Windows com download publico do runtime, WhisperX, TikTok Shop A/B, Brand Kit, Remotion e exportacao MP4. Build ainda sem Authenticode: o SmartScreen pode exibir Editor desconhecido.'
+          }
+          gh release upload $env:EDITAI_RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Publicacao do instalador comercial falhou.' }
+
+      - name: Upload commercial evidence artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edit-ai-commercial-windows-${{ github.run_number }}
+          retention-days: 30
+          path: |
+            out/make/squirrel.windows/x64/EDIT-AI-Setup.exe
+            out/make/squirrel.windows/x64/*.nupkg
+            out/make/squirrel.windows/x64/RELEASES
+            out/editai-commercial-evidence.json
+            out/editai-install-smoke.json
+            out/editai-installed-smoke.json
+            out/editai-commercial-media-smoke.json
+            out/editai-e2e-real-report.json
+            out/editai-e2e-real-summary.json

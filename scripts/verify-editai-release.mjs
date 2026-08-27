@@ -56,6 +56,7 @@ if (!/appBundleId:\s*'com\.editai\.desktop'/u.test(forge)) errors.push('appBundl
 if (!forge.includes('EDITAI_BUNDLE_RUNTIMES')) errors.push('modo QA fat não configurado');
 if (!main.includes('editAiRuntimePack(process.platform, process.arch)')) errors.push('runtime distribution EDIT AI não integrado');
 if (!main.includes('editAiUpdateFeedUrl()')) errors.push('update feed EDIT AI não integrado');
+if (!main.includes('editAiWindowsUpdateBaseUrl()')) errors.push('update Windows EDIT AI não integrado');
 if (main.includes('expectedDigest &&')) errors.push('SHA-256 ainda é opcional no downloader');
 const qaWorkflow = read('.github/workflows/editai-rc2-windows.yml');
 if (!qaWorkflow.includes('windows-latest')) errors.push('workflow Windows QA não usa runner Windows');
@@ -79,6 +80,7 @@ if (release) {
   const base = String(dist.runtimePackBaseUrl || '');
   if (!/^https:\/\//iu.test(base)) errors.push('runtimePackBaseUrl HTTPS ausente no release');
   if (!/^https:\/\/[^\s]+\/feed\.json$/iu.test(String(dist.updateFeedUrl || ''))) errors.push('updateFeedUrl HTTPS/feed.json ausente no release');
+  if (!/^https:\/\/[^\s]+$/iu.test(String(dist.windowsUpdateBaseUrl || ''))) errors.push('windowsUpdateBaseUrl HTTPS ausente no release');
   const target = 'win32-x64';
   const item = dist.runtimePacks?.[target];
   if (!item) errors.push(`runtimePacks.${target} ausente`);

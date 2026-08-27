@@ -11,6 +11,7 @@ type DistributionConfig = {
   schemaVersion?: number;
   runtimePackBaseUrl?: string;
   updateFeedUrl?: string;
+  windowsUpdateBaseUrl?: string;
   runtimePacks?: Record<string, RuntimePackDescriptor>;
 };
 
@@ -39,4 +40,11 @@ export function editAiUpdateFeedUrl(): string {
   if (/^https:\/\/[^\s]+\/feed\.json$/iu.test(env)) return env;
   const configured = config.updateFeedUrl?.trim() || '';
   return /^https:\/\/[^\s]+\/feed\.json$/iu.test(configured) ? configured : '';
+}
+
+export function editAiWindowsUpdateBaseUrl(): string {
+  const env = process.env.EDITAI_WINDOWS_UPDATE_BASE_URL?.trim().replace(/\/$/u, '') || '';
+  if (/^https:\/\/[^\s]+$/iu.test(env)) return env;
+  const configured = config.windowsUpdateBaseUrl?.trim().replace(/\/$/u, '') || '';
+  return /^https:\/\/[^\s]+$/iu.test(configured) ? configured : '';
 }

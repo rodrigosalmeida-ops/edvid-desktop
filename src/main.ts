@@ -99,7 +99,7 @@ import {
   resolveByteRange,
 } from './media-selection';
 import { resolveRuntime, runtimePackKey, type RuntimeResolution } from './runtime';
-import { editAiRuntimePack, editAiUpdateFeedUrl } from './editai/runtime-distribution';
+import { editAiRuntimePack, editAiUpdateFeedUrl, editAiWindowsUpdateBaseUrl } from './editai/runtime-distribution';
 import type {
   ActiveModelState,
   AiProvider,
@@ -5113,7 +5113,10 @@ async function runEditAiSmokeIfRequested(): Promise<boolean> {
   const outputPrefix = '--editai-smoke-output=';
   const outputArg = process.argv.find((arg) => arg.startsWith(outputPrefix));
   const outputPath = outputArg ? path.resolve(outputArg.slice(outputPrefix.length)) : null;
-  const runtimePackReady = await runtimePackIsReady().catch(() => false);
+  const shouldEnsureRuntimePack = process.argv.includes('--editai-smoke-ensure-runtime');
+  const runtimePackReady = shouldEnsureRuntimePack
+    ? (await ensureRuntimePack()).status === 'ready'
+    : await runtimePackIsReady().catch(() => false);
   const runtimes = await Promise.all(runtimeCommands.map(({ name, args }) => {
     const resolution = resolveRuntime(name, appRuntimeContext());
     return checkRuntime(resolution, args);
@@ -6464,6 +6467,7 @@ async function memberBoot(): Promise<void> {
 // hospedado; sem o feed configurado, nada acontece. O formato do feed sai de
 // scripts/generate-update-feed.mjs a cada release.
 const UPDATE_FEED_URL = editAiUpdateFeedUrl();
+const WINDOWS_UPDATE_BASE_URL = editAiWindowsUpdateBaseUrl();
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 let appUpdateState: AppUpdateState = { status: 'idle' };
 
@@ -6519,8 +6523,12 @@ function setupAutoUpdate(): void {
       autoUpdater.setFeedURL({ url: UPDATE_FEED_URL, serverType: 'json' });
     } else if (process.platform === 'win32') {
       // Squirrel.Windows espera a PASTA que contem RELEASES + os .nupkg
-      // (publish-update.mjs envia tudo sob win32/ no mesmo bucket).
-      autoUpdater.setFeedURL({ url: `${UPDATE_FEED_URL.replace(/\/feed\.json$/u, '')}/win32` });
+      // O R2 usa /win32; GitHub Releases usa assets planos e fornece a URL
+      // direta em windowsUpdateBaseUrl.
+      autoUpdater.setFeedURL({
+        url: WINDOWS_UPDATE_BASE_URL
+          || `${UPDATE_FEED_URL.replace(/\/feed\.json$/u, '')}/win32`,
+      });
     } else {
       return;
     }

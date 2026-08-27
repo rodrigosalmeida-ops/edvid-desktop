@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeBaseUrl = process.env.EDITAI_RUNTIME_PACK_BASE_URL?.trim().replace(/\/$/u, '');
 const updateBaseUrl = process.env.EDITAI_UPDATE_BASE_URL?.trim().replace(/\/$/u, '');
+const windowsUpdateBaseUrl = process.env.EDITAI_WINDOWS_UPDATE_BASE_URL?.trim().replace(/\/$/u, '');
 if (!runtimeBaseUrl || !/^https:\/\//iu.test(runtimeBaseUrl)) {
   console.error('Defina EDITAI_RUNTIME_PACK_BASE_URL HTTPS (ex.: https://cdn.suaempresa.com/runtimes).');
   process.exit(1);
@@ -47,9 +48,11 @@ const output = {
   schemaVersion: 1,
   runtimePackBaseUrl: runtimeBaseUrl,
   updateFeedUrl: `${updateBaseUrl}/feed.json`,
+  windowsUpdateBaseUrl: windowsUpdateBaseUrl || `${updateBaseUrl}/win32`,
   runtimePacks: { [target]: { key, file, sha256: sha256.toLowerCase() } },
 };
 await writeFile(path.join(root, 'resources/editai-distribution.json'), `${JSON.stringify(output, null, 2)}\n`);
 console.log(`[EDIT AI] runtime: ${runtimeBaseUrl}/${file}`);
 console.log(`[EDIT AI] update feed: ${output.updateFeedUrl}`);
+console.log(`[EDIT AI] update Windows: ${output.windowsUpdateBaseUrl}`);
 console.log(`[EDIT AI] sha256 embutido: ${sha256}`);
