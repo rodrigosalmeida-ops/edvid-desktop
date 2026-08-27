@@ -814,6 +814,7 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     respondToCodexApproval: async (approvalId) => {
       emit({ type: 'approval-resolved', approvalId });
     },
+    onPreviewProxyState: () => () => {},
     onCodexEvent: (listener) => {
       listeners.add(listener);
       if (!approvalPreviewScheduled && new URLSearchParams(window.location.search).has('approval')) {
