@@ -20,6 +20,8 @@ jobs:
       EDITAI_BUILD_RUN_ID: '33025556126'
       EDITAI_BUILD_ARTIFACT: edit-ai-rc2-windows-11
       EDITAI_BUILD_COMMIT: 9bef29e0443416b01fea57efa1da967be0569568
+      EDITAI_RUNTIME_RUN_ID: '33013533038'
+      EDITAI_RUNTIME_ARTIFACT: edit-ai-rc2-windows-9
       EDITAI_UPSTREAM_COMMIT: db71373c2613333a80f399e864655c5891a9ea3b
       EDITAI_RC2_SOURCE_SHA256: 9f79813ec7ea2315efd75272264f4d6947a4731dc2444faef9f4b828209f88f9
 
@@ -41,17 +43,32 @@ jobs:
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/editai-inspect-windows-artifacts.ps1
 
-      - name: Restore verified EDIT AI runtime for installed QA
-        uses: actions/cache@v4
-        with:
-          path: |
-            resources/runtimes/win32-x64
-            .runtime-cache
-          key: editai-rc2-win-runtime-v4-${{ hashFiles('resources/runtime-manifest.json', 'scripts/stage-*.mjs', 'scripts/fetch-ffmpeg-win.mjs', 'scripts/editai-ci-stage-torchcodec-prebuilt.mjs') }}
+      - name: Recover and verify bundled EDIT AI runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh run download $env:EDITAI_RUNTIME_RUN_ID --repo $env:GITHUB_REPOSITORY --name $env:EDITAI_RUNTIME_ARTIFACT --dir out-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao baixar o runtime QA aprovado.' }
+          $evidence = Get-Content out-runtime\editai-windows-artifacts.json -Raw | ConvertFrom-Json
+          $package = Get-ChildItem out-runtime -Recurse -File -Filter '*.nupkg' | Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $package) { throw 'Pacote fat aprovado nao contem .nupkg.' }
+          $expected = @($evidence.packages | Where-Object { $_.name -eq $package.Name }) | Select-Object -First 1
+          if (-not $expected) { throw 'SHA esperado do pacote fat nao foi localizado.' }
+          $actual = (Get-FileHash $package.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne [string]$expected.sha256) { throw 'SHA-256 do pacote fat divergiu da evidencia aprovada.' }
+          $extract = Join-Path $PWD 'out-runtime-extracted'
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          & 7z x $package.FullName "-o$extract" 'lib\net45\resources\runtimes\win32-x64\*' -y
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao extrair runtimes do pacote fat aprovado.' }
+          $runtime = Join-Path $extract 'lib\net45\resources\runtimes\win32-x64'
+          if (-not (Test-Path (Join-Path $runtime 'ffmpeg\bin\ffmpeg.exe'))) { throw 'Runtime extraido sem FFmpeg.' }
+          if (-not (Test-Path (Join-Path $runtime 'python-whisperx\python\python.exe'))) { throw 'Runtime extraido sem Python/WhisperX.' }
+          "EDITAI_QA_RUNTIME_SOURCE=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[EDIT AI] runtime fat verificado e extraido: $runtime"
 
       - name: Install silently via Squirrel and smoke installed EDIT AI
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File scripts/editai-install-smoke-windows.ps1
+        run: powershell -ExecutionPolicy Bypass -File scripts/editai-install-smoke-windows.ps1 -RuntimeSource $env:EDITAI_QA_RUNTIME_SOURCE
 
       - name: Media smoke with installed EDIT AI runtime
         shell: powershell
