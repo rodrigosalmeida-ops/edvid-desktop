@@ -40,6 +40,7 @@ import {
   type ImageUse,
 } from './image-format';
 import { applyEditOperations, type EditOperation } from './edit-data-edits';
+import { precisaProxy, proxyArgs, proxyFileName, proxyProgress } from './preview-proxy';
 import {
   DEFAULT_TIER,
   TIER_LABEL,
@@ -130,6 +131,7 @@ import type {
   ProjectSummary,
   ProjectTimeline,
   ProjectWorkspace,
+  PreviewProxyState,
   RemotionRuntimeState,
   RuntimeCheck,
   RuntimeName,
@@ -260,6 +262,7 @@ type FfprobeOutput = {
     height?: number;
     avg_frame_rate?: string;
     r_frame_rate?: string;
+    codec_name?: string;
     tags?: { rotate?: string };
     side_data_list?: Array<{ rotation?: number }>;
   }>;
@@ -442,7 +445,7 @@ function inspectVideo(executable: string, argsPrefix: string[], filePath: string
         '-select_streams',
         'v:0',
         '-show_entries',
-        'format=duration:stream=width,height,avg_frame_rate,r_frame_rate:stream_tags=rotate:stream_side_data=rotation',
+        'format=duration:stream=width,height,codec_name,avg_frame_rate,r_frame_rate:stream_tags=rotate:stream_side_data=rotation',
         '-of',
         'json',
         filePath,
@@ -939,6 +942,70 @@ async function probeSourceFile(absolutePath: string): Promise<FfprobeOutput | nu
   return pending;
 }
 
+const proxyJobs = new Map<string, Promise<string | null>>();
+
+function proxyState(state: PreviewProxyState): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('preview-proxy:state', state);
+  }
+}
+
+async function proxyReady(absolutePath: string, fingerprint: string): Promise<string | null> {
+  const destination = path.join(cachePaths().root, 'proxies', proxyFileName(absolutePath, fingerprint));
+  return (await statOf(destination)) ? destination : null;
+}
+
+async function ensurePreviewProxy(
+  absolutePath: string,
+  fingerprint: string,
+  duration: number,
+): Promise<string | null> {
+  const destination = path.join(cachePaths().root, 'proxies', proxyFileName(absolutePath, fingerprint));
+  if (await statOf(destination)) return destination;
+  const running = proxyJobs.get(destination);
+  if (running) return running;
+  const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
+  if (!ffmpeg.command) return null;
+  const name = path.basename(absolutePath);
+  const job = (async (): Promise<string | null> => {
+    await mkdir(path.dirname(destination), { recursive: true });
+    const partial = `${destination}.partial.mp4`;
+    proxyState({ status: 'building', name, progress: 0 });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          ffmpeg.command as string,
+          [...ffmpeg.argsPrefix, ...proxyArgs({ entrada: absolutePath, saida: partial })],
+          { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', (chunk: string) => {
+          const progress = proxyProgress(chunk, duration);
+          if (progress !== null) proxyState({ status: 'building', name, progress });
+        });
+        let errorText = '';
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', (chunk: string) => { if (errorText.length < 4000) errorText += chunk; });
+        child.on('error', reject);
+        child.on('close', (code) => code === 0
+          ? resolve()
+          : reject(new Error(errorText.trim().split(/\r?\n/u).at(-1) || `ffmpeg saiu com ${code}`)));
+      });
+      await rename(partial, destination);
+      proxyState({ status: 'ready', name });
+      return destination;
+    } catch (error) {
+      await rm(partial, { force: true }).catch(() => {});
+      proxyState({ status: 'error', name, error: error instanceof Error ? error.message : String(error) });
+      return null;
+    } finally {
+      proxyJobs.delete(destination);
+    }
+  })();
+  proxyJobs.set(destination, job);
+  return job;
+}
+
 async function buildProjectSources(
   directory: string,
   model: TimelineModel,
@@ -995,11 +1062,27 @@ async function buildProjectSources(
     }
     const stream = probe?.streams?.[0];
     if (absolutePath && isFile && stream?.width && stream.height) {
-      const token = authorizeMediaToken(absolutePath, await fingerprintOf(absolutePath));
+      const fingerprint = await fingerprintOf(absolutePath);
+      let playable: string | null = absolutePath;
+      if (precisaProxy(stream.codec_name)) {
+        playable = await proxyReady(absolutePath, fingerprint ?? 'sem-fingerprint');
+        if (!playable) {
+          void ensurePreviewProxy(
+            absolutePath,
+            fingerprint ?? 'sem-fingerprint',
+            Number(probe?.format?.duration) || 0,
+          ).then((proxyPath) => {
+            if (proxyPath) broadcastCodexEvent({ type: 'workspace-refresh' });
+          }).catch(() => {});
+        }
+      }
+      const token = playable
+        ? authorizeMediaToken(playable, playable === absolutePath ? fingerprint : 'proxy')
+        : null;
       sources.push({
         id: sourceId,
         name: path.basename(absolutePath),
-        url: `edvid-media://local/${token}`,
+        url: token ? `edvid-media://local/${token}` : null,
         duration: Number(probe?.format?.duration) || usedDuration,
         fps: parseFrameRate(stream.avg_frame_rate || stream.r_frame_rate),
         width: stream.width,
