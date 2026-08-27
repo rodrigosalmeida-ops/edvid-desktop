@@ -93,9 +93,18 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
       if ($RuntimeSource) {
         $RuntimeSource = (Resolve-Path $RuntimeSource).Path
         $runtimeDestination = Join-Path (Split-Path -Parent $appExe) 'resources\runtimes\win32-x64'
-        New-Item -ItemType Directory -Force -Path $runtimeDestination | Out-Null
-        Copy-Item -Path (Join-Path $RuntimeSource '*') -Destination $runtimeDestination -Recurse -Force
-        Write-Host "[EDIT AI] runtime QA verificado hidratado em: $runtimeDestination"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeDestination) | Out-Null
+        if (-not (Test-Path $runtimeDestination)) {
+          try {
+            New-Item -ItemType Junction -Path $runtimeDestination -Target $RuntimeSource -ErrorAction Stop | Out-Null
+            Write-Host "[EDIT AI] runtime QA verificado conectado por junction: $runtimeDestination"
+          } catch {
+            New-Item -ItemType Directory -Force -Path $runtimeDestination | Out-Null
+            & robocopy $RuntimeSource $runtimeDestination /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /MT:16 /NFL /NDL /NJH /NJS
+            if ($LASTEXITCODE -gt 7) { throw "Falha ao hidratar runtime QA via robocopy (exit $LASTEXITCODE)." }
+            Write-Host "[EDIT AI] runtime QA verificado copiado: $runtimeDestination"
+          }
+        }
       }
       $runtimeHydrated = $true
     }
