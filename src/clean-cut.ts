@@ -16,6 +16,8 @@ export type CleanCutRange = {
   beat: string;
   start: number;
   end: number;
+  /** Correção de nível por take, medida pelo voice_levels.py do Edvid. */
+  gain_db?: number;
 };
 
 export type CleanCutEdl = {
@@ -45,7 +47,14 @@ export function parseEdl(raw: unknown): CleanCutEdl | null {
     const end = Number(item.end);
     const source = typeof item.source === 'string' ? item.source : '';
     if (!source || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-    parsed.push({ source, beat: typeof item.beat === 'string' ? item.beat : '', start, end });
+    const gain = Number(item.gain_db);
+    parsed.push({
+      source,
+      beat: typeof item.beat === 'string' ? item.beat : '',
+      start,
+      end,
+      ...(Number.isFinite(gain) && gain !== 0 ? { gain_db: gain } : {}),
+    });
   }
   if (!parsed.length) return null;
   const sources = (document.sources && typeof document.sources === 'object')
@@ -96,9 +105,11 @@ export function ffmpegCutArgs(input: {
     ];
     const fade = Math.min(audioFade, duration / 2);
     const fadeOutStart = Math.max(0, duration - fade);
+    const gainDb = Number.isFinite(range.gain_db) ? Number(range.gain_db) : 0;
     const audioFilters = [
       `atrim=start=${start}:end=${end}`,
       'asetpts=PTS-STARTPTS',
+      ...(gainDb !== 0 ? [`volume=${gainDb.toFixed(2)}dB`, 'alimiter=limit=0.97'] : []),
       ...(fade > 0 ? [
         `afade=t=in:st=0:d=${fade.toFixed(3)}`,
         `afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fade.toFixed(3)}`,
