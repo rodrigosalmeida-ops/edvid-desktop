@@ -107,8 +107,13 @@ def from_edl(edl_path: Path, fps: float | None) -> list[dict]:
             continue
         if duration <= 0:
             continue
-        # Mesmo arredondamento do ffmpeg: o segmento ocupa frames inteiros.
-        frames = max(1, math.ceil(duration * fps - 1e-6))
+        # ROUND, nunca ceil (0.37.0): o corte re-amostra cada trecho com o
+        # filtro fps= e emite EXATAMENTE round(dur*fps) quadros — o EDL
+        # quantizado torna isso um inteiro exato. O ceil antigo era um palpite
+        # sobre o ffmpeg que a medicao desmentiu: +0,5 quadro por bloco em
+        # media, e no Bloco 12 de um projeto real o zoom disparava 7 quadros
+        # depois do corte.
+        frames = max(1, round(duration * fps))
         segments.append({
             # 9 casas: com 6 o limite deixa de cair exatamente sobre o frame
             # (31/30 vira 1.033333, que multiplicado por 30 nao volta a 31).
