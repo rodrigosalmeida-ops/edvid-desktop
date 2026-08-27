@@ -13,11 +13,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const platformKey = `${process.platform}-${process.arch}`;
 const FFMPEG = path.join(projectRoot, 'resources', 'runtimes', platformKey, 'ffmpeg', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-const ESBUILD = path.join(projectRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild');
+const ESBUILD = path.join(projectRoot, 'node_modules', 'esbuild', 'bin', 'esbuild');
 const work = mkdtempSync(path.join(tmpdir(), 'edvid-jcut-test-'));
 
 try {
-  execFileSync(ESBUILD, [
+  // O entrypoint JS do esbuild é executado pelo próprio Node para não depender
+  // dos shims .bin (esbuild.cmd no Windows), que execFileSync não abre de
+  // forma portável sem shell.
+  execFileSync(process.execPath, [ESBUILD,
     path.join(projectRoot, 'src', 'jcut.ts'),
     '--bundle', '--platform=node', '--format=esm',
     `--outfile=${path.join(work, 'jcut.mjs')}`,
