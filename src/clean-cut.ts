@@ -70,6 +70,22 @@ export function parseEdl(raw: unknown): CleanCutEdl | null {
   };
 }
 
+// FPS único da composição/corte. Mantém o relógio do vídeo, timeline e Remotion alinhado.
+export function roundedFps(measured: number): number {
+  return [24, 25, 30, 50, 60].find((option) => Math.abs(option - measured) < 0.6)
+    ?? Math.max(1, Math.round(measured));
+}
+
+export function quantizeRanges(ranges: readonly CleanCutRange[], fps: number): CleanCutRange[] {
+  const grid = (value: number): number => Math.round((Math.round(value * fps) / fps) * 1e9) / 1e9;
+  return ranges.map((range) => {
+    const start = grid(range.start);
+    let end = grid(range.end);
+    if (end <= start) end = grid(start + 1 / fps);
+    return { ...range, start, end };
+  });
+}
+
 // Corte de UMA passagem: trim por bloco e concat, sem arquivo intermediario.
 //
 // Nao e concat por demuxer com copia de stream: o corte cairia no keyframe
@@ -84,8 +100,11 @@ export function ffmpegCutArgs(input: {
   gradeBySource?: Readonly<Record<string, string>>;
   /** Fade de áudio em cada borda. O Edvid usa 30 ms como regra de produção. */
   audioFadeSeconds?: number;
+  fps?: number;
 }): string[] {
-  const { inputs, ranges, sourceIndex, output } = input;
+  const { inputs, sourceIndex, output } = input;
+  const fps = Math.max(1, Math.round(input.fps ?? 30));
+  const ranges = quantizeRanges(input.ranges, fps);
   const audioFade = Math.max(0, Math.min(0.2, input.audioFadeSeconds ?? 0.03));
   if (!inputs.length) throw new Error('Nenhum vídeo de origem para cortar.');
   if (!ranges.length) throw new Error('Nenhum trecho para manter.');
@@ -101,6 +120,7 @@ export function ffmpegCutArgs(input: {
     const videoFilters = [
       `trim=start=${start}:end=${end}`,
       'setpts=PTS-STARTPTS',
+      `fps=${fps}`,
       ...(grade ? ['format=yuv420p', grade] : []),
     ];
     const fade = Math.min(audioFade, duration / 2);
@@ -128,6 +148,7 @@ export function ffmpegCutArgs(input: {
     // veryfast porque a fonte costuma ser 4K e o aluno espera olhando: o corte
     // limpo e material de trabalho, nao a entrega final.
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+    '-video_track_timescale', String(fps * 1000),
     '-c:a', 'aac', '-b:a', '192k',
     '-movflags', '+faststart',
     output,
@@ -140,9 +161,10 @@ export function whisperxArgs(input: {
   media: string;
   model: string;
   outputDirectory: string;
+  launcher: string;
 }): string[] {
   return [
-    '-B', '-m', 'whisperx', input.media,
+    '-B', input.launcher, input.media,
     '--model', input.model,
     '--language', 'pt',
     '--output_dir', input.outputDirectory,
