@@ -20,7 +20,7 @@ from pathlib import Path
 import cv2
 
 
-def detect(video: Path) -> tuple[float, int, int, list]:
+def detect(video: Path, step: int = 1) -> tuple[float, int, int, list]:
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -31,10 +31,18 @@ def detect(video: Path) -> tuple[float, int, int, list]:
     DW = 480  # detect on a downscaled frame for speed
     scale = DW / W if W else 1.0
     raw: list[tuple[float, float] | None] = []
+    index = 0
     while True:
         ok, frame = cap.read()
         if not ok:
             break
+        # `step` pula a detecção (não o decode) em N-1 de cada N quadros: num
+        # vídeo longo de YouTube detectar todo quadro levava dezenas de
+        # minutos, e o fill + média móvel de 0,5s já interpola os saltos.
+        if step > 1 and index % step:
+            raw.append(None)
+            index += 1
+            continue
         small = cv2.resize(frame, (DW, int(H * scale)))
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
@@ -46,6 +54,7 @@ def detect(video: Path) -> tuple[float, int, int, list]:
             raw.append((cx, cy))
         else:
             raw.append(None)
+        index += 1
     cap.release()
     return fps, W, H, raw
 
@@ -86,9 +95,11 @@ def main() -> None:
     ap.add_argument("-o", "--output", type=Path, required=True)
     ap.add_argument("--smooth", type=float, default=0.5,
                     help="smoothing window in seconds (default 0.5)")
+    ap.add_argument("--step", type=int, default=1,
+                    help="detect every Nth frame (fill+smooth cover the gaps)")
     args = ap.parse_args()
 
-    fps, W, H, raw = detect(args.video.resolve())
+    fps, W, H, raw = detect(args.video.resolve(), max(1, args.step))
     win = max(1, int(fps * args.smooth))
     points = fill_and_smooth(raw, win)
     detected = sum(1 for p in raw if p is not None)
