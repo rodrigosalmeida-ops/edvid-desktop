@@ -39,6 +39,38 @@ try {
   await Promise.all(Array.from({ length: 9 }, () => fila3.adicionar(tarefa)));
   assert.equal(pico, 3);
 
+  // Corrida de microtask: a vaga precisa ser transferida diretamente para a
+  // próxima tarefa. A implementação antiga decrementava o contador antes de
+  // acordar quem esperava, permitindo que uma chegada nesse intervalo furasse
+  // a largura 1.
+  let vivos = 0;
+  let picoVivo = 0;
+  const portoes = [];
+  const tarefaComPortao = () => {
+    vivos += 1;
+    picoVivo = Math.max(picoVivo, vivos);
+    return new Promise((resolver) => {
+      portoes.push(() => { vivos -= 1; resolver(); });
+    });
+  };
+
+  const fresta = new FilaDeTrabalho(1);
+  const emVoo = [fresta.adicionar(tarefaComPortao), fresta.adicionar(tarefaComPortao)];
+  await Promise.resolve();
+  assert.equal(vivos, 1, 'só a primeira pode ter começado');
+  const abrirProximo = () => portoes.shift()?.();
+  abrirProximo();
+  emVoo.push(Promise.resolve().then(() => fresta.adicionar(tarefaComPortao)));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(picoVivo, 1, 'chegada na fresta não pode furar a largura');
+  for (let volta = 0; volta < 12 && (vivos > 0 || portoes.length); volta += 1) {
+    while (portoes.length) abrirProximo();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  await Promise.all(emVoo);
+  assert.equal(fresta.emAndamento, 0);
+  assert.equal(fresta.aguardando, 0);
+
   const ordem = [];
   const fifo = new FilaDeTrabalho(1);
   await Promise.all(['a', 'b', 'c', 'd'].map((nome) => fifo.adicionar(async () => {
@@ -58,7 +90,7 @@ try {
   assert.equal(comErro.emAndamento, 0);
 
   assert.equal(await new FilaDeTrabalho(0).adicionar(async () => 'roda'), 'roda');
-  console.log('test:work-queue ok — limite, FIFO e liberação após erro validados.');
+  console.log('test:work-queue ok — limite, corrida, FIFO e liberação após erro validados.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
