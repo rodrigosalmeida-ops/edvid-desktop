@@ -37,7 +37,7 @@ try {
 
   assert.equal(
     anonymizeHome('erro em C:\\Users\\Rodrigo\\AppData\\Roaming\\EDIT AI', 'C:\\Users\\Rodrigo'),
-    '~\\AppData\\Roaming\\EDIT AI',
+    'erro em ~\\AppData\\Roaming\\EDIT AI',
   );
 
   const base = {
