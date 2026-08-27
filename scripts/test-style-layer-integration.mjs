@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const source = readFileSync(path.join(root, 'src', 'main.ts'), 'utf8');
+const start = source.indexOf('async function writeEditData(');
+const end = source.indexOf(String.fromCharCode(10) + '}' + String.fromCharCode(10), start);
+assert.ok(start >= 0 && end > start);
+const body = source.slice(start, end + 3);
+assert.match(source, /STYLE_LAYERS, mergeStyleLayers, type StyleLayer/u);
+assert.match(body, /layers: readonly StyleLayer\[\] = STYLE_LAYERS/u);
+assert.match(body, /mergeStyleLayers\(\{ previous, next: completeDocument, layers \}\)/u);
+const soundtrack = body.indexOf('ensureSoundtrackFile');
+const result = body.indexOf('return { splits: finalSplits.length');
+assert.ok(soundtrack > 0 && result > soundtrack, 'soundtrack must execute before return');
+assert.match(body, /finalSplits = Array\.isArray\(document\.splits\)/u);
+console.log('test:style-layer-integration ok');

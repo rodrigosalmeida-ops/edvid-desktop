@@ -59,9 +59,13 @@ try {
     /style\.elements\.flashCut/u.test(corpoEscrita),
     'o botão de flash precisa chegar ao edit-data, não só ao prompt do agente',
   );
-  // O número volta para a interface: é o que permite dizer "deixei 4 espaços
-  // na timeline" em vez de repetir "estilos aplicados".
-  assert.ok(/return \{ splits: splits\.length/u.test(corpoEscrita));
+  // A contagem volta para a interface a partir do documento efetivamente escrito.
+  // Com aplicação parcial, o plano cru pode ter zero splits enquanto uma tela dividida anterior é preservada.
+  assert.ok(/mergeStyleLayers\(/u.test(corpoEscrita), 'writeEditData precisa mesclar apenas as camadas aplicadas');
+  assert.ok(/return \{ splits: finalSplits\.length/u.test(corpoEscrita), 'a contagem deve refletir o documento escrito');
+  const soundtrackPos = corpoEscrita.indexOf('ensureSoundtrackFile');
+  const returnPos = corpoEscrita.indexOf('return { splits: finalSplits.length');
+  assert.ok(soundtrackPos > 0 && returnPos > soundtrackPos, 'a trilha precisa ser habilitada antes do return');
 
   // --- 1c. A mídia gerada não pode vir escrita ------------------------------
   // O primeiro clipe pedido em uso real voltou parecendo uma gravação de tela

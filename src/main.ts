@@ -167,6 +167,7 @@ import { editDataOperationsForPlan } from './editai/overlay-operations';
 import { buildTikTokShopVariants } from './editai/tiktok-shop-engine';
 import { applyAiEditPlan } from './editai/timeline-operations';
 import { FilaDeTrabalho } from './work-queue';
+import { STYLE_LAYERS, mergeStyleLayers, type StyleLayer } from './style-layers';
 
 // Proxy e waveform disputam a mesma CPU/disco que o resto do app. Sem um
 // limite, abrir um projeto com varias fontes pesadas (ProRes, HEVC) dispara
@@ -3337,6 +3338,7 @@ async function writeEditData(
     // cada arquivo para a janela nova que cobre o lugar dele.
     segments: readonly PlanSegment[];
   },
+  layers: readonly StyleLayer[] = STYLE_LAYERS,
 ): Promise<{ splits: number; flashes: number }> {
   const file = path.join(publicDirectory, 'edit-data.json');
   // Preserva o que o agente ja tiver posto de criativo (inserts, animacoes,
@@ -3407,7 +3409,7 @@ async function writeEditData(
       : []),
   ].sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0));
 
-  const document: Record<string, unknown> = {
+  const completeDocument: Record<string, unknown> = {
     ...previous,
     width: media.width,
     height: media.height,
@@ -3455,12 +3457,15 @@ async function writeEditData(
       volume: SOUNDTRACK_VOLUME,
     },
   };
+  const document = mergeStyleLayers({ previous, next: completeDocument, layers });
   await writeFile(file, `${JSON.stringify(document, null, 2)}\n`);
   // O numero volta para a interface: sem agente conectado e ele que permite
   // dizer "deixei 4 espacos na timeline" em vez de "estilos aplicados".
-  return { splits: splits.length, flashes: animations.filter(ehFlash).length };
   // Se a trilha ja estiver na pasta, liga na hora.
   await ensureSoundtrackFile(path.resolve(publicDirectory, '..', '..', '..'), publicDirectory).catch(() => {});
+  const finalSplits = Array.isArray(document.splits) ? document.splits : [];
+  const finalAnimations = Array.isArray(document.animations) ? (document.animations as Record<string, unknown>[]) : [];
+  return { splits: finalSplits.length, flashes: finalAnimations.filter(ehFlash).length };
 }
 
 // FASE 2 MONTADA PELO APLICATIVO.
