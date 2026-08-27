@@ -1,0 +1,138 @@
+name: EDIT AI J-Cut hardening once
+
+on:
+  push:
+    branches:
+      - editai-jcut-hardening-20260827
+    paths:
+      - .github/workflows/editai-jcut-hardening-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: editai-jcut-hardening-20260827
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply guarded J-Cut patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app = Path('src/App.tsx')
+          app_text = app.read_text(encoding='utf-8')
+          app_old = """  async function applyJcut() {
+              if (jcutApplied || jcutBusy || !projectDirectory) return;
+              setJcutBusy(true);
+              try {
+          """.replace('              ', '    ')
+          app_new = """  async function applyJcut() {
+              if (jcutApplied || jcutBusy || !projectDirectory) return;
+              // O J-Cut precisa partir do mesmo corte que o usuário está vendo.
+              // Se há trims/deletes pendentes, materialize-os primeiro; caso
+              // contrário o refresh após o J-Cut releria o EDL antigo e poderia
+              // descartar os ajustes recém-feitos na timeline.
+              if (cutsPendingRef.current) {
+                setJcutBusy(true);
+                const applied = await applyTimelineEdits().catch(() => false);
+                setJcutBusy(false);
+                if (!applied) {
+                  setMessages((current) => [...current, {
+                    id: `error:${Date.now()}`,
+                    role: 'system',
+                    text: 'Não consegui aplicar os seus ajustes da timeline antes do J-Cut. O J-Cut não foi feito para não antecipar o áudio de um corte diferente do que você editou.',
+                  }]);
+                  return;
+                }
+              }
+              setJcutBusy(true);
+              try {
+          """.replace('              ', '    ')
+          if app_old not in app_text:
+              raise SystemExit('Guard failed: applyJcut context changed; refusing to patch App.tsx')
+          app.write_text(app_text.replace(app_old, app_new, 1), encoding='utf-8')
+
+          main = Path('src/main.ts')
+          main_text = main.read_text(encoding='utf-8')
+          main_old = """  const absolutePath = path.isAbsolute(mapped) ? path.resolve(mapped) : path.resolve(projectDirectory, mapped);
+            const relative = path.relative(projectDirectory, absolutePath);
+            if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+            return absolutePath;
+          """.replace('            ', '  ')
+          main_new = """  const absolutePath = path.isAbsolute(mapped) ? path.resolve(mapped) : path.resolve(projectDirectory, mapped);
+            const relative = path.relative(projectDirectory, absolutePath);
+            if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) return absolutePath;
+
+            // O EDL guarda o caminho absoluto da época em que foi criado. Se a
+            // pasta do projeto foi movida/renomeada ou aberta em outra máquina,
+            // preserve a contenção e tente o mesmo nome DENTRO da pasta atual.
+            const fileName = path.basename(mapped);
+            if (!fileName || fileName === '.' || fileName === path.sep) return null;
+            const insideProject = path.resolve(projectDirectory, fileName);
+            const fallbackRelative = path.relative(projectDirectory, insideProject);
+            if (!fallbackRelative || fallbackRelative.startsWith('..') || path.isAbsolute(fallbackRelative)) return null;
+            return insideProject;
+          """.replace('            ', '  ')
+          if main_old not in main_text:
+              raise SystemExit('Guard failed: resolveJcutSource context changed; refusing to patch main.ts')
+          main.write_text(main_text.replace(main_old, main_new, 1), encoding='utf-8')
+
+          test = Path('scripts/test-jcut.mjs')
+          test_text = test.read_text(encoding='utf-8')
+          import_old = "import { existsSync, mkdtempSync, rmSync } from 'node:fs';"
+          import_new = "import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';"
+          if import_old not in test_text:
+              raise SystemExit('Guard failed: test-jcut fs import changed')
+          test_text = test_text.replace(import_old, import_new, 1)
+          marker = "  // --- Plano: clamps e recusas -------------------------------------------\n"
+          contract = """  // Contratos de integração: o renderer não pode rodar J-Cut sobre um EDL
+            // anterior aos ajustes pendentes, e um projeto movido deve poder reencontrar
+            // a fonte pelo nome sem escapar da pasta atual.
+            const appSource = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');
+            const mainSource = readFileSync(path.join(projectRoot, 'src', 'main.ts'), 'utf8');
+            assert.match(
+              appSource,
+              /async function applyJcut[\\s\\S]{0,1800}?cutsPendingRef\\.current[\\s\\S]{0,1000}?applyTimelineEdits\\(\\)/u,
+              'J-Cut precisa aplicar ajustes pendentes da timeline primeiro',
+            );
+            assert.match(
+              mainSource,
+              /function resolveJcutSource[\\s\\S]{0,1800}?path\\.basename\\(mapped\\)[\\s\\S]{0,1000}?path\\.relative\\(projectDirectory, insideProject\\)/u,
+              'fonte do J-Cut precisa sobreviver a projeto movido mantendo contenção',
+            );
+
+          """.replace('            ', '  ')
+          if marker not in test_text:
+              raise SystemExit('Guard failed: test-jcut insertion marker changed')
+          test.write_text(test_text.replace(marker, contract + marker, 1), encoding='utf-8')
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify TypeScript and J-Cut
+        run: |
+          npm run typecheck
+          npm run test:jcut
+
+      - name: Commit verified hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-jcut-hardening-once.yml
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/App.tsx src/main.ts scripts/test-jcut.mjs .github/workflows/editai-jcut-hardening-once.yml
+          git commit -m "fix(jcut): preserve pending edits and moved project sources"
+          git push origin HEAD:editai-jcut-hardening-20260827
