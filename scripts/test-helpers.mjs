@@ -119,10 +119,20 @@ try {
     const fim = segments[i - 1].start + segments[i - 1].dur;
     assert.ok(Math.abs(segments[i].start - fim) < 1e-6, 'há buraco entre os cortes');
   }
-  // O ponto do teste: o resultado difere da soma ingênua, e para mais.
-  const somaIngenua = duracoes.slice(0, -1).reduce((a, b) => a + b, 0);
-  const desvio = segments.at(-1).start - somaIngenua;
-  assert.ok(desvio > 0.02, `esperava desvio da soma ingênua, obtive ${desvio}s`);
+  // O ponto do teste: o resultado vem da soma dos frames quantizados,
+  // não da soma dos segundos crus. A direção do desvio depende das frações
+  // de frame de cada corte, então não deve ser fixada como positiva.
+  const duracoesAnteriores = duracoes.slice(0, -1);
+  const somaIngenua = duracoesAnteriores.reduce((a, b) => a + b, 0);
+  const inicioEsperadoEmFrames = duracoesAnteriores
+    .reduce((frames, duracao) => frames + Math.round(duracao * fps), 0) / fps;
+  const inicioReal = segments.at(-1).start;
+  const desvio = inicioReal - somaIngenua;
+  assert.ok(
+    Math.abs(inicioReal - inicioEsperadoEmFrames) < 1e-6,
+    `início quantizado inesperado: ${inicioReal}s, esperado ${inicioEsperadoEmFrames}s`,
+  );
+  assert.ok(Math.abs(desvio) > 1e-3, `esperava desvio da soma ingênua, obtive ${desvio}s`);
 
   // Sem --fps o modo EDL precisa falhar, em vez de inventar um valor.
   assert.throws(
@@ -132,7 +142,7 @@ try {
 
   console.log(
     `test:helpers ok — ${resultados.whisperx.caps} legendas e ${resultados.whisperx.cues} cues iguais nos dois formatos; ` +
-      `segments.json alinhado a frame (${Math.round(desvio * 1000)} ms à frente da soma ingênua em ${duracoes.length} cortes).`,
+      `segments.json alinhado a frame (${Math.round(desvio * 1000)} ms de desvio da soma ingênua em ${duracoes.length} cortes).`,
   );
 } finally {
   rmSync(work, { recursive: true, force: true });
