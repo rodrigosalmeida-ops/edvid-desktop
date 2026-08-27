@@ -70,7 +70,7 @@ jobs:
 
       - name: Smoke packaged EDIT AI executable
         shell: powershell
-        run: npm run smoke:editai:win
+        run: npm run smoke:editai:win -- -ExecutablePath "out\EDIT AI-fat-win32-x64\EDIT AI.exe"
 
       - name: Media smoke with bundled EDIT AI FFmpeg
         shell: powershell
