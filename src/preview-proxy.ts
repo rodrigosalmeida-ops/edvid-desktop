@@ -42,6 +42,11 @@ export function precisaProxy(codecName: string | null | undefined): boolean {
 // folga; a fonte de 4K entra em 720x1280 no vertical.
 export const PROXY_LADO_MAIOR = 1280;
 
+// Versao do FORMATO do proxy, gravada no nome — mudou a receita, muda o
+// nome, e o cache antigo deixa de ser reaproveitado (e regenerado ja no
+// formato novo; quem constroi varre o irmao velho). p2: GOP curto.
+export const PROXY_VERSAO = 'p2';
+
 // Nome no CACHE, nao no projeto do aluno. Duas razoes: proxy e regeneravel e
 // nao merece backup junto com o material; e dentro de edit/ ele seria varrido
 // como midia do projeto — descrito pela visao, oferecido como b-roll, e ate
@@ -49,7 +54,7 @@ export const PROXY_LADO_MAIOR = 1280;
 export function proxyFileName(absolutePath: string, fingerprint: string): string {
   const base = absolutePath.split(/[\\/]/u).pop() ?? 'fonte';
   const limpo = base.replace(/\.[^.]*$/u, '').replace(/[^\w.-]+/gu, '_').slice(0, 48);
-  return `${limpo}_${fingerprint}.mp4`;
+  return `${limpo}_${fingerprint}_${PROXY_VERSAO}.mp4`;
 }
 
 // H.264 yuv420p, que e o denominador comum. `-progress pipe:1` da o andamento
@@ -66,6 +71,12 @@ export function proxyArgs(input: { entrada: string; saida: string }): string[] {
     '-i', input.entrada,
     '-vf', `scale=w=${PROXY_LADO_MAIOR}:h=${PROXY_LADO_MAIOR}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
+    // GOP CURTO (1 s). O keyint padrao do x264 e 250 quadros (~8 s): um seek
+    // da previa mapeada aterrissava no meio do GOP e decodificava ate 250
+    // quadros para mostrar UM — era a "travada" de segundos por corte e por
+    // arrasto da agulha. Com IDR a cada 30, o pior seek decodifica 29 quadros
+    // (~50 ms) e custa poucos por cento a mais de arquivo.
+    '-g', '30', '-keyint_min', '30',
     '-c:a', 'aac', '-b:a', '128k',
     '-movflags', '+faststart',
     input.saida,
