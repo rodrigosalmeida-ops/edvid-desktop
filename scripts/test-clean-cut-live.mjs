@@ -73,7 +73,12 @@ try {
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-vf', 'scale=480:-2', '-c:a', 'aac', media], 'recorte');
 
   // 1. Transcrição offline, com alinhamento por palavra.
-  rodar(python, whisperxArgs({ media, model: 'small', outputDirectory: transcricoes }), 'whisperx');
+  rodar(python, whisperxArgs({
+    media,
+    model: 'small',
+    outputDirectory: transcricoes,
+    launcher: path.join(projectRoot, 'resources', 'helpers', 'whisperx_launcher.py'),
+  }), 'whisperx');
   const transcript = path.join(transcricoes, 'fala.json');
   assert.ok(existsSync(transcript), 'a transcrição precisa sair com o nome do vídeo');
   const palavras = JSON.parse(await readFile(transcript, 'utf8'));

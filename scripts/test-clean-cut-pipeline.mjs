@@ -98,8 +98,10 @@ try {
   );
 
   // --- 4. Transcrição: offline, em português, com alinhamento -------------
-  const wx = whisperxArgs({ media: '/p/a.mov', model: 'small', outputDirectory: '/p/edit/transcricao_raw' });
-  assert.ok(wx.includes('whisperx') && wx.includes('--language') && wx[wx.indexOf('--language') + 1] === 'pt');
+  const wx = whisperxArgs({
+    media: '/p/a.mov', model: 'small', outputDirectory: '/p/edit/transcricao_raw', launcher: '/h/whisperx_launcher.py',
+  });
+  assert.ok(wx.includes('/h/whisperx_launcher.py') && wx.includes('--language') && wx[wx.indexOf('--language') + 1] === 'pt');
   assert.equal(wx[wx.indexOf('--output_format') + 1], 'json');
   // --no_align mataria o corte: sem tempo por palavra o helper não decide nada.
   assert.ok(!wx.includes('--no_align'), 'o corte depende do alinhamento por palavra');
