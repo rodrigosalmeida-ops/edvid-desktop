@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { finished } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,39 +42,28 @@ console.log(`Empacotando ${platformKey} (chave ${key})...`);
 // WhisperX quebrou no E2E. Escrever o tar em stdout elimina completamente a
 // comparacao do arquivo de saida contra as entradas da arvore.
 await rm(packPath, { force: true });
-await new Promise((resolve, reject) => {
-  const output = createWriteStream(packPath, { flags: 'wx' });
-  const child = spawn(
-    'tar',
-    ['-czf', '-', '-C', path.join(projectRoot, 'resources', 'runtimes'), platformKey],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
-  );
-  let settled = false;
-  const fail = async (error) => {
-    if (settled) return;
-    settled = true;
-    child.kill();
-    output.destroy();
-    await rm(packPath, { force: true }).catch(() => {});
-    reject(error);
-  };
-  child.on('error', fail);
-  output.on('error', fail);
-  child.stdout.on('error', fail);
-  child.stdout.pipe(output);
-  child.on('close', (code) => {
-    if (settled) return;
-    if (code !== 0) {
-      void fail(new Error(`tar terminou com exit ${code ?? 'desconhecido'}`));
-      return;
-    }
-    output.end(() => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    });
-  });
-});
+const output = createWriteStream(packPath, { flags: 'wx' });
+const child = spawn(
+  'tar',
+  ['-czf', '-', '-C', path.join(projectRoot, 'resources', 'runtimes'), platformKey],
+  { stdio: ['ignore', 'pipe', 'inherit'] },
+);
+child.stdout.pipe(output);
+try {
+  const [exitCode] = await Promise.all([
+    new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    }),
+    finished(output),
+  ]);
+  if (exitCode !== 0) throw new Error(`tar terminou com exit ${exitCode ?? 'desconhecido'}`);
+} catch (error) {
+  child.kill();
+  output.destroy();
+  await rm(packPath, { force: true }).catch(() => {});
+  throw error;
+}
 
 // Gate de integridade estrutural. O SHA-256 prova que o download nao mudou,
 // mas nao prova que o arquivo foi criado completo. Quando o runtime contem
