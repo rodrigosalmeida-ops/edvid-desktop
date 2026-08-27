@@ -706,3 +706,47 @@ export function sanitizeTimelineModel(value: unknown): TimelineModel | null {
     clips,
   };
 }
+
+
+export const STANDBY_PREROLL_S = 0.12;
+
+export type StandbyPlan = {
+  index: number;
+  sourceId: string;
+  url: string;
+  sourceTime: number;
+  speed: number;
+};
+
+export function standbyPlanFor(
+  programme: readonly PlaybackSegment[],
+  currentIndex: number,
+  inGap: boolean,
+  urlOf: (sourceId: string) => string | null,
+): StandbyPlan | null {
+  const index = inGap ? currentIndex : currentIndex + 1;
+  if (index < 0) return null;
+  const segment = programme[index];
+  if (!segment) return null;
+  const url = urlOf(segment.sourceId);
+  if (!url) return null;
+  return {
+    index,
+    sourceId: segment.sourceId,
+    url,
+    sourceTime: segment.sourceIn,
+    speed: segment.speed || 1,
+  };
+}
+
+export function standbyPlanMatches(
+  plan: StandbyPlan,
+  programme: readonly PlaybackSegment[],
+  urlOf: (sourceId: string) => string | null,
+): boolean {
+  const segment = programme[plan.index];
+  if (!segment) return false;
+  if (segment.sourceId !== plan.sourceId) return false;
+  if (urlOf(segment.sourceId) !== plan.url) return false;
+  return Math.abs(segment.sourceIn - plan.sourceTime) <= 0.005;
+}
