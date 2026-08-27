@@ -438,6 +438,7 @@ export type CodexEvent =
     }
   | { type: 'approval-requested'; approval: CodexApproval }
   | { type: 'approval-resolved'; approvalId: string | number }
+  | { type: 'workspace-refresh' }
   | { type: 'error'; message: string };
 
 export type CodexSendMessageInput = {
