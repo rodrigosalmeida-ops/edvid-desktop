@@ -94,7 +94,15 @@ jobs:
           $pack = Get-ChildItem out\runtime-packs -File -Filter '*.tar.gz' | Select-Object -First 1
           $sidecar = Get-Item "$($pack.FullName).sha256" -ErrorAction Stop
           if (-not $pack) { throw 'Runtime pack comercial ausente.' }
+          # "gh release view" escreve no stderr quando a release ainda nao
+          # existe (esperado no primeiro run) — com ErrorActionPreference
+          # Stop isso vira erro terminante mesmo redirecionado com "*> $null",
+          # entao a checagem some antes do "if" abaixo rodar. Continue so
+          # nesta sondagem, restaura Stop antes de qualquer coisa que precise
+          # falhar de verdade.
+          $ErrorActionPreference = 'Continue'
           gh release view $env:EDITAI_RUNTIME_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          $ErrorActionPreference = 'Stop'
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:EDITAI_RUNTIME_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'EDIT AI Runtime 1.0 Windows x64' --notes 'Runtime versionado do EDIT AI: FFmpeg, Node, uv, yt-dlp, Codex e Python/WhisperX. Integridade validada pelo SHA-256 embutido no aplicativo.'
           }
@@ -195,7 +203,12 @@ jobs:
             (Join-Path $dir 'feed.json'),
             (Join-Path $PWD 'out\editai-commercial-evidence.json')
           )
+          # Mesmo motivo do passo de runtime pack: sondagem de existencia
+          # escreve no stderr quando a release ainda nao existe, e isso vira
+          # erro terminante sob ErrorActionPreference Stop.
+          $ErrorActionPreference = 'Continue'
           gh release view $env:EDITAI_RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          $ErrorActionPreference = 'Stop'
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:EDITAI_RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'EDIT AI 1.0 Commercial Preview - Windows x64' --notes 'Instalador comercial leve validado em Windows com download publico do runtime, WhisperX, TikTok Shop A/B, Brand Kit, Remotion e exportacao MP4. Build ainda sem Authenticode: o SmartScreen pode exibir Editor desconhecido.'
           }
