@@ -8,74 +8,134 @@
 //      mapear a timeline nos ARQUIVOS-FONTE;
 //   3. a fonte era ProRes — e o Chromium nao decodifica ProRes.
 //
-// O que torna isso traicoeiro e o modo de falhar. Medido no proprio Chromium
-// do app: `canPlayType('video/quicktime')` devolve VAZIO, e ao carregar o
-// arquivo o elemento reporta `readyState: 4` (pronto!), `videoWidth: 0`, zero
-// quadros decodificados e **`error: null`**. Ele carrega a faixa de AUDIO, se
-// declara pronto e descarta a faixa de video em silencio. Nao ha erro para
-// mostrar, nao ha evento para escutar: so o preto.
-//
-// A regra que sai disso: o aplicativo nunca entrega ao navegador um arquivo
-// que ele nao decodifica. Quando a fonte esta fora da lista, o Edvid gera uma
-// copia leve em H.264 e a previa usa ela. O original nao e tocado, e o corte
-// final continua saindo dele.
-//
-// Modulo PURO: a lista, a decisao e os argumentos. Quem transcodifica e o main.
+// A regra: o aplicativo nunca entrega ao navegador um arquivo que ele nao
+// decodifica. Quando a fonte esta fora da lista, gera uma copia leve em H.264
+// para a previa; o render final continua usando o original.
 
-// O QUE O CHROMIUM TOCA. Lista branca de proposito: codec novo que ninguem
-// previu vira proxy (lento, porem correto) em vez de tela preta (rapido e
-// mudo). "hevc" entra porque o Chromium do Electron no macOS e no Windows
-// decodifica H.265 por hardware.
 const CODECS_QUE_O_NAVEGADOR_TOCA = new Set([
   'h264', 'avc1', 'hevc', 'h265', 'vp8', 'vp9', 'av1', 'theora', 'mpeg4', 'mjpeg',
 ]);
 
 export function precisaProxy(codecName: string | null | undefined): boolean {
   const codec = String(codecName ?? '').trim().toLowerCase();
-  // Sem codec conhecido nao da para afirmar que quebra: o caminho normal
-  // segue, e no pior caso o aluno ve o mesmo que via antes desta mudanca.
   if (!codec) return false;
   return !CODECS_QUE_O_NAVEGADOR_TOCA.has(codec);
 }
 
-// O maior lado da previa. 1280 cobre o palco em qualquer layout do app com
-// folga; a fonte de 4K entra em 720x1280 no vertical.
 export const PROXY_LADO_MAIOR = 1280;
-
-// Versao do FORMATO do proxy, gravada no nome — mudou a receita, muda o
-// nome, e o cache antigo deixa de ser reaproveitado (e regenerado ja no
-// formato novo; quem constroi varre o irmao velho). p2: GOP curto.
 export const PROXY_VERSAO = 'p2';
 
-// Nome no CACHE, nao no projeto do aluno. Duas razoes: proxy e regeneravel e
-// nao merece backup junto com o material; e dentro de edit/ ele seria varrido
-// como midia do projeto — descrito pela visao, oferecido como b-roll, e ate
-// disputando a escolha do "clean-cut" mais recente.
 export function proxyFileName(absolutePath: string, fingerprint: string): string {
   const base = absolutePath.split(/[\\/]/u).pop() ?? 'fonte';
   const limpo = base.replace(/\.[^.]*$/u, '').replace(/[^\w.-]+/gu, '_').slice(0, 48);
   return `${limpo}_${fingerprint}_${PROXY_VERSAO}.mp4`;
 }
 
-// H.264 yuv420p, que e o denominador comum. `-progress pipe:1` da o andamento
-// em linhas simples (out_time_ms=...), sem parse de stderr.
-//
-// As tags de cor NAO sao convertidas de proposito: o corte limpo tambem
-// preserva as do original (medido: bt2020nc num projeto Apple Log) e o
-// Chromium pinta os dois igual. Converter aqui deixaria a previa com cor
-// diferente do render, que e pior que uma previa chapada.
-export function proxyArgs(input: { entrada: string; saida: string }): string[] {
+// Planejamento puro da aceleracao. O main pode detectar o encoder disponivel
+// e passar o plano; sem plano, proxyArgs continua 100% compativel com o
+// caminho por software ja validado no EDIT AI.
+export type ProxyHardware = {
+  encoder: string | null;
+  hwaccel: string | null;
+  escalaNaGpu: string | null;
+};
+
+export const SEM_ACELERACAO: ProxyHardware = {
+  encoder: null,
+  hwaccel: null,
+  escalaNaGpu: null,
+};
+
+export const PROXY_QUALIDADE_VT = '45';
+export const PROXY_CRF_SOFTWARE = '26';
+export const PROXY_BITRATE_HARDWARE = '2500k';
+
+export type ProxyPlano = {
+  rotulo: 'software' | 'hardware' | 'gpu';
+  hwaccel: string | null;
+  formatoDoHwaccel: string | null;
+  filtro: string;
+  encoder: string;
+  ajustes: string[];
+};
+
+const filtroDeEscalaNaCpu =
+  `scale=w=${PROXY_LADO_MAIOR}:h=${PROXY_LADO_MAIOR}:force_original_aspect_ratio=decrease:force_divisible_by=2`;
+
+export const PLANO_SOFTWARE: ProxyPlano = {
+  rotulo: 'software',
+  hwaccel: null,
+  formatoDoHwaccel: null,
+  filtro: filtroDeEscalaNaCpu,
+  encoder: 'libx264',
+  ajustes: ['-preset', 'veryfast', '-crf', PROXY_CRF_SOFTWARE, '-pix_fmt', 'yuv420p'],
+};
+
+export function caixaDoProxy(
+  largura: number,
+  altura: number,
+): { largura: number; altura: number } | null {
+  if (!Number.isFinite(largura) || !Number.isFinite(altura)) return null;
+  if (largura < 2 || altura < 2) return null;
+  const escala = Math.min(1, PROXY_LADO_MAIOR / Math.max(largura, altura));
+  const par = (valor: number) => Math.max(2, Math.round((valor * escala) / 2) * 2);
+  return { largura: par(largura), altura: par(altura) };
+}
+
+export function planejarProxy(input: {
+  hardware: ProxyHardware;
+  largura: number;
+  altura: number;
+  rotacao: number;
+}): ProxyPlano {
+  const { hardware } = input;
+  if (!hardware.encoder) return PLANO_SOFTWARE;
+
+  const qualidade = hardware.encoder === 'h264_videotoolbox'
+    ? ['-q:v', PROXY_QUALIDADE_VT]
+    : ['-b:v', PROXY_BITRATE_HARDWARE, '-maxrate', PROXY_BITRATE_HARDWARE, '-bufsize', '5000k'];
+  const caixa = caixaDoProxy(input.largura, input.altura);
+  const girada = Math.round(Math.abs(input.rotacao)) % 360 !== 0;
+
+  // O caminho integralmente na GPU so e seguro sem rotacao. Alguns filtros de
+  // hardware pulam o autorotate; com fonte girada mantemos escala na CPU para
+  // preservar orientacao e usamos apenas o encoder acelerado.
+  if (hardware.escalaNaGpu && hardware.hwaccel && caixa && !girada) {
+    return {
+      rotulo: 'gpu',
+      hwaccel: hardware.hwaccel,
+      formatoDoHwaccel: `${hardware.hwaccel}_vld`,
+      filtro: `${hardware.escalaNaGpu}=w=${caixa.largura}:h=${caixa.altura}`,
+      encoder: hardware.encoder,
+      ajustes: qualidade,
+    };
+  }
+
+  return {
+    rotulo: 'hardware',
+    hwaccel: hardware.hwaccel,
+    formatoDoHwaccel: null,
+    filtro: filtroDeEscalaNaCpu,
+    encoder: hardware.encoder,
+    ajustes: [...qualidade, '-pix_fmt', 'yuv420p'],
+  };
+}
+
+export function proxyArgs(input: {
+  entrada: string;
+  saida: string;
+  plano?: ProxyPlano;
+}): string[] {
+  const plano = input.plano ?? PLANO_SOFTWARE;
   return [
     '-v', 'error', '-y',
     '-progress', 'pipe:1', '-nostats',
+    ...(plano.hwaccel ? ['-hwaccel', plano.hwaccel] : []),
+    ...(plano.formatoDoHwaccel ? ['-hwaccel_output_format', plano.formatoDoHwaccel] : []),
     '-i', input.entrada,
-    '-vf', `scale=w=${PROXY_LADO_MAIOR}:h=${PROXY_LADO_MAIOR}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
-    // GOP CURTO (1 s). O keyint padrao do x264 e 250 quadros (~8 s): um seek
-    // da previa mapeada aterrissava no meio do GOP e decodificava ate 250
-    // quadros para mostrar UM — era a "travada" de segundos por corte e por
-    // arrasto da agulha. Com IDR a cada 30, o pior seek decodifica 29 quadros
-    // (~50 ms) e custa poucos por cento a mais de arquivo.
+    '-vf', plano.filtro,
+    '-c:v', plano.encoder,
+    ...plano.ajustes,
     '-g', '30', '-keyint_min', '30',
     '-c:a', 'aac', '-b:a', '128k',
     '-movflags', '+faststart',
@@ -83,8 +143,6 @@ export function proxyArgs(input: { entrada: string; saida: string }): string[] {
   ];
 }
 
-// O andamento sai do proprio ffmpeg: `out_time_ms=` em microssegundos (o nome
-// mente, e conhecido). Devolve 0..1, ou null quando a linha nao e de tempo.
 export function proxyProgress(linha: string, duracaoSegundos: number): number | null {
   const match = /^out_time_ms=(\d+)/mu.exec(linha);
   if (!match || duracaoSegundos <= 0) return null;
