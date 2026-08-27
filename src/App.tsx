@@ -4976,6 +4976,23 @@ export function App() {
   // não participa — era o improviso dele que dessincronizava o vídeo.
   async function applyJcut() {
     if (jcutApplied || jcutBusy || !projectDirectory) return;
+    // O J-Cut precisa partir do mesmo corte que o usuário está vendo.
+    // Se há trims/deletes pendentes, materialize-os primeiro; caso
+    // contrário o refresh após o J-Cut releria o EDL antigo e poderia
+    // descartar os ajustes recém-feitos na timeline.
+    if (cutsPending) {
+      setJcutBusy(true);
+      const applied = await applyTimelineEdits().catch(() => false);
+      setJcutBusy(false);
+      if (!applied) {
+        setMessages((current) => [...current, {
+          id: `error:${Date.now()}`,
+          role: 'system',
+          text: 'Não consegui aplicar os seus ajustes da timeline antes do J-Cut. O J-Cut não foi feito para não antecipar o áudio de um corte diferente do que você editou.',
+        }]);
+        return;
+      }
+    }
     setJcutBusy(true);
     try {
       const result = await window.edvidDesktop.applyJcut(projectDirectory);

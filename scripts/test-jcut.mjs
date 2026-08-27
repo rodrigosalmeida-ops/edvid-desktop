@@ -5,7 +5,7 @@
 //   pre-juncao que era silencio ganha o tom da cena seguinte).
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,19 +13,37 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const platformKey = `${process.platform}-${process.arch}`;
 const FFMPEG = path.join(projectRoot, 'resources', 'runtimes', platformKey, 'ffmpeg', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-const ESBUILD = path.join(projectRoot, 'node_modules', 'esbuild', 'bin', 'esbuild');
 const work = mkdtempSync(path.join(tmpdir(), 'edvid-jcut-test-'));
 
 try {
-  // O entrypoint JS do esbuild é executado pelo próprio Node para não depender
-  // dos shims .bin (esbuild.cmd no Windows), que execFileSync não abre de
-  // forma portável sem shell.
-  execFileSync(process.execPath, [ESBUILD,
-    path.join(projectRoot, 'src', 'jcut.ts'),
-    '--bundle', '--platform=node', '--format=esm',
-    `--outfile=${path.join(work, 'jcut.mjs')}`,
-  ], { stdio: 'inherit' });
+  // Use a API JS do esbuild, não o shim .cmd nem o binário nativo. Assim o
+  // mesmo teste roda em Windows, Linux e macOS sem shell específico.
+  const { buildSync } = await import('esbuild');
+  buildSync({
+    entryPoints: [path.join(projectRoot, 'src', 'jcut.ts')],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    outfile: path.join(work, 'jcut.mjs'),
+    logLevel: 'silent',
+  });
   const { planJcut, extractionArgs, mixArgs, muxArgs, cutMatchesEdl, tracksInSync } = await import(pathToFileURL(path.join(work, 'jcut.mjs')).href);
+
+  // Contratos de integração: o renderer não pode rodar J-Cut sobre um EDL
+  // anterior aos ajustes pendentes, e um projeto movido deve poder reencontrar
+  // a fonte pelo nome sem escapar da pasta atual.
+  const appSource = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');
+  const mainSource = readFileSync(path.join(projectRoot, 'src', 'main.ts'), 'utf8');
+  assert.match(
+    appSource,
+    /async function applyJcut[\s\S]{0,1800}?if \(cutsPending\)[\s\S]{0,1000}?applyTimelineEdits\(\)/u,
+    'J-Cut precisa aplicar ajustes pendentes da timeline primeiro',
+  );
+  assert.match(
+    mainSource,
+    /function resolveJcutSource[\s\S]{0,1800}?path\.basename\(mapped\)[\s\S]{0,1000}?path\.relative\(projectDirectory, insideProject\)/u,
+    'fonte do J-Cut precisa sobreviver a projeto movido mantendo contenção',
+  );
 
   // --- Plano: clamps e recusas -------------------------------------------
   assert.equal(planJcut([{ start: 0, end: 5 }]), null, 'um range so nao tem juncao');
