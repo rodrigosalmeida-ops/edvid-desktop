@@ -2791,10 +2791,85 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
       environment,
       10 * 60_000,
     );
-    const edl = parseEdl(JSON.parse(await readFile(edlFile, 'utf8')));
+    let rawEdl = JSON.parse(await readFile(edlFile, 'utf8')) as Record<string, unknown>;
+    let edl = parseEdl(rawEdl);
     if (!edl) throw new Error('Não encontrei fala suficiente para cortar este vídeo.');
 
-    // 3. Corte e concatenacao numa passagem so.
+    // 4. Paridade Edvid: medir o nível da voz por take antes do render.
+    // O helper sugere ganho relativo à própria voz do speaker. Cada fonte é
+    // auditada separadamente para não misturar níveis de gravações diferentes.
+    const voiceAnalysis: Array<Record<string, unknown>> = [];
+    const rawRanges = Array.isArray(rawEdl.ranges) ? rawEdl.ranges as Array<Record<string, unknown>> : [];
+    for (const file of files) {
+      const indexed = rawRanges
+        .map((range, index) => ({ range, index }))
+        .filter(({ range }) => asText(range.source) === file.source);
+      if (!indexed.length) continue;
+      const auditEdl = path.join(editDirectory, `.voice-audit-${path.basename(file.source).replace(/[^a-z0-9_-]+/giu, '_')}.json`);
+      await writeFile(auditEdl, `${JSON.stringify({
+        version: 1,
+        sources: { [file.source]: file.media },
+        ranges: indexed.map(({ range }) => range),
+      }, null, 2)}\n`);
+      const audit = await runToolAudit(
+        python.command,
+        [
+          ...python.argsPrefix,
+          '-B',
+          path.join(helpersDirectory(), 'voice_levels.py'),
+          file.media,
+          '--edl',
+          auditEdl,
+          '--json',
+        ],
+        environment,
+        10 * 60_000,
+      );
+      await rm(auditEdl, { force: true });
+      if (audit.code !== 0) {
+        voiceAnalysis.push({
+          source: file.source,
+          ok: false,
+          error: (audit.stderr || audit.stdout).trim().slice(-1500),
+        });
+        continue;
+      }
+      try {
+        const report = JSON.parse(audit.stdout) as {
+          edl_ranges?: Array<{ index?: unknown; flag?: unknown; suggest_gain_db?: unknown }>;
+          [key: string]: unknown;
+        };
+        voiceAnalysis.push({ source: file.source, ok: true, ...report });
+        for (const row of report.edl_ranges ?? []) {
+          const localIndex = Number(row.index);
+          const globalIndex = indexed[localIndex]?.index;
+          const suggested = Number(row.suggest_gain_db);
+          if (
+            globalIndex !== undefined
+            && asText(row.flag) === 'LOW'
+            && Number.isFinite(suggested)
+            && suggested > 0
+          ) {
+            rawRanges[globalIndex] = {
+              ...rawRanges[globalIndex],
+              gain_db: Math.min(12, Number(suggested.toFixed(1))),
+            };
+          }
+        }
+      } catch {
+        voiceAnalysis.push({ source: file.source, ok: false, error: 'Saída de análise de voz inválida.' });
+      }
+    }
+    rawEdl = { ...rawEdl, ranges: rawRanges };
+    await writeFile(edlFile, `${JSON.stringify(rawEdl, null, 2)}\n`);
+    await writeFile(
+      path.join(editDirectory, 'voice-analysis.json'),
+      `${JSON.stringify({ version: 1, sources: voiceAnalysis }, null, 2)}\n`,
+    );
+    edl = parseEdl(rawEdl);
+    if (!edl) throw new Error('O EDL ficou inválido depois da análise de voz.');
+
+    // 5. Corte, grade corretivo e fades de 30 ms em cada borda.
     broadcastCleanCut({ status: 'cortando' });
     const sourceIndex: Record<string, number> = {};
     files.forEach((file, index) => { sourceIndex[file.source] = index; });
