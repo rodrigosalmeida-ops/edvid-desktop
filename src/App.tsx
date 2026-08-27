@@ -171,12 +171,28 @@ type ChatMessage = {
   text: string;
 };
 
+// A MARCAÇÃO GUARDA A INTENÇÃO, e o Aplicar executa. Marcar não gera nada: o
+// aluno marca vários trechos — uns pedindo clipe, outros imagem, outros
+// correção — e aplica tudo de uma vez. Além da ergonomia, isso põe todos os
+// clipes num LOTE só para o hub, em vez de uma ida por marcação.
 type CorrectionRange = {
   id: string;
   start: number;
   end: number;
   note: string;
+  // Ausente = correção, que é o que toda marcação era antes deste campo.
+  kind?: 'imagem' | 'video' | 'arquivo';
+  // Só o vertical escolhe; no horizontal é sempre tela cheia.
+  destino?: 'tela-cheia' | 'tela-dividida';
+  // Só o tipo "arquivo": o caminho escolhido no disco. O seletor abre na hora
+  // de MARCAR — um lote que abrisse N seletores em sequência seria pior que
+  // não ter lote.
+  arquivo?: string;
 };
+
+// A marcação pede mídia (e vai para o motor de geração) ou é correção (e vai
+// para o agente). Uma linha, usada nos dois lados.
+const ehMarcacaoDeMidia = (item: CorrectionRange): boolean => Boolean(item.kind);
 
 type WorkTab = 'edit' | 'styles';
 type EditStyle = 'limpa' | 'split' | 'split2';
@@ -859,6 +875,8 @@ function EditorWorkspace({
   // nao numa aba separada.
   const [draftKind, setDraftKind] = useState<'correcao' | 'imagem' | 'video' | 'arquivo'>('correcao');
   const [draftDestino, setDraftDestino] = useState<'tela-cheia' | 'tela-dividida'>('tela-cheia');
+  const [draftArquivo, setDraftArquivo] = useState<string | null>(null);
+  const [applyingMedia, setApplyingMedia] = useState(false);
   const [draftBusy, setDraftBusy] = useState<'gerando' | 'sugerindo' | null>(null);
   const [draftErro, setDraftErro] = useState<string | null>(null);
   const notify = (_kind: string, title: string, detail?: string) => {
@@ -2380,13 +2398,62 @@ function EditorWorkspace({
     return () => scroller.removeEventListener('wheel', listener);
   }, []);
 
+  // O APLICAR RODA OS DOIS LADOS. As marcações de mídia viram um LOTE só para
+  // o motor de geração — todos os clipes num submit do hub, em vez de uma ida
+  // por marcação —, e as de correção seguem para o agente como sempre
+  // seguiram. Marcação que falha FICA na timeline: perder o prompt escrito
+  // por causa de uma falha de rede seria castigo duplo.
   async function applyCorrections() {
-    if (corrections.length === 0) return;
-    if (await onApplyCorrections(corrections)) {
-      onCorrectionsChange([]);
-      correctionHistoryRef.current = [];
-      setMarkIn(null);
+    if (corrections.length === 0 || applyingMedia) return;
+    const midia = corrections.filter(ehMarcacaoDeMidia);
+    const correcoes = corrections.filter((item) => !ehMarcacaoDeMidia(item));
+    let falharam: CorrectionRange[] = [];
+
+    if (midia.length && liveDirectory) {
+      setApplyingMedia(true);
+      try {
+        const resultado = await window.edvidDesktop.applyMarkedMedia(
+          liveDirectory,
+          midia.map((item) => ({
+            start: item.start,
+            end: item.end,
+            kind: item.kind as 'imagem' | 'video' | 'arquivo',
+            destino: item.destino ?? 'tela-cheia',
+            prompt: item.note,
+            arquivo: item.arquivo,
+          })),
+        );
+        // Os erros vêm na ordem dos itens enviados; o motivo de cada um o
+        // main já explicou no chat.
+        if (resultado.erros.length) {
+          falharam = midia.filter((_, index) => Boolean(resultado.erros[index]));
+        }
+        if (resultado.colocados > 0) {
+          notify(
+            'ok',
+            resultado.colocados === 1 ? 'Mídia aplicada' : `${resultado.colocados} mídias aplicadas`,
+            'Já estão na timeline e no palco — confira a prévia.',
+          );
+        }
+      } catch {
+        falharam = midia;
+      } finally {
+        setApplyingMedia(false);
+      }
+    } else if (midia.length) {
+      falharam = midia;
     }
+
+    if (correcoes.length) {
+      if (!(await onApplyCorrections(correcoes))) {
+        // O envio ao agente falhou: as correções continuam marcadas.
+        onCorrectionsChange([...falharam, ...correcoes]);
+        return;
+      }
+    }
+    onCorrectionsChange(falharam);
+    if (!falharam.length) correctionHistoryRef.current = [];
+    setMarkIn(null);
   }
 
   useEffect(() => {
@@ -3418,13 +3485,20 @@ function EditorWorkspace({
             )}
             {corrections.map((correction, index) => (
               <div
-                className="timeline-correction-range"
+                className={`timeline-correction-range${correction.kind ? ' media' : ''}`}
                 key={correction.id}
                 style={{
                   '--correction-left': timelinePoint(effectiveDuration > 0 ? correction.start / effectiveDuration : 0),
                   '--correction-width': timelineSpan(effectiveDuration > 0 ? (correction.end - correction.start) / effectiveDuration : 0),
                 } as CSSProperties}
-                title={`${formatTime(correction.start)}–${formatTime(correction.end)} · ${correction.note}`}
+                title={[
+                  `${formatTime(correction.start)}–${formatTime(correction.end)}`,
+                  correction.kind === 'video' ? 'Clipe por IA'
+                    : correction.kind === 'imagem' ? 'Imagem por IA'
+                      : correction.kind === 'arquivo' ? 'Arquivo do computador' : 'Correção',
+                  correction.destino === 'tela-dividida' ? 'tela dividida' : null,
+                  correction.note,
+                ].filter(Boolean).join(' · ')}
               >
                 <span>{index + 1}</span>
                 <button
@@ -3502,18 +3576,19 @@ function EditorWorkspace({
               <Icon name={muted ? 'volumeOff' : 'volume'} />
             </button>
             {corrections.length > 0 && (
-              <button type="button" className="apply-corrections" onClick={() => void applyCorrections()} disabled={applyingCorrections}>
-                {applyingCorrections ? 'Aplicando...' : 'Aplicar'}
+              <button type="button" className="apply-corrections" onClick={() => void applyCorrections()} disabled={applyingCorrections || applyingMedia}>
+                {applyingCorrections || applyingMedia ? 'Aplicando...' : 'Aplicar'}
               </button>
             )}
           </div>
         </div>
         {draftRange && (() => {
-          // A MARCACAO DECIDE O QUE ELA E. Correcao (o que sempre foi), imagem
-          // por IA, clipe por IA, ou arquivo do disco. Os tres ultimos usam o
-          // mesmo motor do espaco vazio do palco, com a janela vinda daqui.
-          // A ORIENTACAO DO PROJETO decide se ha escolha de destino: tela
-          // dividida e idioma de vertical.
+          // A MARCACAO DECIDE O QUE ELA E: correcao (o que sempre foi), imagem
+          // por IA, clipe por IA, ou arquivo do disco. Marcar nao executa
+          // nada — quem roda o lote inteiro e o Aplicar da barra.
+          //
+          // A ORIENTACAO decide se ha escolha de destino: tela dividida e
+          // idioma de vertical, e num 16:9 ela so encolheria o quadro.
           const paisagem = (Number(liveDataCru?.editData.width) || 1080)
             > (Number(liveDataCru?.editData.height) || 1920);
           const ehMidia = draftKind !== 'correcao';
@@ -3524,20 +3599,24 @@ function EditorWorkspace({
             setDraftNote('');
             setDraftKind('correcao');
             setDraftDestino('tela-cheia');
+            setDraftArquivo(null);
             setDraftBusy(null);
             setDraftErro(null);
-          };
-          const guardar = (updated: Record<string, unknown> | null) => {
-            if (updated && liveDataRef.current) {
-              setLiveData({ ...liveDataRef.current, editData: updated, renderPending: true });
-            }
           };
           const trocarTipo = (tipo: typeof draftKind) => {
             setDraftKind(tipo);
             setDraftErro(null);
-            // TELA CHEIA SEMPRE NO HORIZONTAL: a tela dividida encolheria o
-            // quadro a toa num 16:9, e a escolha so aparece no vertical.
+            if (tipo !== 'arquivo') setDraftArquivo(null);
             if (paisagem) setDraftDestino('tela-cheia');
+          };
+          const escolherArquivo = () => {
+            if (ocupado) return;
+            setDraftBusy('gerando');
+            setDraftErro(null);
+            void window.edvidDesktop.pickMediaFile()
+              .then((caminho) => { if (caminho) setDraftArquivo(caminho); })
+              .catch((error: unknown) => setDraftErro(errorMessage(error)))
+              .finally(() => setDraftBusy(null));
           };
           const sugerir = () => {
             if (!liveDirectory || !ehGeracao || ocupado) return;
@@ -3550,43 +3629,27 @@ function EditorWorkspace({
               .catch((error: unknown) => setDraftErro(errorMessage(error)))
               .finally(() => setDraftBusy(null));
           };
-          const confirmar = (event: FormEvent) => {
+          const salvar = (event: FormEvent) => {
             event.preventDefault();
-            if (ocupado) return;
-            if (!ehMidia) { saveDraftCorrection(event); return; }
-            if (!liveDirectory) return;
-            setDraftBusy('gerando');
-            setDraftErro(null);
-            const janela = draftRange;
-            const promessa = draftKind === 'arquivo'
-              ? window.edvidDesktop.attachAtMark(liveDirectory, janela.start, janela.end, draftDestino)
-              : window.edvidDesktop.generateAtMark(
-                liveDirectory, janela.start, janela.end,
-                draftKind === 'video' ? 'video' : 'imagem', draftNote.trim(), draftDestino,
-              );
-            void promessa
-              .then((updated) => {
-                // Cancelar o seletor de arquivo devolve null: nao e erro, e a
-                // marcacao continua aberta para outra escolha.
-                if (!updated) { setDraftBusy(null); return; }
-                guardar(updated);
-                fechar();
-                setMarkIn(null);
-                notify(
-                  'ok',
-                  draftKind === 'video' ? 'Clipe aplicado' : 'Imagem aplicada',
-                  'Já está na timeline e no palco — confira a prévia.',
-                );
-              })
-              .catch((error: unknown) => {
-                // O erro fica NO CAMPO com o texto preservado: reescrever o
-                // pedido do zero depois de uma falha de rede é castigo duplo.
-                setDraftBusy(null);
-                setDraftErro(errorMessage(error));
-              });
+            if (ocupado || !draftRange) return;
+            if (draftKind === 'arquivo' && !draftArquivo) { escolherArquivo(); return; }
+            const nome = draftArquivo ? draftArquivo.split(/[\\/]/u).pop() ?? draftArquivo : '';
+            commitCorrections([
+              ...corrections,
+              {
+                id: `correction:${Date.now()}`,
+                start: draftRange.start,
+                end: draftRange.end,
+                note: draftKind === 'arquivo' ? nome : draftNote.trim(),
+                ...(ehMidia ? { kind: draftKind, destino: draftDestino } : null),
+                ...(draftArquivo ? { arquivo: draftArquivo } : null),
+              },
+            ]);
+            fechar();
           };
+          const podeSalvar = draftKind === 'arquivo' ? true : Boolean(draftNote.trim());
           return (
-            <form className="correction-note-popover" onSubmit={confirmar}>
+            <form className="correction-note-popover" onSubmit={salvar}>
               <span className="eyebrow">Marcação na timeline</span>
               <strong>{formatTime(draftRange.start)} → {formatTime(draftRange.end)}</strong>
               <div className="mark-kinds" role="group" aria-label="O que fazer neste trecho">
@@ -3622,27 +3685,27 @@ function EditorWorkspace({
               )}
               {/* O prompt vai para o modelo COMO ESTÁ — o EDIT AI não traduz. */}
               {ehGeracao && <small className="pick-media-hint"><i className="hint-i">i</i>Prompts em inglês geram melhores resultados</small>}
-              {draftKind === 'arquivo' && <small className="pick-media-hint"><i className="hint-i">i</i>Escolha uma imagem ou um vídeo do seu computador</small>}
+              {draftKind === 'arquivo' && (
+                <small className="pick-media-hint">
+                  <i className="hint-i">i</i>
+                  {draftArquivo ? draftArquivo.split(/[\\/]/u).pop() : 'Escolha uma imagem ou um vídeo do seu computador'}
+                </small>
+              )}
               {draftErro && <p className="pick-media-error">{draftErro}</p>}
               <div>
                 <button type="button" className="btn ghost small" disabled={ocupado} onClick={fechar}>Cancelar</button>
                 {/* O agente escreve o prompt a partir da fala DESTE trecho. Só
-                    o texto: gerar (e gastar crédito) continua sendo o clique
-                    de confirmar. */}
+                    o texto: gerar (e gastar crédito) é o Aplicar da barra. */}
                 {ehGeracao && chatConnected && (
                   <button type="button" className="btn ghost small" disabled={ocupado} onClick={sugerir}>
                     {draftBusy === 'sugerindo' ? 'Escrevendo…' : 'Gerar automaticamente'}
                   </button>
                 )}
-                <button
-                  type="submit"
-                  className="btn primary small"
-                  disabled={ocupado || (draftKind !== 'arquivo' && !draftNote.trim())}
-                >
-                  {draftBusy === 'gerando'
-                    ? (draftKind === 'arquivo' ? 'Aplicando…' : 'Gerando…')
-                    : draftKind === 'correcao' ? 'Salvar marcação'
-                      : draftKind === 'arquivo' ? 'Escolher arquivo…' : 'Gerar'}
+                {draftKind === 'arquivo' && draftArquivo && (
+                  <button type="button" className="btn ghost small" disabled={ocupado} onClick={escolherArquivo}>Trocar</button>
+                )}
+                <button type="submit" className="btn primary small" disabled={ocupado || !podeSalvar}>
+                  {draftKind === 'arquivo' && !draftArquivo ? 'Escolher arquivo…' : 'Salvar marcação'}
                 </button>
               </div>
             </form>

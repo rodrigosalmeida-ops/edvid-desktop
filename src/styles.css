@@ -314,6 +314,11 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .correction-note-popover > .mark-kinds button.active { color: #061112; border-color: var(--teal); background: var(--teal); }
 .correction-note-popover > .mark-kinds button:disabled { opacity: .5; cursor: default; }
 .correction-note-popover .pick-media-hint { margin-top: 8px; }
+/* Marcacao que pede MIDIA usa o teal (a cor de "o Edvid vai fazer"); a de
+   correcao segue laranja, que e a cor de "o agente vai olhar". Duas coisas
+   diferentes na mesma faixa precisam ser distinguiveis de relance. */
+.timeline-correction-range.media { border-color: rgba(9,181,183,.55); background: rgba(9,181,183,.14); }
+.timeline-correction-range.media > span { color: var(--teal); }
 
 /* Style gate. */
 .style-workspace { height: 100%; min-height: 0; display: flex; flex-direction: column; }
