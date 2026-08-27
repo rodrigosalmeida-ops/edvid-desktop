@@ -118,6 +118,7 @@ import { EditAiReviewCard } from './editai/review-card';
 import './editai/review-card.css';
 const EDIT_AI_STANDALONE = true;
 import { LivePreview, type PlayerRef } from './live-preview';
+import { remapLiveData, virtualWindows } from './virtual-cut';
 import { activeSplitIndexAt, type EditOperation, type OverlayKind } from './edit-data-edits';
 import { SPLIT_DIVIDER } from './image-format';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
@@ -583,7 +584,7 @@ function EditorWorkspace({
   // virou uma acao de exportar na barra de abas, que so aparece quando ha o
   // que renderizar. Sem edit-data (Fase 1) ou com cortes pendentes (mapped),
   // o player de video continua sendo o preview.
-  const [liveData, setLiveData] = useState<import('./shared').LivePreviewData>(null);
+  const [liveDataCru, setLiveData] = useState<import('./shared').LivePreviewData>(null);
   const liveDirectory = workspace?.project.directory ?? null;
   useEffect(() => {
     if (!liveDirectory) {
@@ -606,22 +607,21 @@ function EditorWorkspace({
   const livePlayerRef = useRef<PlayerRef | null>(null);
   const [liveReady, setLiveReady] = useState(0);
   const liveActiveRef = useRef(false);
-  const liveFps = liveData ? Number(liveData.editData.fps) || 30 : 0;
+  const liveFps = liveDataCru ? Number(liveDataCru.editData.fps) || 30 : 0;
   const liveFpsRef = useRef(30);
   liveFpsRef.current = liveFps || 30;
-  const liveDuration = liveData ? Number(liveData.editData.durationSec) || 0 : 0;
   // MANIPULACAO DIRETA (0.28.0). O arrasto muda o liveData na hora (a
   // composicao re-renderiza sozinha — e React) e persiste no soltar. dirty
   // acende o botao de renderizar: o render agora e UMA acao no fim, nao um
   // efeito colateral de cada ajuste.
   const [liveDirty, setLiveDirty] = useState(false);
-  const liveDataRef = useRef<typeof liveData>(null);
-  liveDataRef.current = liveData;
+  const liveDataRef = useRef<typeof liveDataCru>(null);
+  liveDataRef.current = liveDataCru;
   useEffect(() => {
-    onRenderPendingChange(Boolean(liveData?.renderPending));
+    onRenderPendingChange(Boolean(liveDataCru?.renderPending));
     // A referencia da callback muda por render do App; o que importa e o dado.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveData?.renderPending]);
+  }, [liveDataCru?.renderPending]);
   const overlayDragRef = useRef<{
     kind: OverlayKind; index: number; mode: 'move' | 'start' | 'end';
     // A duracao viaja no arrasto porque o encaixe olha as DUAS pontas do
@@ -683,7 +683,7 @@ function EditorWorkspace({
   const mediaDimsFor = (src: string): { w: number; h: number } | null => {
     const cache = mediaDimsRef.current;
     if (cache.has(src)) return cache.get(src) ?? null;
-    const base = liveData?.staticBase;
+    const base = liveDataCru?.staticBase;
     if (!base) return null;
     cache.set(src, null as unknown as { w: number; h: number });
     const url = `${base}/${src}`;
@@ -919,11 +919,27 @@ function EditorWorkspace({
   const sourceMirror =
     media?.kind === 'source' &&
     programme.some((segment) => segment.sourceId !== PREVIEW_SOURCE_ID);
-  const mapped = (dirty || sourceMirror) && programme.length > 0;
+  const virtualCut = useMemo(() => {
+    if (!dirty || sourceMirror || !liveDataCru?.edl?.ranges?.length || !model) return null;
+    return virtualWindows({
+      pending: edlRangesFromModel(model).map((range) => ({
+        sourceId: range.sourceId,
+        start: range.start,
+        end: range.end,
+      })),
+      applied: liveDataCru.edl.ranges,
+      fps: Number(liveDataCru.editData.fps) || 30,
+    });
+  }, [dirty, sourceMirror, liveDataCru, model]);
+  const virtualCutRef = useRef<typeof virtualCut>(null);
+  virtualCutRef.current = virtualCut;
+  const liveData = useMemo(
+    () => (liveDataCru && virtualCut ? remapLiveData(liveDataCru, virtualCut) : liveDataCru),
+    [liveDataCru, virtualCut],
+  );
+  const liveDuration = liveData ? Number(liveData.editData.durationSec) || 0 : 0;
+  const mapped = ((dirty && !virtualCut) || sourceMirror) && programme.length > 0;
   mappedRef.current = mapped;
-  // A previa ao vivo assume sempre que ha Fase 2 montada E nao ha corte
-  // pendente: cortes em edicao precisam do preview mapeado por fontes, que a
-  // composicao (que le o cut.mp4 antigo) nao sabe mostrar.
   const liveActive = Boolean(liveData) && !mapped;
   liveActiveRef.current = liveActive;
   // Sem previa ao vivo o edit-data nao esta em maos: manter as faixas
@@ -1003,7 +1019,7 @@ function EditorWorkspace({
   };
 
   const selectedText = useMemo(() => {
-    if (!liveActive || !liveData || !selectedElement) return null;
+    if (!liveActive || !liveData || !selectedElement || virtualCut) return null;
     if (selectedElement.kind !== 'captions' && selectedElement.kind !== 'headline') return null;
     const d = liveData.editData as Record<string, unknown>;
     const alvo = (selectedElement.kind === 'captions' ? d.captions : d.hook) as Record<string, unknown> | undefined;
@@ -1026,7 +1042,7 @@ function EditorWorkspace({
   }, [liveActive, liveData, selectedElement, currentTime]);
 
   const selectedGizmo = useMemo(() => {
-    if (!liveActive || !liveData || !selectedElement) return null;
+    if (!liveActive || !liveData || !selectedElement || virtualCut) return null;
     if (selectedElement.kind !== 'splits' && selectedElement.kind !== 'inserts') return null;
     const list = liveData.editData[selectedElement.kind];
     const item = Array.isArray(list)
@@ -1998,7 +2014,7 @@ function EditorWorkspace({
   }
 
   function setInPoint() {
-    if (!media || dirty) return;
+    if (!media) return;
     setMarkIn(currentTimeRef.current);
   }
 
@@ -2540,6 +2556,7 @@ function EditorWorkspace({
                       composicao redesenha na hora porque o dado muda, nao
                       porque ha algum truque de CSS por cima. */}
                   {(() => {
+                    if (virtualCut) return null;
                     const splitIndex = activeSplitIndexAt(liveData.editData, currentTime);
                     if (splitIndex < 0) return null;
                     const splits = liveData.editData.splits as Array<Record<string, unknown>>;
@@ -2589,6 +2606,7 @@ function EditorWorkspace({
                       public/ e o src é gravado no split — a prévia troca o
                       tracejado pela mídia na hora. */}
                   {(() => {
+                    if (virtualCut) return null;
                     if (!selectedElement || !('index' in selectedElement) || selectedElement.kind !== 'splits' || !liveData) return null;
                     const splits = liveData.editData.splits;
                     const item = Array.isArray(splits) ? (splits as Array<Record<string, unknown>>)[selectedElement.index] : undefined;
@@ -3134,8 +3152,8 @@ function EditorWorkspace({
 
       <section className="timeline-section">
         <div className="timeline-toolbar slim">
-          {mapped && (dirty
-            ? <span className="mapped-badge" title="O preview mostra as edições ainda não renderizadas">Prévia das edições</span>
+          {(mapped || Boolean(virtualCut)) && (dirty
+            ? <span className="mapped-badge" title="O preview mostra as edições ainda não aplicadas — Renderizar aplica tudo no final">Prévia das edições</span>
             : <span className="mapped-badge" title="O preview toca os vídeos da pasta em sequência, na ordem da limpeza">Vídeos em sequência</span>)}
           <div className="history-buttons" aria-label="Histórico de edições">
             <button
@@ -3384,8 +3402,8 @@ function EditorWorkspace({
         </div>
         <div className="timeline-transport" aria-label="Controles de reprodução">
           <div className="marker-controls">
-            <button type="button" className={`marker-button ${markIn !== null ? 'active' : ''}`} onClick={setInPoint} disabled={!media || dirty} title={dirty ? 'Aplique ou descarte as edições antes de marcar correções' : 'Marcar início da correção (I ou M)'}>IN</button>
-            <button type="button" className="marker-button" onClick={setOutPoint} disabled={!media || dirty || markIn === null || currentTime <= markIn} title={dirty ? 'Aplique ou descarte as edições antes de marcar correções' : 'Marcar fim da correção (O ou M)'}>OUT</button>
+            <button type="button" className={`marker-button ${markIn !== null ? 'active' : ''}`} onClick={setInPoint} disabled={!media} title="Marcar início da correção (I ou M)">IN</button>
+            <button type="button" className="marker-button" onClick={setOutPoint} disabled={!media || markIn === null || currentTime <= markIn} title="Marcar fim da correção (O ou M)">OUT</button>
             <button
               type="button"
               className="marker-button razor"
@@ -3395,7 +3413,7 @@ function EditorWorkspace({
                 ? 'Recortar o elemento selecionado na agulha (C)'
                 : 'Dividir o take na agulha (C)'}
             ><Icon name="scissors" /></button>
-            {corrections.length > 0 && !dirty && <span className="correction-count">{corrections.length} {corrections.length === 1 ? 'marcação' : 'marcações'}</span>}
+            {corrections.length > 0 && <span className="correction-count">{corrections.length} {corrections.length === 1 ? 'marcação' : 'marcações'}</span>}
           </div>
           <div className="transport-center">
             <button type="button" className="transport-button" onClick={() => jumpBy(-5)} disabled={!media} title="Voltar 5 segundos">
@@ -3418,7 +3436,7 @@ function EditorWorkspace({
             <button type="button" className="transport-button" onClick={toggleMute} disabled={!media} title={muted ? 'Ativar áudio' : 'Silenciar'}>
               <Icon name={muted ? 'volumeOff' : 'volume'} />
             </button>
-            {!dirty && corrections.length > 0 && (
+            {corrections.length > 0 && (
               <button type="button" className="apply-corrections" onClick={() => void applyCorrections()} disabled={applyingCorrections}>
                 {applyingCorrections ? 'Aplicando...' : 'Aplicar'}
               </button>
