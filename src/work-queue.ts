@@ -20,14 +20,19 @@ export class FilaDeTrabalho {
 
   async adicionar<T>(tarefa: () => Promise<T>): Promise<T> {
     if (this.rodando >= this.largura) {
+      // Quem acorda já recebe a vaga de quem saiu. A vaga é passada de mão em
+      // mão para não existir uma janela de microtask em que uma nova tarefa
+      // enxergue o contador zerado e fure o limite de concorrência.
       await new Promise<void>((liberar) => this.espera.push(liberar));
+    } else {
+      this.rodando += 1;
     }
-    this.rodando += 1;
     try {
       return await tarefa();
     } finally {
-      this.rodando -= 1;
-      this.espera.shift()?.();
+      const proximo = this.espera.shift();
+      if (proximo) proximo();
+      else this.rodando -= 1;
     }
   }
 }
