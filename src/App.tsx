@@ -853,6 +853,14 @@ function EditorWorkspace({
   const [markIn, setMarkIn] = useState<number | null>(null);
   const [draftRange, setDraftRange] = useState<{ start: number; end: number } | null>(null);
   const [draftNote, setDraftNote] = useState('');
+  // O QUE A MARCACAO VAI SER. Nem toda In&Out e pedido de midia: a maioria e
+  // correcao, e algumas sao animacao pedida no chat. O tipo decide o que o
+  // botao de confirmar faz e some com o que nao serve — por isso vive aqui e
+  // nao numa aba separada.
+  const [draftKind, setDraftKind] = useState<'correcao' | 'imagem' | 'video' | 'arquivo'>('correcao');
+  const [draftDestino, setDraftDestino] = useState<'tela-cheia' | 'tela-dividida'>('tela-cheia');
+  const [draftBusy, setDraftBusy] = useState<'gerando' | 'sugerindo' | null>(null);
+  const [draftErro, setDraftErro] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const zoomStateRef = useRef(1);
@@ -3497,17 +3505,146 @@ function EditorWorkspace({
             )}
           </div>
         </div>
-        {draftRange && (
-          <form className="correction-note-popover" onSubmit={saveDraftCorrection}>
-            <span className="eyebrow">Correção na timeline</span>
-            <strong>{formatTime(draftRange.start)} → {formatTime(draftRange.end)}</strong>
-            <textarea autoFocus rows={3} value={draftNote} onChange={(event) => setDraftNote(event.target.value)} placeholder="Descreva o que precisa ser corrigido neste trecho..." />
-            <div>
-              <button type="button" className="btn ghost small" onClick={() => { setDraftRange(null); setDraftNote(''); }}>Cancelar</button>
-              <button type="submit" className="btn primary small" disabled={!draftNote.trim()}>Salvar marcação</button>
-            </div>
-          </form>
-        )}
+        {draftRange && (() => {
+          // A MARCACAO DECIDE O QUE ELA E. Correcao (o que sempre foi), imagem
+          // por IA, clipe por IA, ou arquivo do disco. Os tres ultimos usam o
+          // mesmo motor do espaco vazio do palco, com a janela vinda daqui.
+          // A ORIENTACAO DO PROJETO decide se ha escolha de destino: tela
+          // dividida e idioma de vertical.
+          const paisagem = (Number(liveDataCru?.editData.width) || 1080)
+            > (Number(liveDataCru?.editData.height) || 1920);
+          const ehMidia = draftKind !== 'correcao';
+          const ehGeracao = draftKind === 'imagem' || draftKind === 'video';
+          const ocupado = draftBusy !== null;
+          const fechar = () => {
+            setDraftRange(null);
+            setDraftNote('');
+            setDraftKind('correcao');
+            setDraftDestino('tela-cheia');
+            setDraftBusy(null);
+            setDraftErro(null);
+          };
+          const guardar = (updated: Record<string, unknown> | null) => {
+            if (updated && liveDataRef.current) {
+              setLiveData({ ...liveDataRef.current, editData: updated, renderPending: true });
+            }
+          };
+          const trocarTipo = (tipo: typeof draftKind) => {
+            setDraftKind(tipo);
+            setDraftErro(null);
+            // TELA CHEIA SEMPRE NO HORIZONTAL: a tela dividida encolheria o
+            // quadro a toa num 16:9, e a escolha so aparece no vertical.
+            if (paisagem) setDraftDestino('tela-cheia');
+          };
+          const sugerir = () => {
+            if (!liveDirectory || !ehGeracao || ocupado) return;
+            setDraftBusy('sugerindo');
+            setDraftErro(null);
+            void window.edvidDesktop.suggestMarkPrompt(
+              liveDirectory, draftRange.start, draftRange.end, draftKind === 'video' ? 'video' : 'imagem',
+            )
+              .then(({ prompt }) => setDraftNote(prompt))
+              .catch((error: unknown) => setDraftErro(errorMessage(error)))
+              .finally(() => setDraftBusy(null));
+          };
+          const confirmar = (event: FormEvent) => {
+            event.preventDefault();
+            if (ocupado) return;
+            if (!ehMidia) { saveDraftCorrection(event); return; }
+            if (!liveDirectory) return;
+            setDraftBusy('gerando');
+            setDraftErro(null);
+            const janela = draftRange;
+            const promessa = draftKind === 'arquivo'
+              ? window.edvidDesktop.attachAtMark(liveDirectory, janela.start, janela.end, draftDestino)
+              : window.edvidDesktop.generateAtMark(
+                liveDirectory, janela.start, janela.end,
+                draftKind === 'video' ? 'video' : 'imagem', draftNote.trim(), draftDestino,
+              );
+            void promessa
+              .then((updated) => {
+                // Cancelar o seletor de arquivo devolve null: nao e erro, e a
+                // marcacao continua aberta para outra escolha.
+                if (!updated) { setDraftBusy(null); return; }
+                guardar(updated);
+                fechar();
+                setMarkIn(null);
+                notify(
+                  'ok',
+                  draftKind === 'video' ? 'Clipe aplicado' : 'Imagem aplicada',
+                  'Já está na timeline e no palco — confira a prévia.',
+                );
+              })
+              .catch((error: unknown) => {
+                // O erro fica NO CAMPO com o texto preservado: reescrever o
+                // pedido do zero depois de uma falha de rede é castigo duplo.
+                setDraftBusy(null);
+                setDraftErro(errorMessage(error));
+              });
+          };
+          return (
+            <form className="correction-note-popover" onSubmit={confirmar}>
+              <span className="eyebrow">Marcação na timeline</span>
+              <strong>{formatTime(draftRange.start)} → {formatTime(draftRange.end)}</strong>
+              <div className="mark-kinds" role="group" aria-label="O que fazer neste trecho">
+                <button type="button" className={draftKind === 'correcao' ? 'active' : ''} disabled={ocupado} onClick={() => trocarTipo('correcao')}>Correção</button>
+                {imageAiConnected && (
+                  <button type="button" className={draftKind === 'imagem' ? 'active' : ''} disabled={ocupado} onClick={() => trocarTipo('imagem')}>Imagem</button>
+                )}
+                {videoAiConnected && (
+                  <button type="button" className={draftKind === 'video' ? 'active' : ''} disabled={ocupado} onClick={() => trocarTipo('video')}>Clipe</button>
+                )}
+                <button type="button" className={draftKind === 'arquivo' ? 'active' : ''} disabled={ocupado} onClick={() => trocarTipo('arquivo')}>Arquivo</button>
+              </div>
+              {/* A escolha do destino só existe no VERTICAL. */}
+              {ehMidia && !paisagem && (
+                <div className="mark-kinds" role="group" aria-label="Onde a mídia entra">
+                  <button type="button" className={draftDestino === 'tela-cheia' ? 'active' : ''} disabled={ocupado} onClick={() => setDraftDestino('tela-cheia')}>Tela cheia</button>
+                  <button type="button" className={draftDestino === 'tela-dividida' ? 'active' : ''} disabled={ocupado} onClick={() => setDraftDestino('tela-dividida')}>Tela dividida</button>
+                </div>
+              )}
+              {draftKind !== 'arquivo' && (
+                <textarea
+                  autoFocus
+                  rows={3}
+                  value={draftNote}
+                  disabled={ocupado}
+                  onChange={(event) => setDraftNote(event.target.value)}
+                  placeholder={draftBusy === 'sugerindo'
+                    ? 'O Edvid está escrevendo o prompt deste trecho…'
+                    : draftKind === 'video' ? 'Descreva a cena do clipe…'
+                      : draftKind === 'imagem' ? 'Descreva a imagem…'
+                        : 'Descreva o que precisa ser corrigido neste trecho...'}
+                />
+              )}
+              {/* O prompt vai para o modelo COMO ESTÁ — o Edvid não traduz. */}
+              {ehGeracao && <small className="pick-media-hint"><i className="hint-i">i</i>Prompts em inglês geram melhores resultados</small>}
+              {draftKind === 'arquivo' && <small className="pick-media-hint"><i className="hint-i">i</i>Escolha uma imagem ou um vídeo do seu computador</small>}
+              {draftErro && <p className="pick-media-error">{draftErro}</p>}
+              <div>
+                <button type="button" className="btn ghost small" disabled={ocupado} onClick={fechar}>Cancelar</button>
+                {/* O agente escreve o prompt a partir da fala DESTE trecho. Só
+                    o texto: gerar (e gastar crédito) continua sendo o clique
+                    de confirmar. */}
+                {ehGeracao && chatConnected && (
+                  <button type="button" className="btn ghost small" disabled={ocupado} onClick={sugerir}>
+                    {draftBusy === 'sugerindo' ? 'Escrevendo…' : 'Gerar automaticamente'}
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="btn primary small"
+                  disabled={ocupado || (draftKind !== 'arquivo' && !draftNote.trim())}
+                >
+                  {draftBusy === 'gerando'
+                    ? (draftKind === 'arquivo' ? 'Aplicando…' : 'Gerando…')
+                    : draftKind === 'correcao' ? 'Salvar marcação'
+                      : draftKind === 'arquivo' ? 'Escolher arquivo…' : 'Gerar'}
+                </button>
+              </div>
+            </form>
+          );
+        })()}
       </section>
     </div>
   );
