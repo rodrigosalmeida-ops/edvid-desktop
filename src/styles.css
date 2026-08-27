@@ -219,6 +219,8 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .icon-button .icon { width: 13px; height: 13px; }
 .video-stage { flex: 1 1 0; min-height: 0; display: grid; place-items: center; padding: 9px; overflow: hidden; background: radial-gradient(circle at 50% 30%, rgba(255,255,255,.035), transparent 48%), #07090c; }
 .video-stage video { display: block; border-radius: 8px; background: #000; box-shadow: 0 16px 48px rgba(0,0,0,.45); }
+/* Bastidor A/B do palco mapeado: o próximo trecho fica decodificado e invisível até a troca. */
+.video-stage video[data-role="standby"] { position: absolute; visibility: hidden; pointer-events: none; }
 .video-stage.horizontal video { width: min(78%, 760px); height: 100%; object-fit: contain; }
 .video-stage.vertical { padding: 0; }
 .video-stage.vertical video { width: 100%; max-width: none; height: 100%; border-radius: 0; object-fit: contain; cursor: pointer; }
