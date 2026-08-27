@@ -5457,6 +5457,17 @@ export function App() {
             </div>
           )}
           <div className="topbar-actions">
+            {workspace && (
+              <button
+                type="button"
+                className="btn primary small"
+                onClick={() => void startCleanCut()}
+                disabled={cleanCutRunning || whisperModel.status === 'downloading' || (runtimePack.status !== 'ready' && runtimePack.status !== 'unknown')}
+                title={cleanCutRunning ? 'O EDIT AI está preparando o corte limpo' : 'Remover pausas e respiros automaticamente'}
+              >
+                <Icon name="scissors" /> {cleanCutRunning ? 'Cortando…' : 'Corte Limpo'}
+              </button>
+            )}
             {/* Versão e checagem ficam à mão no topo, não escondidas nas
                 Configurações. */}
             <button
