@@ -450,7 +450,13 @@ def extract_all_segments(
         duration = end - start
         out_path = clips_dir / f"seg_{i:02d}_{src_name}.mp4"
 
-        if is_auto:
+        # EDIT AI parity extension: a multi-source project may have one camera
+        # in Rec.709 and another in LOG. detect_color.py records the corrective
+        # filter on the individual range; fall back to the Edvid global grade.
+        range_grade = r.get("grade")
+        if range_grade:
+            seg_filter = resolve_grade_filter(str(range_grade))
+        elif is_auto:
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
         else:
             seg_filter = resolved
