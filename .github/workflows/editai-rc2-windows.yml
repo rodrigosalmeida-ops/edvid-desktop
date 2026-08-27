@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: editai-rc2-windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   editai-rc2-windows:
     if: ${{ github.event_name != 'push' || (!contains(github.event.head_commit.message, '[install-only]') && !contains(github.event.head_commit.message, '[commercial-release]')) }}
