@@ -2860,6 +2860,13 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
         voiceAnalysis.push({ source: file.source, ok: false, error: 'Saída de análise de voz inválida.' });
       }
     }
+    // A correção de cor também pertence ao range: projetos com câmeras
+    // diferentes não podem receber um único grade global.
+    for (const range of rawRanges) {
+      const source = asText(range.source);
+      const grade = gradeBySource[source];
+      if (grade) range.grade = grade;
+    }
     rawEdl = { ...rawEdl, ranges: rawRanges };
     await writeFile(edlFile, `${JSON.stringify(rawEdl, null, 2)}\n`);
     await writeFile(
@@ -2869,26 +2876,32 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
     edl = parseEdl(rawEdl);
     if (!edl) throw new Error('O EDL ficou inválido depois da análise de voz.');
 
-    // 5. Corte, grade corretivo e fades de 30 ms em cada borda.
+    // 5. Render Phase 1 pelo MESMO pipeline do Edvid: extrai cada segmento
+    // individualmente, aplica grade + ganho + fades de 30 ms, concatena com
+    // -c copy e normaliza o áudio. J-Cut fica desligado aqui porque o desktop
+    // oferece a aprovação visual antes de aplicá-lo.
     broadcastCleanCut({ status: 'cortando' });
-    const sourceIndex: Record<string, number> = {};
-    files.forEach((file, index) => { sourceIndex[file.source] = index; });
     const output = path.join(editDirectory, 'corte_limpo.mp4');
-    await runFfmpeg(
-      ffmpeg.command,
-      ffmpeg.argsPrefix,
-      ffmpegCutArgs({
-        inputs: files.map((file) => file.media),
-        ranges: edl.ranges,
-        sourceIndex,
+    await runTool(
+      python.command,
+      [
+        ...python.argsPrefix,
+        '-B',
+        path.join(helpersDirectory(), 'render.py'),
+        edlFile,
+        '-o',
         output,
-        gradeBySource,
-        audioFadeSeconds: 0.03,
-      }),
+        '--no-jcut',
+        '--no-subtitles',
+      ],
+      environment,
       60 * 60_000,
     );
+    rawEdl = JSON.parse(await readFile(edlFile, 'utf8')) as Record<string, unknown>;
+    edl = parseEdl(rawEdl);
+    if (!edl) throw new Error('O render do Edvid deixou o EDL inválido.');
 
-    // 4. Verificação numérica oficial do Edvid. Flags não destroem o
+    // 6. Verificação numérica oficial do Edvid. Flags não destroem o
     // resultado: ficam registradas para revisão, mas o usuário ainda consegue
     // assistir e aprovar o corte.
     const verification = await runToolAudit(
