@@ -2,7 +2,8 @@ param(
   [string]$SetupPath,
   [int]$InstallTimeoutSeconds = 3600,
   [int]$SmokeTimeoutSeconds = 180,
-  [int]$BootstrapTimeoutSeconds = 300
+  [int]$BootstrapTimeoutSeconds = 300,
+  [string]$RuntimeSource
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -31,6 +32,7 @@ $installMode = 'setup-bootstrapper'
 $directUpdaterStarted = $false
 $smokePassed = $false
 $lastAttempt = [DateTime]::MinValue
+$runtimeHydrated = $false
 New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
 while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   $roots = @(
@@ -83,6 +85,20 @@ while ((Get-Date) -lt $deadline -and -not $smokePassed) {
   }
 
   if ($appExe -and ((Get-Date) - $lastAttempt).TotalSeconds -ge 15) {
+    if (-not $runtimeHydrated) {
+      if (-not $RuntimeSource) {
+        $defaultRuntimeSource = Join-Path $Root 'resources\runtimes\win32-x64'
+        if (Test-Path $defaultRuntimeSource) { $RuntimeSource = $defaultRuntimeSource }
+      }
+      if ($RuntimeSource) {
+        $RuntimeSource = (Resolve-Path $RuntimeSource).Path
+        $runtimeDestination = Join-Path (Split-Path -Parent $appExe) 'resources\runtimes\win32-x64'
+        New-Item -ItemType Directory -Force -Path $runtimeDestination | Out-Null
+        Copy-Item -Path (Join-Path $RuntimeSource '*') -Destination $runtimeDestination -Recurse -Force
+        Write-Host "[EDIT AI] runtime QA verificado hidratado em: $runtimeDestination"
+      }
+      $runtimeHydrated = $true
+    }
     # O Setup pode abrir o app. Encerra apenas esse executavel antes do smoke;
     # Update.exe/Squirrel precisam continuar vivos ate finalizar a extracao.
     Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
@@ -127,6 +143,7 @@ $summary = [ordered]@{
   installRoot = $installRoot
   executable = $appExe
   installMode = $installMode
+  runtimeHydrated = $runtimeHydrated
   runtimeSmokeReport = $report
   ok = $true
 }
