@@ -87,6 +87,34 @@ jobs:
           & powershell @arguments
           if ($LASTEXITCODE -ne 0) { throw 'Build comercial falhou.' }
 
+      - name: Diagnose torch.ao presence after staging and packing
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Achado no run #85: E2E do runtime "thin" falha com ModuleNotFoundError
+          # torch.ao.nn.sparse.quantized.utils, mas o arquivo existe no wheel
+          # oficial do PyPI (torch 2.8.0 win_amd64, confirmado por fora do CI).
+          # Este passo localiza ONDE ele some: staged em disco antes de
+          # empacotar (A), dentro do .tar.gz publicado (B). Um terceiro
+          # checkpoint (C, apos o download+extracao no app instalado) roda
+          # depois do smoke de instalacao real, mais abaixo no job.
+          $needle = 'python-whisperx\python\Lib\site-packages\torch\ao\nn\sparse\quantized\utils.py'
+          $staged = Join-Path (Join-Path $PWD 'resources\runtimes\win32-x64') $needle
+          $stagedOk = Test-Path $staged
+          Write-Host "[diagnose] (A) staged em disco antes do tar: $stagedOk ($staged)"
+          $pack = Get-ChildItem out\runtime-packs -File -Filter '*.tar.gz' | Select-Object -First 1
+          if (-not $pack) { throw 'Runtime pack comercial ausente para diagnostico.' }
+          $listing = tar -tzf $pack.FullName
+          $inArchive = ($listing | Select-String -SimpleMatch 'ao/nn/sparse/quantized/utils.py')
+          Write-Host "[diagnose] (B) presente na listagem do .tar.gz: $([bool]$inArchive)"
+          if (-not $stagedOk) {
+            throw '[diagnose] torch.ao/.../utils.py ja falta ANTES do empacotamento — bug fica em stage-python-whisperx.mjs (uv pip install).'
+          }
+          if ($stagedOk -and -not $inArchive) {
+            throw '[diagnose] arquivo staged mas AUSENTE do .tar.gz — bug fica em pack-runtimes.mjs (tar -czf).'
+          }
+          Write-Host '[diagnose] (A) e (B) OK — arquivo sobrevive ate o pacote publicado. Bug deve estar na extracao no app instalado (checkpoint C).'
+
       - name: Publish immutable runtime pack to GitHub Release
         shell: powershell
         run: |
@@ -123,6 +151,29 @@ jobs:
       - name: Install thin Setup and download runtime like a real customer
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/editai-install-smoke-windows.ps1 -DownloadRuntimePack -SmokeTimeoutSeconds 1800
+
+      - name: Diagnose torch.ao presence after real customer-path extraction
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Checkpoint C do diagnostico acima: (A) staged e (B) dentro do
+          # .tar.gz ja foram confirmados presentes. Se sumir so aqui, o bug
+          # esta na extracao real (tar -xzf em src/main.ts) ou em algo do
+          # proprio Windows/AV nesta maquina — nao no empacotamento do EDIT AI.
+          $extracted = Join-Path $env:APPDATA 'EDIT AI\runtime\tools\win32-x64\python-whisperx\python\Lib\site-packages\torch\ao\nn\sparse\quantized\utils.py'
+          $extractedOk = Test-Path $extracted
+          Write-Host "[diagnose] (C) presente apos extracao no app instalado: $extractedOk ($extracted)"
+          if (-not $extractedOk) {
+            $torchRoot = Join-Path $env:APPDATA 'EDIT AI\runtime\tools\win32-x64\python-whisperx\python\Lib\site-packages\torch'
+            if (Test-Path $torchRoot) {
+              $aoCount = (Get-ChildItem -Recurse -File (Join-Path $torchRoot 'ao') -ErrorAction SilentlyContinue | Measure-Object).Count
+              Write-Host "[diagnose] torch\ao existe mas tem $aoCount arquivo(s) — comparar com a listagem (B) acima."
+            } else {
+              Write-Host '[diagnose] a propria pasta torch\ao nao existe apos extracao.'
+            }
+            throw '[diagnose] arquivo estava no .tar.gz publicado mas sumiu na extracao do app instalado (tar -xzf em src/main.ts, ou AV/antivirus do runner).'
+          }
+          Write-Host '[diagnose] (C) OK — o arquivo sobreviveu a extracao real. A causa do ModuleNotFoundError nao e este arquivo especifico; precisa investigar outro import na cadeia.'
 
       - name: Prove runtime came from the public release
         shell: powershell
