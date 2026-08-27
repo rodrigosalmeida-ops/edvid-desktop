@@ -71,8 +71,13 @@ export function ffmpegCutArgs(input: {
   ranges: readonly CleanCutRange[];
   sourceIndex: Readonly<Record<string, number>>;
   output: string;
+  /** Filtro FFmpeg corretivo por fonte, decidido pelo detect_color.py. */
+  gradeBySource?: Readonly<Record<string, string>>;
+  /** Fade de áudio em cada borda. O Edvid usa 30 ms como regra de produção. */
+  audioFadeSeconds?: number;
 }): string[] {
   const { inputs, ranges, sourceIndex, output } = input;
+  const audioFade = Math.max(0, Math.min(0.2, input.audioFadeSeconds ?? 0.03));
   if (!inputs.length) throw new Error('Nenhum vídeo de origem para cortar.');
   if (!ranges.length) throw new Error('Nenhum trecho para manter.');
   const parts: string[] = [];
@@ -82,8 +87,25 @@ export function ffmpegCutArgs(input: {
     if (stream === undefined) throw new Error(`O corte aponta uma origem desconhecida: ${range.source}`);
     const start = range.start.toFixed(3);
     const end = range.end.toFixed(3);
-    parts.push(`[${stream}:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v${index}]`);
-    parts.push(`[${stream}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a${index}]`);
+    const duration = Math.max(0, range.end - range.start);
+    const grade = input.gradeBySource?.[range.source]?.trim() ?? '';
+    const videoFilters = [
+      `trim=start=${start}:end=${end}`,
+      'setpts=PTS-STARTPTS',
+      ...(grade ? ['format=yuv420p', grade] : []),
+    ];
+    const fade = Math.min(audioFade, duration / 2);
+    const fadeOutStart = Math.max(0, duration - fade);
+    const audioFilters = [
+      `atrim=start=${start}:end=${end}`,
+      'asetpts=PTS-STARTPTS',
+      ...(fade > 0 ? [
+        `afade=t=in:st=0:d=${fade.toFixed(3)}`,
+        `afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fade.toFixed(3)}`,
+      ] : []),
+    ];
+    parts.push(`[${stream}:v]${videoFilters.join(',')}[v${index}]`);
+    parts.push(`[${stream}:a]${audioFilters.join(',')}[a${index}]`);
     labels.push(`[v${index}][a${index}]`);
   });
   parts.push(`${labels.join('')}concat=n=${ranges.length}:v=1:a=1[v][a]`);
