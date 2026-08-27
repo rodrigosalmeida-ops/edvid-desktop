@@ -2571,6 +2571,33 @@ function runTool(
   });
 }
 
+function runToolAudit(
+  command: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: { ...process.env, ...environment },
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { if (stdout.length < 524_288) stdout += chunk; });
+    child.stderr.on('data', (chunk: string) => { if (stderr.length < 524_288) stderr += chunk; });
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
 // Os videos de origem do projeto, na MESMA ordem da timeline.
 async function cleanCutSources(projectDirectory: string): Promise<MediaCandidate[]> {
   const candidates: MediaCandidate[] = [];
@@ -2703,8 +2730,56 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
       });
     }
 
-    // 2. Quem decide os cortes e o helper: silencio real do audio.
+    // 2. Paridade Edvid: detectar o perfil de cor ANTES de montar o corte.
+    // Alta confiança entra automaticamente; baixa confiança fica registrada
+    // para revisão e não altera a imagem sem confirmação.
     broadcastCleanCut({ status: 'analisando', done: sources.length, total: sources.length });
+    const gradeBySource: Record<string, string> = {};
+    const colorAnalysis: Array<Record<string, unknown>> = [];
+    for (const file of files) {
+      const audit = await runToolAudit(
+        python.command,
+        [...python.argsPrefix, '-B', path.join(helpersDirectory(), 'detect_color.py'), file.media, '--json'],
+        environment,
+        5 * 60_000,
+      );
+      if (audit.code !== 0) {
+        colorAnalysis.push({
+          source: file.source,
+          profile: 'unknown',
+          confidence: 'low',
+          error: (audit.stderr || audit.stdout).trim().slice(-1000),
+        });
+        continue;
+      }
+      try {
+        const result = JSON.parse(audit.stdout) as Record<string, unknown>;
+        colorAnalysis.push({ source: file.source, ...result });
+        const confidence = asText(result.confidence);
+        const rawGrade = asText(result.grade);
+        if (confidence === 'high' && rawGrade) {
+          if (rawGrade === 'apple_log') {
+            const preset = await runToolAudit(
+              python.command,
+              [...python.argsPrefix, '-B', path.join(helpersDirectory(), 'grade.py'), '--print-preset', 'apple_log'],
+              environment,
+              60_000,
+            );
+            if (preset.code === 0 && preset.stdout.trim()) gradeBySource[file.source] = preset.stdout.trim();
+          } else if (rawGrade.includes('=')) {
+            gradeBySource[file.source] = rawGrade;
+          }
+        }
+      } catch {
+        colorAnalysis.push({ source: file.source, profile: 'unknown', confidence: 'low', error: 'Saída de análise de cor inválida.' });
+      }
+    }
+    await writeFile(
+      path.join(editDirectory, 'color-analysis.json'),
+      `${JSON.stringify({ version: 1, sources: colorAnalysis }, null, 2)}\n`,
+    );
+
+    // 3. Quem decide os cortes e o helper: silencio real do audio + retakes.
     const edlFile = path.join(editDirectory, 'edl.json');
     await runTool(
       python.command,
@@ -2732,12 +2807,35 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
         ranges: edl.ranges,
         sourceIndex,
         output,
+        gradeBySource,
+        audioFadeSeconds: 0.03,
       }),
       60 * 60_000,
     );
 
+    // 4. Verificação numérica oficial do Edvid. Flags não destroem o
+    // resultado: ficam registradas para revisão, mas o usuário ainda consegue
+    // assistir e aprovar o corte.
+    const verification = await runToolAudit(
+      python.command,
+      [...python.argsPrefix, '-B', path.join(helpersDirectory(), 'verify_cut.py'), edlFile, output, '--json'],
+      environment,
+      10 * 60_000,
+    );
+    await writeFile(
+      path.join(editDirectory, 'verify-cut.json'),
+      `${verification.stdout.trim() || JSON.stringify({
+        ok: false,
+        code: verification.code,
+        error: verification.stderr.trim().slice(-2000),
+      }, null, 2)}\n`,
+    );
+
     const summary = cleanCutSummary(edl, originalSeconds);
-    return { status: 'pronto', summary };
+    const reviewNote = verification.code === 0
+      ? ' Verificação técnica do corte: OK.'
+      : ' A verificação técnica encontrou pontos para revisar no preview antes de aprovar.';
+    return { status: 'pronto', summary: `${summary}${reviewNote}` };
   })()
     .catch((error): CleanCutState => ({
       status: 'erro',
