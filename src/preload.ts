@@ -12,6 +12,7 @@ import type {
   MemberAuthState,
   CleanCutState,
   Phase2RenderState,
+  PreviewProxyState,
   RemotionRuntimeState,
   RuntimePackState,
   WhisperModelState,
@@ -49,6 +50,11 @@ const api: EdvidDesktopApi = {
   fulfillImageRequests: (directory) => ipcRenderer.invoke('image:fulfill', { directory }),
   fulfillVideoRequests: (directory) => ipcRenderer.invoke('video:fulfill', { directory }),
   getLivePreview: (directory) => ipcRenderer.invoke('preview:data', { directory }),
+  onPreviewProxyState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: PreviewProxyState) => listener(state);
+    ipcRenderer.on('preview-proxy:state', handler);
+    return () => { ipcRenderer.removeListener('preview-proxy:state', handler); };
+  },
   applyPreviewEdits: (directory, operations) => ipcRenderer.invoke('preview:edit', { directory, operations }),
   pickSplitMedia: (directory, index) => ipcRenderer.invoke('preview:pick-split-media', { directory, index }),
   generateSplitMedia: (directory, index, prompt, kind) => ipcRenderer.invoke('preview:generate-split-media', { directory, index, prompt, kind }),
