@@ -105,6 +105,13 @@ export type ProjectSource = {
   available: boolean;
 };
 
+export type PreviewProxyState = {
+  status: 'building' | 'ready' | 'error';
+  name: string;
+  progress?: number;
+  error?: string;
+};
+
 export type ProjectStyleState = {
   edit: 'limpa' | 'split' | 'split2';
   // De onde vem a MÍDIA da tela dividida. Opcional na leitura: projetos
@@ -473,6 +480,7 @@ export type EdvidDesktopApi = {
   fulfillImageRequests: (directory: string) => Promise<ImageGenState>;
   fulfillVideoRequests: (directory: string) => Promise<ImageGenState>;
   getLivePreview: (directory: string) => Promise<LivePreviewData>;
+  onPreviewProxyState: (listener: (state: PreviewProxyState) => void) => () => void;
   // Manipulacao direta: aplica operacoes validadas no edit-data.json e devolve
   // o documento novo. Nada renderiza — o render acontece uma vez, no fim.
   applyPreviewEdits: (
