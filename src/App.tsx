@@ -584,7 +584,9 @@ function EditorWorkspace({
   // virou uma acao de exportar na barra de abas, que so aparece quando ha o
   // que renderizar. Sem edit-data (Fase 1) ou com cortes pendentes (mapped),
   // o player de video continua sendo o preview.
-  const [liveDataCru, setLiveData] = useState<import('./shared').LivePreviewData>(null);
+  const [previewProxy, setPreviewProxy] = useState<import('./shared').PreviewProxyState | null>(null);
+  useEffect(() => window.edvidDesktop.onPreviewProxyState(setPreviewProxy), []);
+    const [liveDataCru, setLiveData] = useState<import('./shared').LivePreviewData>(null);
   const liveDirectory = workspace?.project.directory ?? null;
   useEffect(() => {
     if (!liveDirectory) {
@@ -3123,7 +3125,13 @@ function EditorWorkspace({
               />
               {mapped && inGap && <div className="video-stage-note">Espaço vazio na timeline</div>}
               {mapped && activeSourceId && !activeSource?.url && (
-                <div className="video-stage-note">Arquivo-fonte indisponível para a prévia</div>
+                <div className="video-stage-note">
+                  {previewProxy?.status === 'building'
+                    ? `Preparando a prévia de ${previewProxy.name}${previewProxy.progress ? ` · ${Math.round(previewProxy.progress * 100)}%` : ''}`
+                    : previewProxy?.status === 'error'
+                      ? `Não consegui preparar a prévia de ${previewProxy.name}. O corte final não é afetado.`
+                      : 'Arquivo-fonte indisponível para a prévia'}
+                </div>
               )}
             </>
           ) : null}
