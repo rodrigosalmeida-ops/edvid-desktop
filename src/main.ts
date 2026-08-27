@@ -40,7 +40,16 @@ import {
   type ImageUse,
 } from './image-format';
 import { applyEditOperations, type EditOperation } from './edit-data-edits';
-import { precisaProxy, proxyArgs, proxyFileName, PROXY_VERSAO, proxyProgress } from './preview-proxy';
+import {
+  planejarProxy,
+  precisaProxy,
+  proxyArgs,
+  proxyFileName,
+  PROXY_VERSAO,
+  proxyProgress,
+  SEM_ACELERACAO,
+  type ProxyHardware,
+} from './preview-proxy';
 import {
   DEFAULT_TIER,
   TIER_LABEL,
@@ -953,6 +962,57 @@ async function probeSourceFile(absolutePath: string): Promise<FfprobeOutput | nu
 
 const proxyJobs = new Map<string, Promise<string | null>>();
 
+// Encoder acelerado (NVENC/QuickSync/AMF/VideoToolbox), quando o FFmpeg
+// empacotado anuncia um. So decodifica pela GPU no filtro "gpu" do
+// planejarProxy, que ja se recusa a usa-lo com fonte rotacionada; aqui o
+// encode vai pra GPU mas a decodificacao e o filtro de escala continuam por
+// software — o modo mais compativel entre placas e drivers, sem exigir
+// contexto de hwaccel especifico. Sondagem falhou, travou ou nao achou nada
+// conhecido? Cai para SEM_ACELERACAO e o proxy segue 100% por software.
+let hardwareProxyPromise: Promise<ProxyHardware> | null = null;
+
+const HARDWARE_ENCODERS_BY_PLATFORM: Partial<Record<NodeJS.Platform, string[]>> = {
+  win32: ['h264_nvenc', 'h264_qsv', 'h264_amf'],
+  darwin: ['h264_videotoolbox'],
+};
+
+function detectHardwareEncoder(): Promise<ProxyHardware> {
+  if (!hardwareProxyPromise) {
+    hardwareProxyPromise = (async (): Promise<ProxyHardware> => {
+      const candidatos = HARDWARE_ENCODERS_BY_PLATFORM[process.platform];
+      if (!candidatos) return SEM_ACELERACAO;
+      const ffmpeg = resolveRuntime('ffmpeg', appRuntimeContext());
+      if (!ffmpeg.command) return SEM_ACELERACAO;
+      const listados = await new Promise<string>((resolve) => {
+        let saida = '';
+        let terminou = false;
+        const finalizar = (valor: string) => {
+          if (terminou) return;
+          terminou = true;
+          clearTimeout(tempoLimite);
+          resolve(valor);
+        };
+        const tempoLimite = setTimeout(() => {
+          child.kill();
+          finalizar(saida);
+        }, 5_000);
+        const child = spawn(
+          ffmpeg.command as string,
+          [...ffmpeg.argsPrefix, '-hide_banner', '-encoders'],
+          { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', (chunk: string) => { saida += chunk; });
+        child.on('error', () => finalizar(saida));
+        child.on('close', () => finalizar(saida));
+      });
+      const encontrado = candidatos.find((nome) => listados.includes(nome));
+      return encontrado ? { encoder: encontrado, hwaccel: null, escalaNaGpu: null } : SEM_ACELERACAO;
+    })().catch(() => SEM_ACELERACAO);
+  }
+  return hardwareProxyPromise;
+}
+
 function proxyState(state: PreviewProxyState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('preview-proxy:state', state);
@@ -968,6 +1028,7 @@ async function ensurePreviewProxy(
   absolutePath: string,
   fingerprint: string,
   duration: number,
+  origem?: { largura: number; altura: number; rotacao: number },
 ): Promise<string | null> {
   const destination = path.join(cachePaths().root, 'proxies', proxyFileName(absolutePath, fingerprint));
   if (await statOf(destination)) return destination;
@@ -992,6 +1053,13 @@ async function ensurePreviewProxy(
 
     const partial = `${destination}.partial.mp4`;
     proxyState({ status: 'building', name, progress: 0 });
+    // Sondar o encoder nunca atrasa alem do timeout da propria deteccao, e
+    // qualquer falha ja volta SEM_ACELERACAO — o plano de software continua o
+    // padrao seguro se a maquina nao tiver GPU compativel ou a sondagem falhar.
+    const hardware = origem ? await detectHardwareEncoder() : SEM_ACELERACAO;
+    const plano = origem
+      ? planejarProxy({ hardware, largura: origem.largura, altura: origem.altura, rotacao: origem.rotacao })
+      : undefined;
     try {
       // A fila so limita QUANTOS ffmpeg rodam ao mesmo tempo — o pedido ja
       // esta marcado como "building" acima, o dedup em proxyJobs continua
@@ -999,7 +1067,7 @@ async function ensurePreviewProxy(
       await filaTrabalhoPesado.adicionar(() => new Promise<void>((resolve, reject) => {
         const child = spawn(
           ffmpeg.command as string,
-          [...ffmpeg.argsPrefix, ...proxyArgs({ entrada: absolutePath, saida: partial })],
+          [...ffmpeg.argsPrefix, ...proxyArgs({ entrada: absolutePath, saida: partial, plano })],
           { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
         );
         child.stdout.setEncoding('utf8');
@@ -1100,10 +1168,16 @@ async function buildProjectSources(
       if (precisaProxy(stream.codec_name)) {
         playable = await proxyReady(absolutePath, fingerprint ?? 'sem-fingerprint');
         if (!playable) {
+          const rotacao = Math.abs(
+            Number(stream.side_data_list?.find((item) => item.rotation !== undefined)?.rotation)
+              || Number(stream.tags?.rotate)
+              || 0,
+          );
           void ensurePreviewProxy(
             absolutePath,
             fingerprint ?? 'sem-fingerprint',
             Number(probe?.format?.duration) || 0,
+            { largura: stream.width, altura: stream.height, rotacao },
           ).then((proxyPath) => {
             if (proxyPath) broadcastCodexEvent({ type: 'workspace-refresh' });
           }).catch(() => {});
