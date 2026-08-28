@@ -27,7 +27,13 @@ export function mergeStyleLayers(input: {
 }): Record<string, unknown> {
   const { previous, next, layers } = input;
   const applies = (layer: StyleLayer) => layers.includes(layer);
-  const output: Record<string, unknown> = { ...next };
+  // O EDIT AI possui campos proprios que nao existem necessariamente no
+  // documento reconstruido pelo pipeline herdado do upstream. Partir apenas
+  // de `next` apagava esses dados ao aplicar uma camada de estilo. O merge
+  // agora preserva por padrao tudo que ja estava no projeto e deixa `next`
+  // atualizar fatos de midia/campos conhecidos; os donos abaixo continuam
+  // decidindo quais camadas podem ser substituidas nesta rodada.
+  const output: Record<string, unknown> = { ...previous, ...next };
 
   for (const [key, owner] of Object.entries(STYLE_KEY_OWNER)) {
     if (applies(owner)) continue;
