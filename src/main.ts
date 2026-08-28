@@ -6374,6 +6374,77 @@ function registerIpcHandlers(): void {
     return state;
   });
 
+  // A SESSAO ESTA VENCIDA? Leitura barata (o catalogo fica dez minutos em
+  // cache) que o chat usa para avisar ANTES de o aluno pedir um clipe.
+  //
+  // Existe porque sessao vencida do hub NAO FALHA: ela autentica, responde e
+  // gera — so que servindo um catalogo menor, so com os modelos da propria
+  // casa. Sem esta checagem o aluno so descobre quando o pedido volta com
+  // "gaste 50 creditos" por um clipe de 5. Nao levanta erro: hub que nao
+  // respondeu vira `null`, e quem chama nao escreve nada no chat.
+  ipcMain.handle('hub:check', async () => {
+    const saida: Array<{
+      id: string;
+      nome: string;
+      modelos: { imagem: number | null; video: number | null };
+      conta: { plano: string | null; creditos: number | null } | null;
+    }> = [];
+    for (const entry of AI_CATALOG) {
+      if (!entry.oauthHub || !hubConnected.get(entry.oauthHub)) continue;
+      const generator = hubGeneration(entry.oauthHub);
+      const modelos: { imagem: number | null; video: number | null } = { imagem: null, video: null };
+      for (const kind of ['imagem', 'video'] as const) {
+        if (!entry.capabilities.includes(kind)) continue;
+        // CONFERIDO, nao so lido: quando a listagem vem curta, a pergunta por
+        // nome diz se os modelos existem para esta conta mesmo assim — a
+        // diferenca entre "a listagem esta filtrada" e "a conta nao tem".
+        modelos[kind] = await generator
+          .catalog(kind)
+          .then((lista) => lista.length)
+          .catch(() => null);
+      }
+      const conta = null;
+      saida.push({ id: entry.id, nome: entry.name, modelos, conta });
+    }
+    return saida;
+  });
+
+  // RECONECTAR E FAZER LOGIN DE NOVO, e nao religar com o token guardado.
+  //
+  // A primeira versao deste botao reaproveitava o token do disco, que e o
+  // barato e parecia o certo. MEDIDO no caso real: nao resolve. Uma sessao
+  // vencida do hub continua autenticando e respondendo — so que servindo um
+  // catalogo menor —, entao religar com o mesmo token devolve exatamente o
+  // mesmo catalogo menor. Foram tres religadas com 6 modelos de video e 11 de
+  // imagem; um login NOVO, na mesma conta (ultimate, 907 creditos), devolveu
+  // 37 e 33. Por isso aqui e `login()` direto: ele ja invalida o token antes
+  // de abrir o navegador, e mantem o registro OAuth (trocar o registro
+  // invalidaria o endereco de retorno guardado no hub).
+  //
+  // A CONTAGEM DE MODELOS VOLTA JUNTO, com o plano e o credito. E o unico
+  // jeito de o aluno enxergar se o catalogo veio inteiro — e de separar
+  // "sessao vencida" de "outra conta".
+  ipcMain.handle('hub:reconnect', async (_event, input: { hub?: unknown }) => {
+    const entry = catalogEntry(asText(input.hub));
+    if (!entry?.oauthHub) throw new Error('Essa conexão não entra por login.');
+    const hub = hubFor(entry.oauthHub);
+    const generator = hubGeneration(entry.oauthHub);
+    await hub.login();
+    await refreshHubConnections();
+    // SO O LOGIN, e a conferencia fica para o `hub:check` que vem depois.
+    //
+    // Ler os dois catalogos aqui dentro fazia o botao ficar em "Conclua no
+    // navegador…" DEPOIS de o navegador ja ter terminado — sao ~14 idas ao
+    // hub (6 modelos por pagina, dois tipos) mais a pergunta por nome e o
+    // saldo. Relato do aluno: "ficou travado em Finalizar no navegador, e
+    // depois de um tempo voltou sozinho; da a impressao de que a reconexao
+    // nao foi feita". Devolver assim que o login fecha deixa a interface
+    // dizer a verdade em duas etapas.
+    const state = catalogStateFrom(await readStoredCatalog());
+    broadcastCatalog(state);
+    return state;
+  });
+
   ipcMain.handle(
     'ai:role-set',
     (_event, input: { role?: unknown; provider?: unknown; pinned?: unknown }) => {

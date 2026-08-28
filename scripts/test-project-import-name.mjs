@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import ts from 'typescript';
 
 const source = await readFile(new URL('../src/project-import-name.ts', import.meta.url), 'utf8');
-const executable = source
-  .replace(/export function /gu, 'function ')
-  .concat('\n;globalThis.__helpers = { cleanProjectName, safeDirectoryPart };');
+const compiled = ts.transpileModule(source, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
 
-const context = vm.createContext({});
-new vm.Script(executable, { filename: 'project-import-name.ts' }).runInContext(context);
-const { cleanProjectName, safeDirectoryPart } = context.__helpers;
+const module = { exports: {} };
+const context = vm.createContext({ module, exports: module.exports });
+new vm.Script(compiled, { filename: 'project-import-name.js' }).runInContext(context);
+const { cleanProjectName, safeDirectoryPart } = module.exports;
 
 assert.equal(cleanProjectName('  Meu: vídeo?  '), 'Meu vídeo');
 assert.equal(cleanProjectName('A/B\\C'), 'A B C');
