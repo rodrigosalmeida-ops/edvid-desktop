@@ -82,7 +82,23 @@ try {
   assert.equal(mediaFacts.durationSec, 42);
   assert.deepEqual(mediaFacts.inserts, []);
 
-  console.log('test:style-layers ok - isolated style application preserves unrelated edit-data.');
+  // Campos exclusivos do EDIT AI podem nao existir no documento reconstruido
+  // pelo pipeline upstream. Aplicar uma camada nao pode apagar esses dados.
+  const previousWithEditAi = {
+    ...previous,
+    editAiRetention: { score: 88, source: 'retention-engine' },
+    commercialCallouts: [{ id: 'cta-1', kind: 'cta', text: 'Compre agora', start: 12, end: 15 }],
+  };
+  const nextWithoutEditAi = { ...next };
+  const ownFields = mergeStyleLayers({
+    previous: previousWithEditAi,
+    next: nextWithoutEditAi,
+    layers: ['legendas'],
+  });
+  assert.deepEqual(ownFields.editAiRetention, previousWithEditAi.editAiRetention, 'EDIT AI retention data must survive style application');
+  assert.deepEqual(ownFields.commercialCallouts, previousWithEditAi.commercialCallouts, 'EDIT AI commercial overlays must survive style application');
+
+  console.log('test:style-layers ok - isolated style application preserves unrelated and EDIT AI-only edit-data.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
