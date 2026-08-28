@@ -3614,13 +3614,13 @@ function EditorWorkspace({
                   disabled={ocupado}
                   onChange={(event) => setDraftNote(event.target.value)}
                   placeholder={draftBusy === 'sugerindo'
-                    ? 'O Edvid está escrevendo o prompt deste trecho…'
+                    ? 'O EDIT AI está escrevendo o prompt deste trecho…'
                     : draftKind === 'video' ? 'Descreva a cena do clipe…'
                       : draftKind === 'imagem' ? 'Descreva a imagem…'
                         : 'Descreva o que precisa ser corrigido neste trecho...'}
                 />
               )}
-              {/* O prompt vai para o modelo COMO ESTÁ — o Edvid não traduz. */}
+              {/* O prompt vai para o modelo COMO ESTÁ — o EDIT AI não traduz. */}
               {ehGeracao && <small className="pick-media-hint"><i className="hint-i">i</i>Prompts em inglês geram melhores resultados</small>}
               {draftKind === 'arquivo' && <small className="pick-media-hint"><i className="hint-i">i</i>Escolha uma imagem ou um vídeo do seu computador</small>}
               {draftErro && <p className="pick-media-error">{draftErro}</p>}
