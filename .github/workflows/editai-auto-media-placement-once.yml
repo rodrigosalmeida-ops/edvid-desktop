@@ -40,3 +40,5 @@ jobs:
           git add -A
           git commit -m "feat(media): place generated media from timeline windows"
           git push origin HEAD:editai-auto-media-placement-20260828
+
+# Bench is intentionally branch-scoped and self-removing after a green run.
