@@ -29,6 +29,7 @@ try {
   const model = await import(pathToFileURL(path.join(outDir, 'timeline-model.js')).href);
   const {
     applyTrim,
+    cenaVizinha,
     clipDuration,
     clipEnd,
     deleteClipLeaveGap,
@@ -350,7 +351,39 @@ try {
     false,
   );
 
-  console.log('test:timeline-model ok — migração, razor, trim, delete, programa, espelho multi-fonte, evidência de corte, ranges e bastidor validados.');
+    // --- CENA A CENA, os botões de avançar e retroceder ------------------------
+  // Pular 5s não quer dizer nada dentro de um corte: pode ser meia cena ou
+  // três. O que o aluno quer alcançar é a emenda.
+  const cenas = [
+    { clipId: 'a', timelineStart: 0, timelineEnd: 4, sourceId: 's', sourceIn: 0, speed: 1 },
+    { clipId: 'b', timelineStart: 4, timelineEnd: 9, sourceId: 's', sourceIn: 4, speed: 1 },
+    { clipId: 'c', timelineStart: 9, timelineEnd: 15, sourceId: 's', sourceIn: 9, speed: 1 },
+  ];
+  // Para a FRENTE é simples: a próxima emenda.
+  assert.equal(cenaVizinha(cenas, 0, 1), 4);
+  assert.equal(cenaVizinha(cenas, 4, 1), 9);
+  // Na última cena, o fim é o que ainda há para ver — e no fim não há mais nada.
+  assert.equal(cenaVizinha(cenas, 10, 1), 15);
+  assert.equal(cenaVizinha(cenas, 15, 1), null);
+
+  // Para TRÁS vale a regra de mesa de edição: primeiro o começo da cena ATUAL.
+  assert.equal(cenaVizinha(cenas, 6, -1), 4, 'no meio da cena, volta para o começo dela');
+  // Só quando a agulha JÁ está no começo é que pula a cena anterior. Sem essa
+  // folga, um clique a um quadro do corte perderia a cena inteira.
+  assert.equal(cenaVizinha(cenas, 4, -1), 0, 'no começo da cena, vai para a anterior');
+  assert.equal(cenaVizinha(cenas, 4.2, -1), 0, 'a um quinto de segundo, ainda é "no começo"');
+  assert.equal(cenaVizinha(cenas, 4.9, -1), 4, 'passado o limiar, já volta para a cena atual');
+  // Antes da primeira emenda só existe o começo, e do começo não se volta.
+  assert.equal(cenaVizinha(cenas, 2, -1), 0);
+  assert.equal(cenaVizinha(cenas, 0, -1), null);
+  // Sem programa (fonte crua, ainda sem corte) não há cena: quem chama cai no
+  // passo de 5 segundos, que continua sendo o melhor que existe ali.
+  assert.equal(cenaVizinha([], 5, 1), null);
+  assert.equal(cenaVizinha([], 5, -1), null);
+  // Fora de ordem no modelo não confunde: os inícios são ordenados aqui.
+  assert.equal(cenaVizinha([cenas[2], cenas[0], cenas[1]], 1, 1), 4);
+
+console.log('test:timeline-model ok — migração, razor, trim, delete, programa, espelho multi-fonte, evidência de corte, ranges e bastidor validados.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

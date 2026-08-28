@@ -302,6 +302,19 @@ export type CatalogConnection = {
   cooldownUntil: number | null;
 };
 
+// O agente INTERNO do Edvid (DeepSeek via OpenRouter, com a chave da casa):
+// o aluno conversa sem conectar conta nenhuma. Teste de 30 dias a partir do
+// primeiro uso; admin não expira. O renderer só EXIBE — quem decide é o main.
+export type EdvidAgentState = {
+  // A chave da casa existe nesta instalação (assada no build ou no ambiente).
+  configured: boolean;
+  admin: boolean;
+  trialStartedAt: number | null;
+  // null = sem expiração (admin, ou trial ainda não iniciado).
+  expiresAt: number | null;
+  expired: boolean;
+};
+
 export type CatalogState = {
   connections: CatalogConnection[];
   // Ligado pelo aluno: so usa modelo que nao gasta dinheiro dele.
@@ -482,6 +495,18 @@ export type EdvidDesktopApi = {
   // Hubs de geracao por MCP: entra com a conta, sem chave nenhuma.
   loginHub: (hub: string) => Promise<CatalogState>;
   disconnectHub: (hub: string) => Promise<CatalogState>;
+  // Login NOVO no hub. Devolve assim que o navegador fecha: a conferencia do
+  // catalogo e uma segunda etapa (checkHubs), senao o botao fica dizendo
+  // "conclua no navegador" muito depois de o navegador ter terminado.
+  reconnectHub: (hub: string) => Promise<CatalogState>;
+  // O que cada hub conectado consegue listar AGORA, e de qual conta. Lista
+  // curta e sessao vencida, e o chat avisa antes de o aluno pedir um clipe.
+  checkHubs: () => Promise<Array<{
+    id: string;
+    nome: string;
+    modelos: { imagem: number | null; video: number | null };
+    conta?: { plano: string | null; creditos: number | null } | null;
+  }>>;
   onAiRoles: (listener: (state: AiRolesState) => void) => () => void;
   fulfillImageRequests: (directory: string) => Promise<ImageGenState>;
   fulfillVideoRequests: (directory: string) => Promise<ImageGenState>;
