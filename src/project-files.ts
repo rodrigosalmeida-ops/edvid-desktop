@@ -11,6 +11,7 @@ import {
   rendersToDelete,
   tidyRootFile,
 } from './project-layout';
+import { writeProjectMediaInventory } from './media-inventory';
 
 async function isDirectory(target: string): Promise<boolean> {
   try {
@@ -231,5 +232,9 @@ export async function consolidateProjectFolder(projectDirectory: string): Promis
   // A raiz e do aluno: so o material dele e o resultado. Feito por ultimo,
   // depois de o final existir — senao ele seria movido junto.
   const tidied = await tidyProjectRoot(projectDirectory);
+  // O inventario e deliberadamente separado da coleta usada por preview e
+  // corte limpo: aqui imagens contam como insumo; na timeline elas nunca podem
+  // aparecer como se fossem video. Falha de escrita nao impede abrir projeto.
+  await writeProjectMediaInventory(projectDirectory).catch(() => {});
   return { removed, finalVideo, tidied };
 }
