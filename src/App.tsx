@@ -3534,6 +3534,7 @@ function StyleWorkspace({
   imageAiConnected: boolean;
   videoAiConnected: boolean;
 }) {
+  const [activeLayer, setActiveLayer] = useState<StyleLayer>('efeitos');
   const accentUsed = style.headline === 'realce' || style.headline === 'misto' || style.captions === 'stacked';
   const updateElements = (key: keyof StyleSetup['elements']) => {
     onChange({ ...style, elements: { ...style.elements, [key]: !style.elements[key] } });
@@ -3548,7 +3549,16 @@ function StyleWorkspace({
           </div>
         </div>
 
-        <section className="style-group">
+        <div className="style-layer-tabs" role="tablist" aria-label="Camadas de estilo">
+          {(['efeitos', 'edicao', 'legendas', 'texto'] as StyleLayer[]).map((layer) => (
+            <button type="button" role="tab" aria-selected={activeLayer === layer} className={activeLayer === layer ? 'active' : ''} key={layer} onClick={() => setActiveLayer(layer)}>
+              <Icon name={layer === 'efeitos' ? 'sparkles' : layer === 'edicao' ? 'layers' : layer === 'legendas' ? 'captions' : 'text'} />
+              <span>{STYLE_LAYER_LABEL[layer]}</span>
+            </button>
+          ))}
+        </div>
+
+        <section className={`style-group${activeLayer === 'edicao' ? '' : ' style-layer-hidden'}`}>
           <div className="style-group-head"><div><h3>Tipo de edição</h3></div></div>
           <div className="choice-grid edit-choice-grid">
             {editStyles.map((option) => (
@@ -3585,7 +3595,7 @@ function StyleWorkspace({
           )}
         </section>
 
-        <section className="style-group accent-group">
+        <section className={`style-group accent-group${activeLayer === 'legendas' || activeLayer === 'texto' ? '' : ' style-layer-hidden'}`}>
           <div className="style-group-head"><div><h3>Cor de destaque</h3></div></div>
           <div className={`accent-control ${accentUsed ? '' : 'unused'}`}>
             <input type="color" value={style.accent} onChange={(event) => onChange({ ...style, accent: event.target.value })} aria-label="Cor de destaque" />
@@ -3597,7 +3607,7 @@ function StyleWorkspace({
           </div>
         </section>
 
-        <section className="style-group">
+        <section className={`style-group${activeLayer === 'texto' ? '' : ' style-layer-hidden'}`}>
           <div className="style-group-head"><div><h3>Estilo de headline</h3></div></div>
           <div className="choice-grid headline-choice-grid">
             {headlineStyles.map((option) => (
@@ -3623,7 +3633,7 @@ function StyleWorkspace({
           )}
         </section>
 
-        <section className="style-group">
+        <section className={`style-group${activeLayer === 'legendas' ? '' : ' style-layer-hidden'}`}>
           <div className="style-group-head"><div><h3>Estilo de legenda</h3></div></div>
           <div className="choice-grid caption-choice-grid">
             {captionStyles.map((option) => (
@@ -3634,7 +3644,7 @@ function StyleWorkspace({
           </div>
         </section>
 
-        <section className="style-group">
+        <section className={`style-group${activeLayer === 'efeitos' ? '' : ' style-layer-hidden'}`}>
           <div className="style-group-head"><div><h3>Elementos da edição</h3><p>Desmarcado significa que o elemento ficará fora.</p></div></div>
           <div className="element-grid">
             {([
@@ -3674,19 +3684,10 @@ function StyleWorkspace({
             <span>{runtime.error || 'Falha ao preparar o Remotion.'} Clique em “Salvar e aplicar” para tentar de novo.</span>
           </div>
         ) : <div />}
-        <div className="apply-style-layers" aria-label="Aplicar camada de estilo">
-          {(['edicao', 'efeitos', 'legendas', 'texto'] as StyleLayer[]).map((layer) => (
-            <button
-              type="button"
-              className="btn primary apply-style"
-              key={layer}
-              onClick={() => onApply(layer)}
-              disabled={!canApply || applying || runtime.status === 'installing'}
-              title={`Aplicar somente ${STYLE_LAYER_LABEL[layer]}`}
-            >
-              <Icon name="sparkles" /> {runtime.status === 'installing' ? 'Preparando...' : applying ? 'Enviando...' : `Aplicar ${STYLE_LAYER_LABEL[layer]}`}
-            </button>
-          ))}
+        <div className="apply-style-layers contextual" aria-label={`Aplicar ${STYLE_LAYER_LABEL[activeLayer]}`}>
+          <button type="button" className="btn primary apply-style" onClick={() => onApply(activeLayer)} disabled={!canApply || applying || runtime.status === 'installing'} title={`Aplicar somente ${STYLE_LAYER_LABEL[activeLayer]}`}>
+            <Icon name="check" /> {runtime.status === 'installing' ? 'Preparando...' : applying ? 'Aplicando...' : 'Aplicar'}
+          </button>
         </div>
       </div>
     </div>
