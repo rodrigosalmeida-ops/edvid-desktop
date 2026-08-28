@@ -535,3 +535,58 @@ export function activeSplitIndexAt(
     return window !== null && seconds >= window.start && seconds < window.end;
   });
 }
+
+// CLIPE GERADO NO ARRAY ERRADO: o conserto de um erro que o contrato causou.
+//
+// O agente pediu um clipe de IA para cobrir o quadro entre 35,4s e 40,5s,
+// gerou, copiou para public/clipes/ com o caminho certo — e registrou a
+// colocacao em `animations` com kind "custom" e um campo `src`. Nada le esse
+// campo: `animations` sao ANIMACOES SOB MEDIDA, codigo no CustomGraphics.tsx.
+// O clipe ficou no disco e nunca apareceu. Nao foi capricho do agente: ate
+// agora nao existia vaga para midia em TELA CHEIA — `inserts` so desenhava o
+// cartao arredondado da zona de cima —, entao ele improvisou no array mais
+// parecido. A vaga passou a existir (inserts com `fullscreen`), e aqui o que
+// ja foi escrito errado vira o que ele quis dizer.
+//
+// Dois estragos de uma vez: alem de nao aparecer, a entrada fantasma com
+// kind "custom" fazia a fabrica de camadas renderizar uma janela inteira de
+// grafico transparente — minutos de render para um arquivo vazio.
+export function normalizeGeneratedMedia(
+  data: Record<string, unknown>,
+): { data: Record<string, unknown>; moved: string[] } {
+  const animations = Array.isArray(data.animations) ? (data.animations as Record<string, unknown>[]) : [];
+  const comSrc = animations.filter((item) => typeof item.src === 'string' && item.src.trim());
+  if (!comSrc.length) return { data, moved: [] };
+
+  const inserts = Array.isArray(data.inserts) ? [...(data.inserts as Record<string, unknown>[])] : [];
+  const moved: string[] = [];
+  for (const item of comSrc) {
+    const src = String(item.src).trim();
+    const start = Number(item.start);
+    const end = Number(item.end);
+    // Janela invalida nao vira insert: o clipe entraria em lugar nenhum e o
+    // render quebraria numa duracao negativa. Fica onde esta, visivel para
+    // quem for depurar.
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    inserts.push({
+      kind: /\.(mp4|mov|webm)$/iu.test(src) ? 'video' : 'image',
+      src,
+      start,
+      end,
+      // TELA CHEIA e a intencao: o agente escreveu "cobrindo o quadro
+      // inteiro". Um cartao aqui seria uma traducao errada do pedido.
+      fullscreen: true,
+    });
+    moved.push(src);
+  }
+  if (!moved.length) return { data, moved: [] };
+
+  return {
+    data: {
+      ...data,
+      animations: animations.filter((item) => !(typeof item.src === 'string' && moved.includes(String(item.src).trim()))),
+      inserts: inserts.sort((a, b) => Number(a.start) - Number(b.start)),
+    },
+    moved,
+  };
+}

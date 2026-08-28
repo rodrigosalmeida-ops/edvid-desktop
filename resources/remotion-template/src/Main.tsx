@@ -42,7 +42,11 @@ type Caption = {text: string; startMs: number; endMs: number};
 // `kind` acompanha o Split: o b-roll gerado no hub vem em .mp4, e um insert
 // so de imagem obrigaria a tela dividida mesmo quando o clipe deveria ocupar
 // o cartao inteiro. `muted` nao e enfeite — o clipe entra por baixo da voz.
-type Insert = {kind?: 'image' | 'video'; src: string; start: number; end: number; transform?: ManualTransform; crop?: MediaCrop};
+// `fullscreen` cobre o QUADRO INTEIRO em vez do cartao arredondado. B-roll de
+// video longform pede a tela toda — o cartao e idioma de vertical curto —, e
+// sem esta opcao o clipe gerado por IA nao tinha onde entrar: o agente
+// registrava o arquivo num campo que ninguem lia e ele nunca aparecia.
+type Insert = {kind?: 'image' | 'video'; src: string; start: number; end: number; fullscreen?: boolean; transform?: ManualTransform; crop?: MediaCrop};
 // Tela dividida OFICIAL: a midia ocupa uma FAIXA e o video segue no resto.
 // kind "video" toca o arquivo (mudo) em loop de cover; bandTop escolhe qual
 // faixa vertical do video 9:16 aparece na parte dele (fracao do topo);
@@ -113,7 +117,7 @@ export type EditData = {
   camera: {enabled: boolean; zooms: number[]; pushIn: number; targetX: number; targetY: number};
   hook: {
     // `startSec` (padrao 0) existe para o trim da faixa Texto na timeline do
-    // Edvid: ate a 0.31.4 a headline SEMPRE comecava no quadro 0 e so a ponta
+    // EDIT AI: ate a 0.31.4 a headline SEMPRE comecava no quadro 0 e so a ponta
     // direita era ajustavel.
     enabled: boolean; startSec?: number; endSec: number; lines: string[]; logo: string | null; sign: string | null;
     // `text` is preferred over `lines`: the headline is ALWAYS re-broken into
@@ -129,7 +133,7 @@ export type EditData = {
     // "misto": line 1 light white, line 2 heavy orange.
     style?: 'outline' | 'card' | 'realce' | 'misto';
     // Cor de destaque escolhida pelo usuario. Usada por "realce" (fundo dos
-    // blocos) e "misto" (segunda linha). Default: laranja do Edvid.
+    // blocos) e "misto" (segunda linha). Default: laranja do EDIT AI.
     accent?: string;
     fontSizePx?: number;   // auto-fit CEILING (alias of maxFontPx, kept for compat)
     maxFontPx?: number;    // auto-fit ceiling (per-style default)
@@ -174,7 +178,7 @@ export type EditData = {
   behind: Behind[];
   splits?: Split[];
   // Animacoes DECLARATIVAS: o CustomGraphics desenha cada uma pelo `kind`
-  // (flash, timeline, script, shapes) e a timeline do Edvid usa a mesma janela
+  // (flash, timeline, script, shapes) e a timeline do EDIT AI usa a mesma janela
   // para a track de Animacoes. Registrar aqui e o que faz aparecer no video —
   // antes isto era so metadata e o registro saia mudo no render.
   animations?: {
@@ -195,7 +199,7 @@ export type EditData = {
 };
 
 // Os dados chegam pelo CONTEXTO (./data): o render usa o padrao estatico e a
-// previa ao vivo do Edvid injeta o projeto aberto por cima. Uma constante de
+// previa ao vivo do EDIT AI injeta o projeto aberto por cima. Uma constante de
 // modulo aqui congelaria o import — a previa mostraria para sempre o projeto
 // de exemplo, que foi exatamente o primeiro defeito da bancada.
 export const useEditData = (): EditData => useProjectData().editData as unknown as EditData;
@@ -214,7 +218,7 @@ export const activeSplitAt = (splits: readonly Split[], globalFrame: number, fps
     return globalFrame >= de && globalFrame < Math.round(s.end * fps) + 1;
   }) ?? null;
 
-// Cor de destaque padrao do Edvid, usada quando o edit-data.json nao traz uma.
+// Cor de destaque padrao do EDIT AI, usada quando o edit-data.json nao traz uma.
 // Antes ela estava literal dentro de cada estilo, e a escolha do usuario na
 // aba Estilos era silenciosamente ignorada no render.
 export const EDVID_ACCENT = '#ff5200';
@@ -622,6 +626,35 @@ export const CARD_W = 780;
 export const CARD_H = 500;
 export const CARD_TOP = 90;
 
+// B-ROLL DE TELA CHEIA: cobre o quadro inteiro, sem cartao, sem whoosh e sem a
+// subida de entrada. E um CORTE PARA outra imagem, nao um adorno por cima do
+// apresentador — o cartao arredondado e idioma de vertical curto e no longform
+// horizontal ele fica pequeno no meio da tela. Fade curto nas duas pontas para
+// a emenda nao piscar, e o mesmo Ken-Burns discreto dos cartoes.
+const InsertFullscreen: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'; crop?: MediaCrop}> = ({src, totalFrames, kind, crop}) => {
+  const frame = useCurrentFrame();
+  const fade = 5;
+  const opacity = Math.min(
+    interpolate(frame, [0, fade], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+    interpolate(frame, [totalFrames - fade, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+  );
+  const scale = interpolate(frame, [0, totalFrames], [1, 1.05], {extrapolateRight: 'clamp'});
+  const clip = mediaCropCss(crop);
+  const midia: React.CSSProperties = {
+    width: '100%', height: '100%', objectFit: 'cover',
+    ...(clip ? {clipPath: clip} : null),
+  };
+  return (
+    <AbsoluteFill style={{opacity, backgroundColor: 'black'}}>
+      <AbsoluteFill style={{scale: String(scale)}}>
+        {kind === 'video'
+          ? <OffthreadVideo src={staticFile(src)} muted style={midia} />
+          : <Img src={staticFile(src)} style={midia} />}
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+
 const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'; transform?: ManualTransform; crop?: MediaCrop; noInicio?: boolean}> = ({src, totalFrames, kind, transform, crop, noInicio}) => {
   const frame = useCurrentFrame();
   const enter = entrada(frame, 9, Boolean(noInicio));
@@ -657,7 +690,9 @@ const Inserts: React.FC = () => {
         const duration = Math.round((it.end - it.start) * fps);
         return (
           <Sequence key={i} from={from} durationInFrames={duration} layout="none">
-            <InsertCard src={it.src} kind={it.kind} transform={it.transform} crop={it.crop} totalFrames={duration} noInicio={from === 0} />
+            {it.fullscreen
+              ? <InsertFullscreen src={it.src} kind={it.kind} crop={it.crop} totalFrames={duration} />
+              : <InsertCard src={it.src} kind={it.kind} transform={it.transform} crop={it.crop} totalFrames={duration} noInicio={from === 0} />}
           </Sequence>
         );
       })}
