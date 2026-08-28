@@ -239,6 +239,22 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 
 const clamp01 = (v: number) => clamp(v, 0, 1);
 
+// A extensao real do arquivo tem prioridade sobre o rotulo salvo no edit-data.
+// Um PNG marcado como video deixa o Player esperando um <video> que nunca fica pronto.
+const EXTENSOES_DE_IMAGEM = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.bmp', '.svg'];
+const EXTENSOES_DE_VIDEO = ['.mp4', '.mov', '.webm', '.m4v', '.mkv'];
+
+// Midia auxiliar ausente nao pode congelar o video inteiro. A base cut.mp4 fica
+// sem este fallback de proposito: sem a base nao ha video.
+export const aoFalharMidia = () => {};
+
+export const ehVideo = (src: string | undefined, kind: string | undefined): boolean => {
+  const arquivo = String(src ?? '').split(/[?#]/u)[0].toLowerCase();
+  if (EXTENSOES_DE_IMAGEM.some((ext) => arquivo.endsWith(ext))) return false;
+  if (EXTENSOES_DE_VIDEO.some((ext) => arquivo.endsWith(ext))) return true;
+  return kind === 'video';
+};
+
 // A DIVISA NAO FICA NO MEIO. Meio a meio come metade do apresentador e o
 // resultado fica pesado — o aluno marcou no proprio render onde a divisa
 // devia estar, e a marca caiu em 0,39 da altura. Nao e coincidencia: e a
@@ -401,7 +417,7 @@ const BehindImageEl: React.FC<{src: string; totalFrames: number; noInicio?: bool
       <Sfx src="whoosh.mp3" />
       {/* top-weighted so the image frames the head instead of hiding behind the torso */}
       <div style={{width: 1000, height: 1250, marginTop: 40, borderRadius: 30, overflow: 'hidden', opacity: op, scale: String(scale), boxShadow: '0 24px 70px rgba(0,0,0,0.55)'}}>
-        <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+        <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} onError={aoFalharMidia} />
       </div>
     </AbsoluteFill>
   );
@@ -623,9 +639,9 @@ const InsertCard: React.FC<{src: string; totalFrames: number; kind?: 'image' | '
     <AbsoluteFill style={{justifyContent: 'flex-start', alignItems: 'center'}}>
       <Sfx src="whoosh.mp3" />
       <div style={{width: CARD_W, height: CARD_H, marginTop: CARD_TOP, borderRadius: 28, overflow: 'hidden', opacity, scale: String(scale), translate: `${tx}px ${y + ty}px`, ...(transform?.rotation ? {rotate: `${transform.rotation}deg`} : null), boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
-        {kind === 'video'
-          ? <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover', ...(mediaCropCss(crop) ? {clipPath: mediaCropCss(crop)} : null)}} />
-          : <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover', ...(mediaCropCss(crop) ? {clipPath: mediaCropCss(crop)} : null)}} />}
+        {ehVideo(src, kind)
+          ? <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover', ...(mediaCropCss(crop) ? {clipPath: mediaCropCss(crop)} : null)}} onError={aoFalharMidia} />
+          : <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover', ...(mediaCropCss(crop) ? {clipPath: mediaCropCss(crop)} : null)}} onError={aoFalharMidia} />}
       </div>
     </AbsoluteFill>
   );
@@ -682,9 +698,9 @@ const SplitMedia: React.FC<{split: Split}> = ({split}) => {
       </AbsoluteFill>
     );
   }
-  return split.kind === 'video'
-    ? <OffthreadVideo src={staticFile(split.src)} muted style={style} />
-    : <Img src={staticFile(split.src)} style={style} />;
+  return ehVideo(split.src, split.kind)
+    ? <OffthreadVideo src={staticFile(split.src)} muted style={style} onError={aoFalharMidia} />
+    : <Img src={staticFile(split.src)} style={style} onError={aoFalharMidia} />;
 };
 
 // Envolve a base: sem split ativo rende o DynamicVideo cheio; com split, o

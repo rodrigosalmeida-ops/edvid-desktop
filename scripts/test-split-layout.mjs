@@ -33,9 +33,16 @@ try {
     arquivo, '--target', 'es2022', '--module', 'es2022', '--moduleResolution', 'bundler',
     '--skipLibCheck', '--outDir', outDir,
   ], { stdio: 'inherit' });
-  const { SPLIT_DIVIDER, splitGeometry } = await import(pathToFileURL(path.join(outDir, 'geom.js')).href);
+  const { SPLIT_DIVIDER, splitGeometry, ehVideo, aoFalharMidia } = await import(pathToFileURL(path.join(outDir, 'geom.js')).href);
 
   const H = 1920;
+
+  // A extensao manda no tipo da midia, inclusive quando o Remotion acrescenta fragmentos de tempo.
+  assert.equal(ehVideo('imagens/exemplo.png', 'video'), false, 'PNG rotulado como video continua sendo imagem');
+  assert.equal(ehVideo('imagens/exemplo.png#t=0,4.03', 'video'), false, 'fragmento do Remotion nao muda a extensao');
+  assert.equal(ehVideo('broll/exemplo.mp4', 'image'), true, 'MP4 rotulado como imagem continua sendo video');
+  assert.equal(ehVideo('sem-extensao', 'video'), true, 'sem extensao conhecida o rotulo continua valendo');
+  assert.doesNotThrow(() => aoFalharMidia(), 'falha de midia auxiliar precisa ser tolerada');
 
   // 1. A divisa NAO fica no meio — a regressao que o aluno viu no video.
   assert.notEqual(SPLIT_DIVIDER, 0.5, 'divisa no meio e o defeito, nao o padrao');
