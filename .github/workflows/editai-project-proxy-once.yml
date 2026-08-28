@@ -1,0 +1,94 @@
+name: EDIT AI project preview proxy once
+
+on:
+  push:
+    branches:
+      - editai-project-proxy-20260828
+    paths:
+      - .github/workflows/editai-project-proxy-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: editai-project-proxy-20260828
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply guarded project preview proxy patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          shared = Path('src/shared.ts')
+          text = shared.read_text(encoding='utf-8')
+          old = "export type ProjectMedia = {\n  url: string;\n"
+          new = "export type ProjectMedia = {\n  // null = a fonte existe, mas o navegador ainda aguarda um proxy reproduzível.\n  url: string | null;\n"
+          if old not in text:
+              raise SystemExit('Guard failed: ProjectMedia.url context changed')
+          shared.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          main = Path('src/main.ts')
+          text = main.read_text(encoding='utf-8')
+          old = """  const kind = mediaKind(candidate.relativePath, candidate.tier);\n  const token = authorizeMediaToken(candidate.absolutePath, `${candidate.modifiedAt}`);\n  return {\n    absolutePath: candidate.absolutePath,\n    media: {\n      url: `edvid-media://local/${token}`,\n"""
+          new = """  const kind = mediaKind(candidate.relativePath, candidate.tier);\n\n  // O primeiro preview do projeto precisa da mesma proteção do preview\n  // mapeado: ProRes/DNxHD/CineForm existem no disco, mas o Chromium não os\n  // decodifica diretamente. Reutiliza o MESMO fingerprint/cache do caminho\n  // de buildProjectSources para nunca transcodificar a mesma fonte duas vezes.\n  const fingerprint = await fingerprintOf(candidate.absolutePath) ?? `${candidate.modifiedAt}`;\n  let playable: string | null = candidate.absolutePath;\n  if (precisaProxy(stream.codec_name)) {\n    playable = await proxyReady(candidate.absolutePath, fingerprint);\n    if (!playable) {\n      void ensurePreviewProxy(\n        candidate.absolutePath,\n        fingerprint,\n        Number(probe.format?.duration) || 0,\n        { largura: stream.width, altura: stream.height, rotacao: rotation },\n      ).then((proxyPath) => {\n        if (proxyPath) broadcastCodexEvent({ type: 'workspace-refresh' });\n      }).catch(() => {});\n    }\n  }\n  const token = playable\n    ? authorizeMediaToken(playable, playable === candidate.absolutePath ? fingerprint : 'proxy')\n    : null;\n  return {\n    absolutePath: candidate.absolutePath,\n    media: {\n      url: token ? `edvid-media://local/${token}` : null,\n"""
+          if old not in text:
+              raise SystemExit('Guard failed: inspectProjectMedia token context changed')
+          main.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          app = Path('src/App.tsx')
+          text = app.read_text(encoding='utf-8')
+          old = "  const videoSrc = mapped ? activeSource?.url ?? undefined : media?.url;\n"
+          new = "  const videoSrc = mapped ? activeSource?.url ?? undefined : media?.url ?? undefined;\n"
+          if old not in text:
+              raise SystemExit('Guard failed: videoSrc context changed')
+          text = text.replace(old, new, 1)
+          old = """              {mapped && activeSourceId && !activeSource?.url && (\n                <div className=\"video-stage-note\">\n                  {previewProxy?.status === 'building'\n                    ? `Preparando a prévia de ${previewProxy.name}${previewProxy.progress ? ` · ${Math.round(previewProxy.progress * 100)}%` : ''}`\n                    : previewProxy?.status === 'error'\n                      ? `Não consegui preparar a prévia de ${previewProxy.name}. O corte final não é afetado.`\n                      : 'Arquivo-fonte indisponível para a prévia'}\n                </div>\n              )}\n"""
+          new = """              {/* Fonte sem URL pode ser um formato que o Chromium não toca.\n                  Isto vale tanto no preview mapeado quanto no PRIMEIRO preview,\n                  antes do Corte Limpo. */}\n              {(mapped ? Boolean(activeSourceId) && !activeSource?.url : !media.url) && (\n                <div className=\"video-stage-note\">\n                  {previewProxy?.status === 'building'\n                    ? `Preparando a prévia de ${previewProxy.name}${previewProxy.progress ? ` · ${Math.round(previewProxy.progress * 100)}%` : ''}`\n                    : previewProxy?.status === 'error'\n                      ? `Não consegui preparar a prévia de ${previewProxy.name}. O corte final não é afetado.`\n                      : 'Preparando a prévia deste formato de vídeo...'}\n                </div>\n              )}\n"""
+          if old not in text:
+              raise SystemExit('Guard failed: preview proxy note context changed')
+          app.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          test = Path('scripts/test-preview-proxy.mjs')
+          text = test.read_text(encoding='utf-8')
+          old = "import { mkdtempSync, rmSync } from 'node:fs';"
+          new = "import { mkdtempSync, readFileSync, rmSync } from 'node:fs';"
+          if old not in text:
+              raise SystemExit('Guard failed: preview proxy test import changed')
+          text = text.replace(old, new, 1)
+          marker = "  // --- 5. O ANDAMENTO -------------------------------------------------------\n"
+          contract = """  // --- 4b. O PRIMEIRO PREVIEW TAMBÉM USA PROXY ------------------------------\n  const mainSource = readFileSync(path.join(projectRoot, 'src', 'main.ts'), 'utf8');\n  const appSource = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');\n  const sharedSource = readFileSync(path.join(projectRoot, 'src', 'shared.ts'), 'utf8');\n  assert.match(\n    mainSource,\n    /async function inspectProjectMedia[\\s\\S]{0,6500}?precisaProxy\\(stream\\.codec_name\\)[\\s\\S]{0,2600}?ensurePreviewProxy\\([\\s\\S]{0,1800}?workspace-refresh/u,\n    'inspectProjectMedia precisa preparar proxy antes do Corte Limpo',\n  );\n  assert.match(\n    appSource,\n    /mapped \\? Boolean\\(activeSourceId\\)[\\s\\S]{0,500}?: !media\\.url/u,\n    'palco precisa explicar proxy pendente também no primeiro preview',\n  );\n  assert.match(sharedSource, /export type ProjectMedia = \\{[\\s\\S]{0,220}?url: string \\| null;/u);\n\n"""
+          if marker not in text:
+              raise SystemExit('Guard failed: preview proxy insertion marker changed')
+          test.write_text(text.replace(marker, contract + marker, 1), encoding='utf-8')
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify preview proxy hardening
+        run: |
+          npm run typecheck
+          npm run test:preview-proxy
+          npm run test:media
+
+      - name: Commit verified proxy hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-project-proxy-once.yml
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/shared.ts src/main.ts src/App.tsx scripts/test-preview-proxy.mjs .github/workflows/editai-project-proxy-once.yml
+          git commit -m "fix(preview): proxy unsupported media before clean cut"
+          git push origin HEAD:editai-project-proxy-20260828
