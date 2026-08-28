@@ -114,12 +114,21 @@ try {
   assert.match(workflow, /out\\EDIT AI-win32-x64\\EDIT AI\.exe.*-BootOnly/u);
   assert.doesNotMatch(workflow, /Smoke packaged EDIT AI executable[\s\S]{0,250}?EDIT AI-fat-win32-x64/u);
 
+  const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const packageLock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  assert.equal(packageJson.devDependencies?.['@electron-forge/plugin-vite'], '^7.11.2',
+    'Forge Vite plugin precisa estar declarado no package.json para npm ci nao poda-lo');
+  assert.equal(packageLock.packages?.['']?.devDependencies?.['@electron-forge/plugin-vite'], '^7.11.2',
+    'package-lock precisa manter o Forge Vite plugin alinhado ao manifesto');
+  assert.ok(packageLock.packages?.['node_modules/@electron-forge/plugin-vite'],
+    'package-lock precisa conter o pacote @electron-forge/plugin-vite resolvido');
+
   const mainSource = readFileSync(path.join(root, 'src', 'main.ts'), 'utf8');
   const splitPromptHandlers = mainSource.match(/ipcMain\.handle\('preview:suggest-split-prompt'/gu) ?? [];
   assert.equal(splitPromptHandlers.length, 1, 'preview:suggest-split-prompt deve ser registrado uma unica vez');
   assert.match(mainSource, /--editai-smoke-boot-only/u);
 
-  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin, fallback BootOnly de media e IPC unico protegidos.');
+  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin, fallback BootOnly, dependencias Forge e IPC unico protegidos.');
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
