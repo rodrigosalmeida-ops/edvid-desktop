@@ -15,14 +15,18 @@ if (Test-Path $SmokeReportPath -PathType Leaf) {
   $runtimeReport = Get-Content -Raw $SmokeReportPath | ConvertFrom-Json
   $ffmpegEntry = @($runtimeReport.runtimes | Where-Object { $_.name -eq 'ffmpeg' }) | Select-Object -First 1
   $ffprobeEntry = @($runtimeReport.runtimes | Where-Object { $_.name -eq 'ffprobe' }) | Select-Object -First 1
-  if (-not $ffmpegEntry -or -not $ffmpegEntry.available -or -not $ffmpegEntry.executablePath) { throw 'FFmpeg nao disponivel no smoke report.' }
-  if (-not $ffprobeEntry -or -not $ffprobeEntry.available -or -not $ffprobeEntry.executablePath) { throw 'FFprobe nao disponivel no smoke report.' }
-  $ffmpeg = [string]$ffmpegEntry.executablePath
-  $ffprobe = [string]$ffprobeEntry.executablePath
-} else {
-  # O media smoke roda antes do smoke do executavel thin. Nesse ponto o runtime
-  # ja foi staged, mas o relatorio out/editai-smoke.json ainda nao existe.
-  # Valide diretamente o FFmpeg/FFprobe staged em vez de exigir um artefato futuro.
+  if ($ffmpegEntry -and $ffmpegEntry.available -and $ffmpegEntry.executablePath -and
+      $ffprobeEntry -and $ffprobeEntry.available -and $ffprobeEntry.executablePath) {
+    $ffmpeg = [string]$ffmpegEntry.executablePath
+    $ffprobe = [string]$ffprobeEntry.executablePath
+  } else {
+    Write-Host '[EDIT AI] smoke report sem runtimes utilizaveis; usando FFmpeg/FFprobe staged.'
+  }
+}
+
+if (-not $ffmpeg -or -not $ffprobe) {
+  # O smoke BootOnly pode criar editai-smoke.json sem inventariar runtimes.
+  # Nesse caso (ou antes de existir relatorio), valide diretamente o runtime staged.
   $runtimeRoot = Join-Path $Root 'resources\runtimes\win32-x64'
   $ffmpegItem = Get-ChildItem -Path $runtimeRoot -Filter 'ffmpeg.exe' -File -Recurse -ErrorAction Stop | Select-Object -First 1
   if (-not $ffmpegItem) { throw "FFmpeg staged nao encontrado em $runtimeRoot." }
@@ -33,7 +37,9 @@ if (Test-Path $SmokeReportPath -PathType Leaf) {
   if (-not $ffprobeItem) { throw "FFprobe staged nao encontrado em $runtimeRoot." }
   $ffmpeg = $ffmpegItem.FullName
   $ffprobe = $ffprobeItem.FullName
-  Write-Host '[EDIT AI] smoke report ainda nao existe; usando FFmpeg/FFprobe staged.'
+  if (-not (Test-Path $SmokeReportPath -PathType Leaf)) {
+    Write-Host '[EDIT AI] smoke report ainda nao existe; usando FFmpeg/FFprobe staged.'
+  }
 }
 
 $work = Join-Path $Root 'out\editai-media-smoke'
