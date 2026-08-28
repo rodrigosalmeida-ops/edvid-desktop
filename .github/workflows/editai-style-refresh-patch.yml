@@ -16,8 +16,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply focused style preview fix and regression
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
 
           app_path = Path('src/App.tsx')
@@ -56,6 +57,7 @@ assert.ok(buildIndex >= 0 && refreshIndex > buildIndex, 'aplicar estilo precisa 
           test_path.write_text(test.replace(anchor, addition, 1), encoding='utf-8')
 
           Path('.github/workflows/editai-style-refresh-patch.yml').unlink()
+          PY
       - name: Verify focused regression
         run: |
           npm ci
