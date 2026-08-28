@@ -98,6 +98,13 @@ try {
 
   const buildScript = readFileSync(path.join(root, 'scripts', 'editai-build-windows.ps1'), 'utf8');
   assert.doesNotMatch(buildScript, /9\/12 smoke do pacote fat/u);
+  const mediaSmokeScript = readFileSync(path.join(root, 'scripts', 'editai-media-smoke-windows.ps1'), 'utf8');
+  assert.doesNotMatch(mediaSmokeScript, /Resolve-Path\s+\$SmokeReportPath/u, 'media smoke nao pode exigir relatorio futuro');
+  assert.match(mediaSmokeScript, /Test-Path\s+\$SmokeReportPath\s+-PathType\s+Leaf/u);
+  assert.match(mediaSmokeScript, /resources\\runtimes\\win32-x64/u);
+  assert.match(mediaSmokeScript, /Get-ChildItem[\s\S]*ffmpeg\.exe/u);
+  assert.match(mediaSmokeScript, /Get-ChildItem[\s\S]*ffprobe\.exe/u);
+
   const workflow = readFileSync(path.join(root, '.github', 'workflows', 'editai-rc2-windows.yml'), 'utf8');
   assert.match(workflow, /out\\EDIT AI-win32-x64\\EDIT AI\.exe.*-BootOnly/u);
   assert.doesNotMatch(workflow, /Smoke packaged EDIT AI executable[\s\S]{0,250}?EDIT AI-fat-win32-x64/u);
@@ -107,7 +114,7 @@ try {
   assert.equal(splitPromptHandlers.length, 1, 'preview:suggest-split-prompt deve ser registrado uma unica vez');
   assert.match(mainSource, /--editai-smoke-boot-only/u);
 
-  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin e IPC unico protegidos.');
+  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin, fallback de media e IPC unico protegidos.');
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

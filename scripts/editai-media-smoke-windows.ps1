@@ -5,17 +5,36 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $SmokeReportPath) { $SmokeReportPath = Join-Path $Root 'out\editai-smoke.json' }
-$SmokeReportPath = (Resolve-Path $SmokeReportPath).Path
+$SmokeReportPath = [System.IO.Path]::GetFullPath($SmokeReportPath)
 if (-not $OutputPath) { $OutputPath = Join-Path $Root 'out\editai-media-smoke.json' }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 
-$runtimeReport = Get-Content -Raw $SmokeReportPath | ConvertFrom-Json
-$ffmpegEntry = @($runtimeReport.runtimes | Where-Object { $_.name -eq 'ffmpeg' }) | Select-Object -First 1
-$ffprobeEntry = @($runtimeReport.runtimes | Where-Object { $_.name -eq 'ffprobe' }) | Select-Object -First 1
-if (-not $ffmpegEntry -or -not $ffmpegEntry.available -or -not $ffmpegEntry.executablePath) { throw 'FFmpeg nao disponivel no smoke report.' }
-if (-not $ffprobeEntry -or -not $ffprobeEntry.available -or -not $ffprobeEntry.executablePath) { throw 'FFprobe nao disponivel no smoke report.' }
-$ffmpeg = [string]$ffmpegEntry.executablePath
-$ffprobe = [string]$ffprobeEntry.executablePath
+$ffmpeg = $null
+$ffprobe = $null
+if (Test-Path $SmokeReportPath -PathType Leaf) {
+  $runtimeReport = Get-Content -Raw $SmokeReportPath | ConvertFrom-Json
+  $ffmpegEntry = @($runtimeReport.runtimes | Where-Object { $_.name -eq 'ffmpeg' }) | Select-Object -First 1
+  $ffprobeEntry = @($runtimeReport.runtimes | Where-Object { $_.name -eq 'ffprobe' }) | Select-Object -First 1
+  if (-not $ffmpegEntry -or -not $ffmpegEntry.available -or -not $ffmpegEntry.executablePath) { throw 'FFmpeg nao disponivel no smoke report.' }
+  if (-not $ffprobeEntry -or -not $ffprobeEntry.available -or -not $ffprobeEntry.executablePath) { throw 'FFprobe nao disponivel no smoke report.' }
+  $ffmpeg = [string]$ffmpegEntry.executablePath
+  $ffprobe = [string]$ffprobeEntry.executablePath
+} else {
+  # O media smoke roda antes do smoke do executavel thin. Nesse ponto o runtime
+  # ja foi staged, mas o relatorio out/editai-smoke.json ainda nao existe.
+  # Valide diretamente o FFmpeg/FFprobe staged em vez de exigir um artefato futuro.
+  $runtimeRoot = Join-Path $Root 'resources\runtimes\win32-x64'
+  $ffmpegItem = Get-ChildItem -Path $runtimeRoot -Filter 'ffmpeg.exe' -File -Recurse -ErrorAction Stop | Select-Object -First 1
+  if (-not $ffmpegItem) { throw "FFmpeg staged nao encontrado em $runtimeRoot." }
+  $ffprobeItem = Get-ChildItem -Path $ffmpegItem.DirectoryName -Filter 'ffprobe.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $ffprobeItem) {
+    $ffprobeItem = Get-ChildItem -Path $runtimeRoot -Filter 'ffprobe.exe' -File -Recurse -ErrorAction Stop | Select-Object -First 1
+  }
+  if (-not $ffprobeItem) { throw "FFprobe staged nao encontrado em $runtimeRoot." }
+  $ffmpeg = $ffmpegItem.FullName
+  $ffprobe = $ffprobeItem.FullName
+  Write-Host '[EDIT AI] smoke report ainda nao existe; usando FFmpeg/FFprobe staged.'
+}
 
 $work = Join-Path $Root 'out\editai-media-smoke'
 New-Item -ItemType Directory -Force -Path $work | Out-Null
