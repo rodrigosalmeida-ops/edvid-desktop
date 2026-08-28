@@ -47,7 +47,7 @@ const EXTENSOES_OK = {
 } as const;
 
 // Sem duracao declarada nem janela, o padrao e o que a maioria dos b-rolls do
-// Edvid ocupa: um trecho curto atras da legenda.
+// EDIT AI ocupa: um trecho curto atras da legenda.
 const SEGUNDOS_PADRAO = 4;
 // Janela menor que isto e engano de digitacao, nao pedido: um clipe de 0,2s
 // custa o mesmo de um de 5s e nao da tempo de ser visto.
