@@ -1,0 +1,62 @@
+name: EDIT AI media request core once
+
+on:
+  push:
+    branches:
+      - editai-media-request-core-20260828
+    paths:
+      - .github/workflows/editai-media-request-core-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: editai-media-request-core-20260828
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Port media request core
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/fillrochaa/edvid-desktop.git 655a7f2e2c616e35df6526e03d07d1a6d2250adc
+          if ! git cherry-pick --no-commit FETCH_HEAD; then
+            echo 'Media core conflicts:' >&2
+            git status --short >&2
+            exit 1
+          fi
+          # Restore EDIT AI agent/business identity; core media behavior is the target.
+          git checkout HEAD -- agent.md src/codex-app-server.ts
+          # Keep application-visible product naming out of the port.
+          python - <<'PY'
+          from pathlib import Path
+          for file in ['src/main.ts','src/App.tsx','src/shared.ts','src/media-request.ts','scripts/test-media-request.mjs','scripts/test-phase2-data.mjs']:
+              p=Path(file)
+              if p.exists():
+                  p.write_text(p.read_text(encoding='utf-8').replace('Edvid','EDIT AI').replace('edvid-pedido-','editai-pedido-'),encoding='utf-8')
+          PY
+      - run: npm ci
+      - name: Verify media request core
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:media-request
+          npm run test:phase2-data
+      - name: Commit verified core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-media-request-core-once.yml
+          git config user.name editai-ci
+          git config user.email actions@users.noreply.github.com
+          git add -A
+          git commit -m "feat(media): derive generation placement from prompt windows"
+          git push origin HEAD:editai-media-request-core-20260828
