@@ -3,30 +3,13 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ProjectSummary } from './shared';
+import { cleanProjectName, safeDirectoryPart } from './project-import-name';
 
 const PROJECT_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv']);
 
 type PickedProject = { directory: string; name: string };
 
 type RecentProjectsDocument = { version?: number; projects?: unknown };
-
-function cleanProjectName(value: string): string {
-  return value
-    .replace(/[<>:"\/\\|?*\u0000-\u001f]/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .slice(0, 80);
-}
-
-function safeDirectoryPart(value: string): string {
-  const cleaned = cleanProjectName(value)
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/gu, '')
-    .replace(/[^a-zA-Z0-9._ -]/gu, '')
-    .replace(/[ .]+$/gu, '')
-    .trim();
-  return cleaned || 'video';
-}
 
 function projectsFile(): string {
   return path.join(app.getPath('userData'), 'projects.json');
