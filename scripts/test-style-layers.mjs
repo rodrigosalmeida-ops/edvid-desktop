@@ -57,6 +57,8 @@ try {
   assert.equal(captionsOnly.hook.accent, '#00b5b7');
   assert.equal(captionsOnly.hook.style, 'realce');
   assert.equal(captionsOnly.hook.enabled, false);
+  assert.equal(captionsOnly.captions.startSec, 0, 'applying captions must restart at the current cut');
+  assert.equal(captionsOnly.captions.endSec, 60, 'applying captions must cover the current video to the end');
 
   const effectsOnly = mergeStyleLayers({ previous, next, layers: ['efeitos'] });
   assert.deepEqual(effectsOnly.camera, next.camera);
@@ -70,7 +72,11 @@ try {
   assert.equal(editOnly.hook.style, 'realce');
   assert.equal(editOnly.captions.accent, '#ff5200');
 
-  assert.deepEqual(mergeStyleLayers({ previous, next, layers: STYLE_LAYERS }), next);
+  const allLayers = mergeStyleLayers({ previous, next, layers: STYLE_LAYERS });
+  assert.deepEqual(allLayers, {
+    ...next,
+    captions: { ...next.captions, startSec: 0, endSec: 60 },
+  });
 
   const mediaFacts = mergeStyleLayers({
     previous,
@@ -81,6 +87,38 @@ try {
   assert.equal(mediaFacts.height, 1080);
   assert.equal(mediaFacts.durationSec, 42);
   assert.deepEqual(mediaFacts.inserts, []);
+  assert.equal(mediaFacts.captions.startSec, 0);
+  assert.equal(mediaFacts.captions.endSec, 42, 'caption window must follow a shorter replacement cut');
+
+  const staleWindows = mergeStyleLayers({
+    previous: {
+      ...previous,
+      durationSec: 78.77,
+      captions: { ...previous.captions, startSec: 0, endSec: 69.27 },
+      hook: { ...previous.hook, endSec: 90 },
+    },
+    next: {
+      ...next,
+      durationSec: 78.77,
+      captions: { ...next.captions, startSec: 2, endSec: 69.27 },
+      hook: { ...next.hook, endSec: 90 },
+    },
+    layers: ['legendas'],
+  });
+  assert.equal(staleWindows.captions.startSec, 0);
+  assert.equal(staleWindows.captions.endSec, 78.77, 'stale caption end from an older cut must not survive reapply');
+  assert.equal(staleWindows.hook.endSec, 78.77, 'timeline windows can never extend beyond the current video');
+
+  const preservedManualTrim = mergeStyleLayers({
+    previous: {
+      ...previous,
+      captions: { ...previous.captions, startSec: 4, endSec: 50 },
+    },
+    next,
+    layers: ['efeitos'],
+  });
+  assert.equal(preservedManualTrim.captions.startSec, 4, 'unrelated style layers must preserve manual caption trim');
+  assert.equal(preservedManualTrim.captions.endSec, 50);
 
   // Campos exclusivos do EDIT AI podem nao existir no documento reconstruido
   // pelo pipeline upstream. Aplicar uma camada nao pode apagar esses dados.
@@ -98,7 +136,7 @@ try {
   assert.deepEqual(ownFields.editAiRetention, previousWithEditAi.editAiRetention, 'EDIT AI retention data must survive style application');
   assert.deepEqual(ownFields.commercialCallouts, previousWithEditAi.commercialCallouts, 'EDIT AI commercial overlays must survive style application');
 
-  console.log('test:style-layers ok - isolated style application preserves unrelated and EDIT AI-only edit-data.');
+  console.log('test:style-layers ok - isolated style application preserves unrelated data and keeps caption/headline windows inside the current cut.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
