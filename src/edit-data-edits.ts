@@ -14,6 +14,13 @@ export type ManualTransform = { x?: number; y?: number; scale?: number; rotation
 
 export type EditOperation =
   | { op: 'set-divider'; index: number; divider: number }
+  // TELA DIVIDIDA CRIADA A PARTIR DE UMA MARCACAO In&Out. Ate aqui splits so
+  // nasciam quando o estilo "tela dividida" era aplicado na Fase 2 inteira —
+  // nao havia como pedir UM split num trecho. A faixa nasce VAZIA (src ""), o
+  // mesmo estado que o palco ja sabe mostrar como "Escolher midia…", e quem
+  // preenche depois e o set-split-src. `position: top` poe a midia na faixa
+  // curta de cima e o apresentador embaixo, que e o enquadramento de reacao.
+  | { op: 'add-split'; start: number; end: number; position?: 'top' | 'bottom' }
   | { op: 'move'; kind: OverlayKind; index: number; start: number }
   | { op: 'resize'; kind: OverlayKind; index: number; edge: 'start' | 'end'; time: number }
   // O gizmo do palco: pan/zoom/giro do elemento selecionado. Parcial — so os
@@ -144,6 +151,39 @@ export function applyEditOperation(
     const next = [...splits];
     next[operation.index] = { ...item, divider };
     return { ok: true, data: { ...data, splits: next }, changed: true };
+  }
+
+  if (operation.op === 'add-split') {
+    const start = Number(operation.start);
+    const end = Number(operation.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < MIN_WINDOW) {
+      return { ok: false, reason: 'a janela desta tela dividida é curta demais' };
+    }
+    if (start < 0 || (durationSec > 0 && end > durationSec + 0.001)) {
+      return { ok: false, reason: 'a janela desta tela dividida sai do vídeo' };
+    }
+    const splits = listOf(data, 'splits') ?? [];
+    // IDEMPOTENTE: ja havendo split que cobre este trecho, e nele que a midia
+    // entra. Dois splits sobrepostos deixariam a Fase 2 escolhendo um deles
+    // por ordem de array, que e o tipo de decisao que ninguem consegue prever.
+    const encostado = splits.some((item) => {
+      const inicio = Number(item.start);
+      const fim = Number.isFinite(Number(item.end)) ? Number(item.end) : inicio + Number(item.dur);
+      return Number.isFinite(inicio) && Number.isFinite(fim) && inicio < end && fim > start;
+    });
+    if (encostado) return { ok: true, data, changed: false };
+    const novo = {
+      kind: 'image' as const,
+      src: '',
+      start: round3(start),
+      end: round3(end),
+      position: operation.position ?? 'top',
+    };
+    return {
+      ok: true,
+      data: { ...data, splits: [...splits, novo].sort((a, b) => Number(a.start) - Number(b.start)) },
+      changed: true,
+    };
   }
 
   if (operation.op === 'set-split-src') {

@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const app=readFileSync('src/App.tsx','utf8');
+const main=readFileSync('src/main.ts','utf8');
+const preload=readFileSync('src/preload.ts','utf8');
+const shared=readFileSync('src/shared.ts','utf8');
+const edits=readFileSync('src/edit-data-edits.ts','utf8');
+assert.match(app,/useState<'correcao' \| 'imagem' \| 'video' \| 'arquivo'>\('correcao'\)/u);
+assert.match(app,/suggestMarkPrompt\(/u);
+assert.match(main,/async function generateAtMark\(/u);
+assert.match(main,/async function attachAtMark\(/u);
+assert.match(main,/async function suggestMediaPrompt\(/u);
+assert.match(main,/preview:generate-at-mark/u);
+assert.match(main,/preview:attach-at-mark/u);
+assert.match(preload,/generateAtMark/u);
+assert.match(shared,/generateAtMark/u);
+assert.match(edits,/op: 'add-split'/u);
+console.log('test:inout-media ok');

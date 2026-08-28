@@ -252,6 +252,34 @@ const cleanCutQaResponse = [
   'Aprova este corte? Depois da aprovação, posso avançar para os estilos.',
 ].join('\n');
 
+async function qaColocarNaMarcacao(
+  start: number,
+  end: number,
+  kind: 'image' | 'video',
+  destino: 'tela-cheia' | 'tela-dividida',
+): Promise<Record<string, unknown>> {
+  const src = kind === 'video' ? 'clipes/demo.mp4' : 'imagens/edvide_desktop_demo.png';
+  const base = qaLiveEditData ?? {};
+  if (destino === 'tela-dividida') {
+    const { applyEditOperations } = await import('./edit-data-edits');
+    const comSplit = applyEditOperations(base, [{ op: 'add-split', start, end, position: 'top' }]);
+    if (!comSplit.ok) throw new Error(comSplit.reason);
+    const splits = (comSplit.data.splits as Record<string, unknown>[]) ?? [];
+    const index = splits.findIndex((item) => Number(item.start) < end && Number(item.end) > start);
+    const preenchido = applyEditOperations(comSplit.data, [
+      { op: 'set-split-src', index, src, kind, fit: 'contain' },
+    ]);
+    if (!preenchido.ok) throw new Error(preenchido.reason);
+    qaLiveEditData = preenchido.data;
+  } else {
+    const inserts = Array.isArray(base.inserts) ? [...(base.inserts as Record<string, unknown>[])] : [];
+    inserts.push({ kind, src, start, end, fullscreen: true });
+    qaLiveEditData = { ...base, inserts: inserts.sort((a, b) => Number(a.start) - Number(b.start)) };
+  }
+  qaLiveEditado = true;
+  return qaLiveEditData;
+}
+
 export function createQaBrowserApi(): EdvidDesktopApi {
   return {
     getDesktopInfo: async () => ({
@@ -358,6 +386,27 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       qaLiveEditData = result.data;
       qaLiveEditado = true;
       return result.data;
+    },
+    // AS TRES ACOES DA MARCACAO na bancada: mesma forma do caminho real —
+    // insert de tela cheia, ou split criado e preenchido quando o destino e
+    // tela dividida.
+    generateAtMark: async (_directory, start, end, kind, prompt, destino) => {
+      if (!prompt.trim()) throw new Error('Escreva o que a IA deve criar neste trecho.');
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      if (/falhar/iu.test(prompt)) throw new Error('A IA não devolveu o arquivo deste trecho.');
+      return qaColocarNaMarcacao(start, end, kind === 'video' ? 'video' : 'image', destino);
+    },
+    attachAtMark: async (_directory, start, end, destino) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return qaColocarNaMarcacao(start, end, 'image', destino);
+    },
+    suggestMarkPrompt: async (_directory, _start, _end, kind) => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      return {
+        prompt: kind === 'video'
+          ? 'Slow push-in over a tidy desk with a laptop showing rising charts, warm light'
+          : 'Minimal illustration of a rising bar chart on a dark background',
+      };
     },
     // Sugestão do agente na bancada: espera curta e uma frase determinística.
     suggestSplitPrompt: async (_directory, _index, kind) => {

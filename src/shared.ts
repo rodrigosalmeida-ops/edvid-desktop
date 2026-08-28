@@ -510,6 +510,30 @@ export type EdvidDesktopApi = {
     index: number,
     kind: 'imagem' | 'video',
   ) => Promise<{ prompt: string }>;
+  // AS TRES ACOES DA MARCACAO In&Out. A janela vem da marcacao, e `destino`
+  // so e escolhido em projeto VERTICAL — no horizontal a tela dividida
+  // encolheria o quadro a toa e a entrega e sempre tela cheia. As tres
+  // devolvem o edit-data ja atualizado (ou null quando o aluno cancela).
+  generateAtMark: (
+    directory: string,
+    start: number,
+    end: number,
+    kind: 'imagem' | 'video',
+    prompt: string,
+    destino: 'tela-cheia' | 'tela-dividida',
+  ) => Promise<Record<string, unknown>>;
+  attachAtMark: (
+    directory: string,
+    start: number,
+    end: number,
+    destino: 'tela-cheia' | 'tela-dividida',
+  ) => Promise<Record<string, unknown> | null>;
+  suggestMarkPrompt: (
+    directory: string,
+    start: number,
+    end: number,
+    kind: 'imagem' | 'video',
+  ) => Promise<{ prompt: string }>;
   // Trilha sonora pedida pelo agente quando o aluno liga a música com IA.
   fulfillMusicRequests: (directory: string) => Promise<{ done: number; error?: string }>;
   onImageGenState: (listener: (state: ImageGenState) => void) => () => void;

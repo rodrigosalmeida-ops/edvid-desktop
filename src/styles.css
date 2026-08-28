@@ -294,11 +294,26 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .transport-play .icon { width: 13px; height: 13px; }
 .apply-corrections { height: 28px; padding: 0 9px; border: 1px solid rgba(255,119,19,.36); border-radius: 8px; color: #ffd1ae; background: rgba(255,119,19,.14); font-size: 7px; font-weight: 800; cursor: pointer; }
 .apply-corrections:hover:not(:disabled) { border-color: rgba(255,119,19,.58); background: rgba(255,119,19,.24); }
-.correction-note-popover { position: absolute; z-index: 20; top: 50%; left: 50%; width: min(360px, calc(100% - 28px)); padding: 13px; border: 1px solid rgba(9,181,183,.42); border-radius: 13px; background: rgba(12,18,23,.97); box-shadow: 0 22px 70px rgba(0,0,0,.55), 0 0 0 999px rgba(0,0,0,.3); transform: translate(-50%,-50%); }
+/* ANCORADO POR BAIXO, cresce para CIMA. Centrado ele ficava com 4px de
+   folga do fim da janela depois que a marcacao ganhou os tipos e o destino —
+   uma linha a mais, ou uma janela menor, e o botao de confirmar sairia da
+   tela. Para cima sobra o palco inteiro. */
+.correction-note-popover { position: absolute; z-index: 20; bottom: 10px; left: 50%; width: min(360px, calc(100% - 28px)); max-height: calc(100vh - 24px); overflow-y: auto; padding: 13px; border: 1px solid rgba(9,181,183,.42); border-radius: 13px; background: rgba(12,18,23,.97); box-shadow: 0 22px 70px rgba(0,0,0,.55), 0 0 0 999px rgba(0,0,0,.3); transform: translateX(-50%); }
 .correction-note-popover > strong { display: block; margin-top: 4px; color: #dbe8e9; font-family: ui-monospace, monospace; font-size: 9px; }
 .correction-note-popover textarea { width: 100%; margin-top: 10px; resize: vertical; padding: 9px; border: 1px solid var(--stroke); border-radius: 9px; outline: none; color: var(--text); background: rgba(0,0,0,.28); font-size: 8.5px; line-height: 1.5; user-select: text; }
 .correction-note-popover textarea:focus { border-color: rgba(9,181,183,.5); box-shadow: 0 0 0 3px rgba(9,181,183,.06); }
 .correction-note-popover > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 9px; }
+/* O QUE A MARCACAO VAI SER: correcao, imagem, clipe, arquivo — e, no
+   vertical, tela cheia ou dividida. Segmentado e nao dropdown porque sao
+   poucas opcoes e a escolha muda o resto do formulario na hora. A regra de
+   `> div` acima alinha a direita (e a linha dos botoes de acao); estes ficam
+   coladas a esquerda e ocupam a largura. */
+.correction-note-popover > .mark-kinds { justify-content: flex-start; gap: 4px; margin-top: 10px; }
+.correction-note-popover > .mark-kinds button { flex: 1 1 0; padding: 6px 4px; border: 1px solid var(--stroke); border-radius: 8px; color: var(--dim); background: rgba(0,0,0,.28); font-size: 8px; font-weight: 700; letter-spacing: .02em; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
+.correction-note-popover > .mark-kinds button:hover:not(:disabled) { color: var(--text); border-color: rgba(9,181,183,.4); }
+.correction-note-popover > .mark-kinds button.active { color: #061112; border-color: var(--teal); background: var(--teal); }
+.correction-note-popover > .mark-kinds button:disabled { opacity: .5; cursor: default; }
+.correction-note-popover .pick-media-hint { margin-top: 8px; }
 
 /* Style gate. */
 .style-workspace { height: 100%; min-height: 0; display: flex; flex-direction: column; }
