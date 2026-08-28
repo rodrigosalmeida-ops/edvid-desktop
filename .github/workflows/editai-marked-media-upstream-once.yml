@@ -1,0 +1,65 @@
+name: EDIT AI marked media upstream once
+
+on:
+  push:
+    branches:
+      - editai-marked-media-20260828
+    paths:
+      - .github/workflows/editai-marked-media-upstream-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: editai-marked-media-20260828
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Fetch upstream
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/fillrochaa/edvid-desktop.git || true
+          git fetch upstream b4ea2be74487439e42c41cfa685140bb1b7c54d3
+
+      - name: Probe upstream marked-media commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          for sha in 347605d6b4c1c2339b5beecce054ed8ec63a3b08 9726d948da32699e1fac37a3bbcd9901dcc70ae2 0efc510cf5d5ba0d90cfb38cbcc633039b021478; do
+            if ! git cherry-pick "$sha"; then
+              echo "CHERRY_PICK_FAILED=$sha"
+              git status --short
+              git diff --name-only --diff-filter=U
+              exit 1
+            fi
+          done
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify candidate
+        run: |
+          npm run typecheck
+          npm run verify:editai
+
+      - name: Remove probe workflow and push verified candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-marked-media-upstream-once.yml
+          git add -A
+          git commit -m "chore: remove one-shot marked-media probe"
+          git push origin HEAD:editai-marked-media-20260828
