@@ -269,21 +269,58 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
    dos dois únicos jeitos de mover a agulha; o outro é a régua. */
 .timeline-playhead::before { content: ''; position: absolute; top: -2px; left: -7px; width: 15px; height: 12px; border-radius: 3px 3px 6px 6px; background: var(--orange); pointer-events: auto; cursor: ew-resize; }
 .timeline-correction-range { position: absolute; top: 27px; bottom: 6px; left: var(--correction-left); width: max(4px, var(--correction-width)); z-index: 10; border-right: 1px solid rgba(9,181,183,.68); border-left: 1px solid rgba(9,181,183,.68); background: repeating-linear-gradient(135deg, rgba(9,181,183,.13) 0 5px, rgba(9,181,183,.035) 5px 10px); }
-.timeline-correction-range > span { position: absolute; top: 4px; left: 4px; min-width: 14px; height: 14px; display: grid; place-items: center; border-radius: 5px; color: #a8f2f3; background: rgba(7,43,46,.88); font-size: 6.5px; font-weight: 800; }
+.timeline-correction-range > span { position: absolute; top: 4px; left: 17px; min-width: 14px; height: 14px; display: grid; place-items: center; border-radius: 5px; color: #a8f2f3; background: rgba(7,43,46,.88); font-size: 6.5px; font-weight: 800; }
+/* Cabeças de bandeirinha nas pontas da marcação — o mesmo desenho do botão de
+   In/Out, para o trilho e a barra falarem a mesma língua. Ficam POR CIMA das
+   bordas laterais, que são as linhas do In e do Out. */
+.timeline-correction-range .range-flag { position: absolute; top: 3px; width: 13px; height: 13px; display: grid; place-items: center; border-radius: 4px; color: #b8ffff; background: rgba(7,55,58,.94); pointer-events: none; }
+.timeline-correction-range .range-flag .icon { width: 9px; height: 9px; }
+.timeline-correction-range .range-flag.in { left: -1px; }
+.timeline-correction-range .range-flag.out { right: -1px; }
+/* Marcação estreita não comporta as duas bandeirinhas mais o número: some com
+   o número, que é o menos útil dos três. */
+.timeline-correction-range { container-type: inline-size; }
+@container (max-width: 46px) { .timeline-correction-range > span { display: none; } }
 .delete-correction { position: absolute; top: 3px; right: 3px; width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid rgba(255,94,115,.38); border-radius: 6px; color: #ff9cab; background: rgba(35,8,13,.94); box-shadow: 0 5px 14px rgba(0,0,0,.32); cursor: pointer; opacity: 0; transform: translateY(-2px); pointer-events: auto; transition: opacity .12s, transform .12s, background .12s; }
 .timeline-correction-range:hover .delete-correction, .delete-correction:focus-visible { opacity: 1; transform: none; }
 .delete-correction:hover { color: #fff; background: rgba(151,34,53,.95); }
 .delete-correction .icon { width: 10px; height: 10px; }
 .timeline-in-marker { position: absolute; top: 27px; bottom: 6px; left: var(--marker-left); z-index: 9; width: 1px; background: #61e3e5; box-shadow: 0 0 9px rgba(9,181,183,.5); pointer-events: none; }
-.timeline-in-marker > span { position: absolute; top: 1px; left: 4px; padding: 2px 4px; border-radius: 4px; color: #b8ffff; background: rgba(7,55,58,.94); font-size: 5.8px; font-weight: 900; }
-.timeline-transport { min-height: 50px; flex: 0 0 50px; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 9px; padding: 7px 10px; border-top: 1px solid var(--stroke); background: linear-gradient(180deg, rgba(255,255,255,.018), rgba(4,7,10,.58)); }
-.marker-controls, .transport-center, .transport-right { display: flex; align-items: center; gap: 5px; }
-.marker-controls { min-width: 0; justify-self: start; }
+.timeline-in-marker > span { position: absolute; top: 1px; left: -1px; width: 13px; height: 13px; display: grid; place-items: center; border-radius: 4px; color: #b8ffff; background: rgba(7,55,58,.94); }
+.timeline-in-marker > span .icon { width: 9px; height: 9px; }
+.timeline-transport { container-type: inline-size; overflow-x: auto; scrollbar-width: none; min-height: 50px; flex: 0 0 50px; display: grid; grid-template-columns: minmax(max-content,1fr) auto minmax(max-content,1fr); align-items: center; gap: 9px; padding: 7px 10px; border-top: 1px solid var(--stroke); background: linear-gradient(180deg, rgba(255,255,255,.018), rgba(4,7,10,.58)); }
+/* A BARRA ENCAVALAVA quando o painel de estilos ficava largo — foi o print do
+   aluno. As três colunas são "1fr auto 1fr" e nada aqui encolhe: quando a
+   lateral direita passa da fatia dela, ela invade o centro em vez de sumir ou
+   rolar. Enxugar os botões (In e Out num só, sem "5s", velocidade num botão)
+   comprou espaço, mas não resolve sozinho — em painel estreito ainda falta.
+   Então o ZOOM cede o lugar, em dois passos: primeiro o número e o Fit,
+   depois o grupo inteiro. É o controle certo para ceder porque é o único
+   inteiramente alcançável sem ele: roda do mouse na régua, e as teclas −, +
+   e 0. Medido por CONTAINER e não por viewport: o que aperta esta barra é a
+   largura do painel de edição, não a da janela. */
+@container (max-width: 560px) {
+  .timeline-transport .timeline-zoom span, .timeline-transport .timeline-zoom .fit { display: none; }
+}
+@container (max-width: 470px) {
+  .timeline-transport .timeline-zoom { display: none; }
+}
+/* `min-width: max-content` e o CHAO: sem ele as colunas encolhem abaixo do
+   proprio conteudo e os grupos se sobrepoem em silencio, que era o defeito.
+   Com ele a grade estoura, e o estouro vira ROLAGEM na barra — pior que caber,
+   melhor que um botao por cima do outro. Na pratica a rolagem nunca aparece:
+   as consultas de container acima ja liberam espaco antes disso.
+   O par disto e o `minmax(max-content,1fr)` das colunas: com `minmax(0,1fr)`
+   a COLUNA encolhia abaixo do conteudo e o grupo transbordava para fora dela,
+   entao o min-width do item sozinho nao resolvia nada. */
+.marker-controls, .transport-center, .transport-right { display: flex; align-items: center; gap: 5px; min-width: max-content; }
+.marker-controls { justify-self: start; }
 .transport-center { justify-self: center; }
-.transport-right { min-width: 0; justify-self: end; }
+.transport-right { justify-self: end; }
 .marker-button { height: 26px; min-width: 30px; padding: 0 6px; border: 1px solid rgba(9,181,183,.22); border-radius: 7px; color: #6eaaad; background: rgba(9,181,183,.045); font-size: 6.5px; font-weight: 900; cursor: pointer; }
 .marker-button:hover:not(:disabled), .marker-button.active { color: #b8ffff; border-color: rgba(9,181,183,.55); background: rgba(9,181,183,.15); }
-.correction-count { overflow: hidden; color: #5e8588; font-size: 6.5px; text-overflow: ellipsis; white-space: nowrap; }
+/* .correction-count saiu: a contagem de marcações vivia aqui embaixo dizendo
+   o que a timeline logo acima já mostra, marcação por marcação e numerada. */
 .transport-button { height: 30px; min-width: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; padding: 0 7px; border: 1px solid rgba(255,255,255,.09); border-radius: 8px; color: #7e8995; background: rgba(255,255,255,.025); cursor: pointer; }
 .transport-button:hover:not(:disabled) { color: #72dadd; border-color: rgba(9,181,183,.3); background: rgba(9,181,183,.075); }
 .transport-button:disabled { opacity: .34; cursor: default; }
@@ -425,7 +462,6 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   .studio-grid { grid-template-columns: minmax(260px, .52fr) minmax(500px, 1.48fr); padding: 7px; }
   .editor-workspace.vertical { grid-template-columns: minmax(0,1fr) auto; }
   .edit-choice-grid { grid-template-columns: 1fr; }
-  .correction-count { display: none; }
 }
 
 /* Editor não destrutivo: seleção de clipes, trim, razor e prévia mapeada. */
@@ -442,6 +478,15 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .review-speed button:hover:not(:disabled) { color: #72dadd; border-color: rgba(9,181,183,.3); }
 .review-speed button:disabled { opacity: .34; cursor: default; }
 .review-speed span { min-width: 26px; color: #5f6875; font-family: ui-monospace, monospace; font-size: 6.5px; text-align: center; }
+/* Velocidade da revisão: mesmo desenho do zoom (é o mesmo gesto — menos/mais
+   em passos discretos), separada dos saltos de 5s por uma folga. */
+/* Duas ações lado a lado numa linha de Configurações (copiar / salvar). */
+.settings-actions { display: flex; gap: 6px; align-items: center; }
+/* Avançar e retroceder perderam o texto "5s" (agora andam de cena em cena) e
+   com isso podem ser estreitos: sobra espaço numa barra que estava
+   encavalando. A velocidade virou um botão único que cicla. */
+.transport-button.step { width: 28px; min-width: 28px; padding: 0; }
+.transport-button.rate { min-width: 34px; padding: 0 7px; margin-left: 8px; font-size: 8px; font-weight: 800; font-variant-numeric: tabular-nums; }
 /* Classe propria para o rotulo: uma regra generica em .timeline-clip > span
    atropelava o position/z-index das alcas de trim (.clip-handle) e o arrasto
    parava de funcionar. */
@@ -458,7 +503,12 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
 .clip-handle.left::after { left: 2px; }
 .clip-handle.right::after { right: 2px; }
 .clip-handle:hover { background: rgba(255,119,19,.28); }
-.marker-button.razor .icon { width: 11px; height: 11px; }
+/* Ícone CENTRADO no botão. O `min-width` mais o padding do .marker-button
+   foram desenhados para as palavras IN e OUT; com um ícone dentro, o glifo
+   ficava fora do centro — foi o desalinhamento relatado. Botão de ícone é
+   quadrado e centra pelo grid, sem padding lateral. */
+.marker-button.razor, .marker-button.flag { width: 30px; min-width: 30px; padding: 0; display: grid; place-items: center; }
+.marker-button.razor .icon, .marker-button.flag .icon { width: 12px; height: 12px; }
 .marker-button:disabled { opacity: .34; cursor: default; }
 .discard-edits { height: 28px; padding: 0 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; color: #8b95a1; background: rgba(255,255,255,.03); font-size: 7px; font-weight: 700; cursor: pointer; }
 .discard-edits:hover { color: #c7ced6; border-color: rgba(255,255,255,.22); }

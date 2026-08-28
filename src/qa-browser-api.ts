@@ -774,6 +774,19 @@ export function createQaBrowserApi(): EdvidDesktopApi {
       });
       return qaCatalog;
     },
+    // No banco de testes o Reconectar sempre acha o catalogo inteiro: o que
+    // importa provar aqui e o caminho da interface, nao a leitura do hub.
+    reconnectHub: async (hub) => {
+      emitCatalog({
+        ...qaCatalog,
+        connections: qaCatalog.connections.map((item) => (
+          item.id === hub ? { ...item, connected: true } : item
+        )),
+      });
+      return qaCatalog;
+    },
+    // No banco de testes a sessão está sempre saudável.
+    checkHubs: async () => [{ id: 'higgsfield', nome: 'Higgsfield', modelos: { imagem: 33, video: 37 }, conta: { plano: 'ultimate', creditos: 906 } }],
     disconnectHub: async (hub) => {
       emitCatalog({
         ...qaCatalog,

@@ -568,6 +568,40 @@ export function snapTime(target: number, candidates: readonly number[], threshol
 // Reprodução mapeada: programa de segmentos de vídeo em ordem de timeline.
 // ---------------------------------------------------------------------------
 
+// A CENA VIZINHA, para os botoes de avancar e retroceder.
+//
+// Pular 5 segundos e uma medida que nao quer dizer nada dentro de um corte: em
+// material limpo, 5s pode ser meia cena ou tres. O que o aluno quer alcancar e
+// a EMENDA — o comeco da proxima tomada, ou o da atual.
+//
+// Para tras vale a regra de mesa de edicao: primeiro volta para o comeco da
+// cena em que a agulha esta; so quando ela JA esta no comeco e que pula para a
+// cena anterior. Sem essa folga, um clique com a agulha a um quadro do corte
+// pularia a cena inteira e o aluno perderia o lugar. O LIMIAR e generoso de
+// proposito (um terco de segundo): quem clica "voltar" logo depois de um corte
+// quase sempre quer rever a cena atual desde o inicio.
+const LIMIAR_DE_CENA = 0.34;
+
+export function cenaVizinha(
+  programme: readonly PlaybackSegment[],
+  tempo: number,
+  direcao: 1 | -1,
+): number | null {
+  if (!programme.length) return null;
+  const inicios = programme.map((segmento) => segmento.timelineStart).sort((a, b) => a - b);
+  if (direcao > 0) {
+    const proximo = inicios.find((inicio) => inicio > tempo + TIME_EPSILON);
+    if (proximo !== undefined) return proximo;
+    // Ja na ultima cena: leva ao fim dela, que e o fim do que ha para ver.
+    const fim = Math.max(...programme.map((segmento) => segmento.timelineEnd));
+    return fim > tempo + TIME_EPSILON ? fim : null;
+  }
+  const anteriores = inicios.filter((inicio) => inicio < tempo - LIMIAR_DE_CENA);
+  if (anteriores.length) return anteriores[anteriores.length - 1];
+  // Antes da primeira emenda so existe o comeco.
+  return tempo > TIME_EPSILON ? 0 : null;
+}
+
 export function playbackProgramme(model: TimelineModel): PlaybackSegment[] {
   return sortedTrackClips(model, VIDEO_TRACK_ID)
     .filter((clip) => clip.enabled && clipDuration(clip) > TIME_EPSILON)
