@@ -1,0 +1,40 @@
+name: EDIT AI style layer apply once
+
+on:
+  push:
+    branches: [editai-style-layer-apply-20260828]
+    paths: [.github/workflows/editai-style-layer-apply-once.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: editai-style-layer-apply-20260828
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: python scripts/patch-style-layer-apply.py
+      - run: npm ci
+      - run: |
+          npm run typecheck
+          npm run test:style-layers
+          npm run test:style-layer-integration
+          npm run test:phase2-data
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/editai-style-layer-apply-once.yml
+          rm -f .github/workflows/editai-style-layer-apply-once-v2.yml
+          rm -f scripts/patch-style-layer-apply.py
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(styles): apply EDIT AI styles by layer"
+          git push origin HEAD:editai-style-layer-apply-20260828
