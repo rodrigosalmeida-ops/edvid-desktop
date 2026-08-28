@@ -3480,6 +3480,7 @@ async function writeEditData(
 async function buildPhase2(
   projectDirectory: string,
   style: ProjectStyleState,
+  layers: readonly StyleLayer[] = STYLE_LAYERS,
 ): Promise<{ splits: number; flashes: number }> {
   // buildPhase2 tambem e chamado por fluxos headless/E2E, que nao passam pela
   // tela de estilos responsavel por aquecer o Remotion. Montar o scaffold antes
@@ -3610,7 +3611,7 @@ async function buildPhase2(
     .catch(() => [] as PlanSegment[]);
   return writeEditData(publicDirectory, style, {
     width, height, fps, durationSec, opening: openingLine(captions), segments,
-  });
+  }, layers);
 }
 
 // Duracao em segundos pelo ffprobe do pacote. Precisa do total original para
@@ -6007,13 +6008,17 @@ function registerIpcHandlers(): void {
 
   // Monta a Fase 2 INTEIRA a partir do formulario de estilos: copia o corte,
   // mede o arquivo, gera legenda e segmentos e escreve os dados da edicao.
-  ipcMain.handle('phase2:build', async (_event, input: { directory?: string; style?: ProjectStyleState }) => {
+  ipcMain.handle('phase2:build', async (_event, input: { directory?: string; style?: ProjectStyleState; layers?: unknown }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(requestedDirectory)) {
       throw new Error('Abra o projeto antes de aplicar os estilos.');
     }
     if (!input.style) throw new Error('Escolha os estilos antes de aplicar.');
-    return buildPhase2(requestedDirectory, input.style);
+    const requestedLayers = Array.isArray(input.layers)
+      ? input.layers.filter((layer): layer is StyleLayer => typeof layer === 'string' && (STYLE_LAYERS as readonly string[]).includes(layer))
+      : STYLE_LAYERS;
+    if (requestedLayers.length === 0) throw new Error('Escolha uma camada de estilo válida para aplicar.');
+    return buildPhase2(requestedDirectory, input.style, requestedLayers);
   });
 
   ipcMain.handle('cleancut:run', (_event, input: { directory?: string }) => {
