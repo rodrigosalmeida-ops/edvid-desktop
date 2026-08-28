@@ -2485,7 +2485,7 @@ function EditorWorkspace({
     // Antes daqui, marcação ainda sendo escrita ficava de fora do lote e
     // sobrava na timeline sem aviso — o aluno marcava cinco, aplicava, e via
     // dois clipes nascerem. E quando NENHUMA tinha voltado ainda, o clique
-    // era recusado com "espere o Edvid terminar", que é devolver o trabalho
+    // era recusado com "espere o EDIT AI terminar", que é devolver o trabalho
     // para quem pediu. Os dois sintomas eram a mesma coisa.
     const emVoo = corrections
       .filter((item) => item.escrevendo)
@@ -2511,7 +2511,7 @@ function EditorWorkspace({
     const midia = prontas.filter(ehMarcacaoDeMidia);
     const correcoes = prontas.filter((item) => !ehMarcacaoDeMidia(item));
     if (!midia.length && !correcoes.length) {
-      notify('erro', 'Ainda escrevendo os prompts', 'Espere o Edvid terminar e aplique de novo.');
+      notify('erro', 'Ainda escrevendo os prompts', 'Espere o EDIT AI terminar e aplique de novo.');
       return;
     }
     let falharam: CorrectionRange[] = [];
@@ -3764,7 +3764,7 @@ function EditorWorkspace({
           };
           // GERAR É DECISÃO FINAL: o modal fecha na hora e a escrita do prompt
           // continua em segundo plano. Prender o aluno olhando um spinner por
-          // 17s (a latência medida do Edvid) para depois ele só confirmar era
+          // 17s (a latência medida do EDIT AI) para depois ele só confirmar era
           // tempo parado à toa — nesse intervalo ele já pode marcar o próximo
           // trecho. A marcação entra na timeline com o rótulo provisório e
           // ganha o prompt quando ele chega.
