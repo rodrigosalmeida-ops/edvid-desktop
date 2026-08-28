@@ -40,6 +40,7 @@ import {
   type ImageUse,
 } from './image-format';
 import { applyEditOperations, type EditOperation } from './edit-data-edits';
+import { colocacaoPara, type MediaRequest, parseMediaRequests } from './media-request';
 import {
   planejarProxy,
   precisaProxy,
@@ -4782,8 +4783,6 @@ function broadcastImageGenState(state: ImageGenState): void {
   }
 }
 
-type ImageRequestEntry = { arquivo: string; prompt: string; uso: ImageUse | null };
-
 // ChatGPT conectado por CHAVE tambem gera imagem — pela API de imagens da
 // OpenAI (gpt-image-2, pago por imagem), chamada direta do app. A chave vive
 // no auth.json que o proprio app-server guarda no CODEX_HOME do EDIT AI.
@@ -4870,30 +4869,12 @@ async function ingestClip(source: string, target: string): Promise<void> {
 // Mesmo contrato das imagens: o agente escreve edit/clipes/pedidos.json com o
 // QUE quer, e o EDIT AI resolve o COMO — modelo, proporcao, duracao, silencio e
 // arquivo no lugar. Ver mcp-hub.ts para por que isto nao mora no agente.
-type VideoRequestEntry = { arquivo: string; prompt: string; uso: ImageUse | null; segundos: number };
-
-async function readVideoRequests(projectDirectory: string): Promise<VideoRequestEntry[]> {
+async function readVideoRequests(projectDirectory: string): Promise<MediaRequest[]> {
   try {
-    const parsed = JSON.parse(
-      await readFile(path.join(projectDirectory, 'edit', 'clipes', 'pedidos.json'), 'utf8'),
-    ) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((entry) => {
-      const item = entry as { arquivo?: unknown; prompt?: unknown; uso?: unknown; segundos?: unknown; duracao?: unknown };
-      const prompt = asText(item.prompt).trim();
-      let arquivo = path.basename(asText(item.arquivo).trim());
-      if (!prompt || !arquivo || arquivo.startsWith('.')) return [];
-      if (!/\.(mp4|mov|webm)$/iu.test(arquivo)) arquivo = `${arquivo}.mp4`;
-      const segundos = Number(item.segundos ?? item.duracao);
-      return [{
-        arquivo,
-        prompt,
-        uso: imageUse(asText(item.uso)),
-        // Sem duracao declarada, o padrao e o que a maioria dos b-rolls do
-        // EDIT AI ocupa: um trecho curto atras da legenda.
-        segundos: Number.isFinite(segundos) && segundos > 0 ? segundos : 4,
-      }];
-    });
+    return parseMediaRequests(
+      JSON.parse(await readFile(path.join(projectDirectory, 'edit', 'clipes', 'pedidos.json'), 'utf8')),
+      'video',
+    );
   } catch {
     return [];
   }
@@ -4907,17 +4888,20 @@ function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> 
     const requests = await readVideoRequests(projectDirectory);
     if (!requests.length) return { status: 'idle' };
 
-    const pending: VideoRequestEntry[] = [];
+    const pending: MediaRequest[] = [];
+    let placed = 0;
     for (const request of requests) {
       try {
         await stat(path.join(clipsDirectory, request.arquivo));
+        if (request.janela && await placeGeneratedMedia(projectDirectory, request, 'clipes').catch(() => false)) placed += 1;
       } catch {
         pending.push(request);
       }
     }
     if (!pending.length) {
       await rm(requestsFile, { force: true });
-      return { status: 'idle' };
+      if (placed > 0) broadcastCodexEvent({ type: 'workspace-refresh' });
+      return placed > 0 ? { status: 'ready', total: placed, done: placed, placed, kind: 'video' } : { status: 'idle' };
     }
 
     const hubId = hubForRole('video');
@@ -4977,6 +4961,7 @@ function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> 
           await downloadTo(result.url, temporary);
           await ingestClip(temporary, path.join(clipsDirectory, request.arquivo));
           done += 1;
+          if (request.janela && await placeGeneratedMedia(projectDirectory, request, 'clipes').catch(() => false)) placed += 1;
         } catch (error) {
           await rm(temporary, { force: true });
           failures.push(`${request.arquivo}: ${error instanceof Error ? error.message : String(error)}`);
@@ -5018,24 +5003,12 @@ function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> 
   return tracked;
 }
 
-async function readImageRequests(projectDirectory: string): Promise<ImageRequestEntry[]> {
+async function readImageRequests(projectDirectory: string): Promise<MediaRequest[]> {
   try {
-    const parsed = JSON.parse(
-      await readFile(path.join(projectDirectory, 'edit', 'imagens', 'pedidos.json'), 'utf8'),
-    ) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((entry) => {
-      const item = entry as { arquivo?: unknown; prompt?: unknown; uso?: unknown; proporcao?: unknown };
-      const prompt = asText(item.prompt).trim();
-      // Nome sempre achatado para dentro de edit/imagens (nada de ../).
-      let arquivo = path.basename(asText(item.arquivo).trim());
-      if (!prompt || !arquivo || arquivo.startsWith('.')) return [];
-      if (!/\.(png|jpg|jpeg|webp)$/iu.test(arquivo)) arquivo = `${arquivo}.png`;
-      // "uso" e o campo novo; "proporcao" continua aceito porque pedidos.json
-      // de sessoes anteriores vem com ele.
-      const uso = imageUse(asText(item.uso) || asText(item.proporcao));
-      return [{ arquivo, prompt, uso }];
-    });
+    return parseMediaRequests(
+      JSON.parse(await readFile(path.join(projectDirectory, 'edit', 'imagens', 'pedidos.json'), 'utf8')),
+      'imagem',
+    );
   } catch {
     return [];
   }
@@ -5047,8 +5020,8 @@ async function fulfillImagesFromHub(
   hubId: GenerationHub,
   imagesDirectory: string,
   requestsFile: string,
-  requests: readonly ImageRequestEntry[],
-  pending: readonly ImageRequestEntry[],
+  requests: readonly MediaRequest[],
+  pending: readonly MediaRequest[],
 ): Promise<ImageGenState> {
   const tier = tierFrom(aiRoles.tiers.imagem, 'imagem');
   const generator = hubGeneration(hubId);
@@ -5136,17 +5109,20 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
     const requests = await readImageRequests(projectDirectory);
     if (!requests.length) return imageGenState.status === 'generating' ? imageGenState : { status: 'idle' };
 
-    const pending = [] as ImageRequestEntry[];
+    const pending = [] as MediaRequest[];
+    let placed = 0;
     for (const request of requests) {
       try {
         await stat(path.join(imagesDirectory, request.arquivo));
+        if (request.janela && await placeGeneratedMedia(projectDirectory, request, 'imagens').catch(() => false)) placed += 1;
       } catch {
         pending.push(request);
       }
     }
     if (!pending.length) {
       await rm(requestsFile, { force: true });
-      return { status: 'idle' };
+      if (placed > 0) broadcastCodexEvent({ type: 'workspace-refresh' });
+      return placed > 0 ? { status: 'ready', total: placed, done: placed, placed, kind: 'imagem' } : { status: 'idle' };
     }
 
     // HUB primeiro. Este ramo NAO EXISTIA: `aiRoles.imageCatalog` era gravado,
@@ -5222,6 +5198,7 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
           }
         }
         done += 1;
+        if (request.janela && await placeGeneratedMedia(projectDirectory, request, 'imagens').catch(() => false)) placed += 1;
         broadcastImageGenState({ status: 'generating', total: pending.length, done });
       } catch (error) {
         failures.push(`${request.arquivo}: ${error instanceof Error ? error.message : String(error)}`);
@@ -5257,6 +5234,43 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
   });
   imageGenJob = { directory: projectDirectory, promise: tracked };
   return tracked;
+}
+
+// O aplicativo coloca sozinho a midia cujo pedido trouxe a janela In/Out.
+// Repetir o fulfill nao duplica: mesma fonte + mesmo inicio e idempotente.
+async function placeGeneratedMedia(
+  projectDirectory: string,
+  request: MediaRequest,
+  pasta: 'clipes' | 'imagens',
+): Promise<boolean> {
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const file = path.join(publicDirectory, 'edit-data.json');
+  let data: Record<string, unknown>;
+  try { data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>; }
+  catch { return false; }
+  const splits = Array.isArray(data.splits) ? data.splits : [];
+  const placement = colocacaoPara(request, pasta, splits);
+  if (!placement) return false;
+  const destination = path.join(publicDirectory, pasta, request.arquivo);
+  if (!(await statOf(destination))) {
+    await mkdir(path.join(publicDirectory, pasta), { recursive: true });
+    await copyFile(path.join(projectDirectory, 'edit', pasta, request.arquivo), destination);
+  }
+  let updated: Record<string, unknown>;
+  if (placement.tipo === 'faixa') {
+    const result = applyEditOperations(data, [{ op: 'set-split-src', index: placement.index, src: placement.src, kind: placement.kind, fit: 'contain' }]);
+    if (!result.ok) return false;
+    updated = result.data;
+  } else {
+    const inserts = Array.isArray(data.inserts) ? [...data.inserts] as Record<string, unknown>[] : [];
+    if (inserts.some((item) => item.src === placement.src && Math.abs(Number(item.start) - placement.start) < 0.01)) return true;
+    inserts.push({ kind: placement.kind, src: placement.src, start: placement.start, end: placement.end, ...(placement.fullscreen ? { fullscreen: true } : {}) });
+    updated = { ...data, inserts: inserts.sort((a, b) => Number(a.start) - Number(b.start)) };
+  }
+  const temporary = `${file}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`);
+  await rename(temporary, file);
+  return true;
 }
 
 // --- A MIDIA DE UM ESPACO DA TELA DIVIDIDA ----------------------------------
