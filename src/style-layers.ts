@@ -20,6 +20,43 @@ const ACCENT_LAYERS: readonly StyleLayer[] = ['texto', 'legendas'];
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+const finitePositive = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+function normalizeTimelineWindows(
+  document: Record<string, unknown>,
+  layers: readonly StyleLayer[],
+): void {
+  const durationSec = finitePositive(document.durationSec);
+  if (!durationSec) return;
+  const roundedDuration = Number(durationSec.toFixed(3));
+
+  // Aplicar a camada de legendas e uma nova afirmacao sobre a camada. O
+  // comportamento padrao e acompanhar o corte atual inteiro; herdar start/end
+  // de um corte anterior faz a legenda morrer antes do fim do video.
+  if (layers.includes('legendas') && isObject(document.captions)) {
+    document.captions = {
+      ...document.captions,
+      startSec: 0,
+      endSec: roundedDuration,
+    };
+  }
+
+  // Qualquer janela herdada que ultrapasse a duracao atual e invalida depois
+  // de um novo corte. Aparar aqui protege tanto legenda quanto headline sem
+  // interferir em trims manuais que continuam dentro do video.
+  for (const key of ['captions', 'hook'] as const) {
+    const block = document[key];
+    if (!isObject(block)) continue;
+    const endSec = Number(block.endSec);
+    if (Number.isFinite(endSec) && endSec > durationSec + 0.05) {
+      document[key] = { ...block, endSec: roundedDuration };
+    }
+  }
+}
+
 export function mergeStyleLayers(input: {
   previous: Record<string, unknown>;
   next: Record<string, unknown>;
@@ -57,6 +94,7 @@ export function mergeStyleLayers(input: {
     }
   }
 
+  normalizeTimelineWindows(output, layers);
   return output;
 }
 
