@@ -59,11 +59,15 @@ try {
   execFileSync(process.execPath, [
     path.join(projectRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
     path.join(projectRoot, 'src', 'codec-support.ts'),
+    path.join(projectRoot, 'src', 'remotion-ffmpeg.ts'),
     '--target', 'es2022', '--module', 'es2022', '--moduleResolution', 'bundler',
     '--skipLibCheck', '--outDir', outDir,
   ], { stdio: 'inherit' });
   const { precisaDeOutroFfmpeg, avisoDeCodecSemLeitor } =
     await import(pathToFileURL(path.join(outDir, 'codec-support.js')).href);
+  const { remotionFfmpegCandidate } =
+    await import(pathToFileURL(path.join(outDir, 'remotion-ffmpeg.js')).href);
+
   assert.equal(precisaDeOutroFfmpeg('av1'), true);
   assert.equal(precisaDeOutroFfmpeg('AV1'), true);
   for (const codec of ['h264', 'hevc', 'vp9', 'prores', 'mpeg4', '']) {
@@ -74,7 +78,19 @@ try {
   assert.ok(aviso.includes('zoom.mp4') && aviso.includes('AV1'));
   assert.match(aviso, /motor de render do EDIT AI/u);
 
-  console.log('test:media-vision ok — visão, cache e fallback AV1 classificados.');
+  const win = remotionFfmpegCandidate('C:\\EDIT-AI\\runtime\\remotion', 'win32', 'x64');
+  assert.match(win.command.replaceAll('\\', '/'), /@remotion\/compositor-win32-x64\/ffmpeg\.exe$/u);
+  assert.deepEqual(win.env, {}, 'Windows resolve DLLs ao lado do executável');
+
+  const mac = remotionFfmpegCandidate('/tmp/remotion', 'darwin', 'arm64');
+  assert.match(mac.command, /@remotion\/compositor-darwin-arm64\/ffmpeg$/u);
+  assert.equal(mac.env.DYLD_LIBRARY_PATH, mac.libraryDirectory);
+
+  const linux = remotionFfmpegCandidate('/tmp/remotion', 'linux', 'x64');
+  assert.match(linux.command, /@remotion\/compositor-linux-x64\/ffmpeg$/u);
+  assert.equal(linux.env.LD_LIBRARY_PATH, linux.libraryDirectory);
+
+  console.log('test:media-vision ok — visão, cache, AV1 e runtime Remotion classificados.');
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
