@@ -1,0 +1,86 @@
+name: EDIT AI fullscreen broll once
+
+on:
+  push:
+    branches:
+      - editai-fullscreen-broll-20260828
+    paths:
+      - .github/workflows/editai-fullscreen-broll-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: editai-fullscreen-broll-20260828
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply narrow upstream broll patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/fillrochaa/edvid-desktop.git 3c509e56911170bf757d4c1fed181eebdffa5437^ 3c509e56911170bf757d4c1fed181eebdffa5437
+          git diff FETCH_HEAD^ FETCH_HEAD -- resources/remotion-template/src/Main.tsx src/edit-data-edits.ts > "$RUNNER_TEMP/broll.patch"
+          if ! git apply --3way "$RUNNER_TEMP/broll.patch"; then
+            echo 'Narrow B-roll patch conflicts with current EDIT AI template; refusing unsafe replacement.' >&2
+            git status --short >&2
+            exit 1
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          for file in ['resources/remotion-template/src/Main.tsx','src/edit-data-edits.ts']:
+              p=Path(file)
+              p.write_text(p.read_text(encoding='utf-8').replace('Edvid','EDIT AI'),encoding='utf-8')
+          PY
+          cat > scripts/test-fullscreen-broll.mjs <<'EOF'
+          import assert from 'node:assert/strict';
+          import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { pathToFileURL } from 'node:url';
+          import { buildSync } from 'esbuild';
+          const root=process.cwd();
+          const template=readFileSync(path.join(root,'resources','remotion-template','src','Main.tsx'),'utf8');
+          assert.match(template,/fullscreen\?: boolean/u,'Insert exposes fullscreen flag');
+          assert.match(template,/const InsertFullscreen/u,'template has fullscreen renderer');
+          assert.match(template,/it\.fullscreen[\s\S]{0,240}?<InsertFullscreen/u,'inserts route fullscreen media to fullscreen renderer');
+          const temp=mkdtempSync(path.join(os.tmpdir(),'editai-broll-'));
+          try {
+            const out=path.join(temp,'edit-data-edits.mjs');
+            buildSync({entryPoints:[path.join(root,'src','edit-data-edits.ts')],bundle:true,platform:'node',format:'esm',outfile:out});
+            const {normalizeGeneratedMedia}=await import(`${pathToFileURL(out).href}?v=${Date.now()}`);
+            assert.equal(typeof normalizeGeneratedMedia,'function');
+            const data={durationSec:90,inserts:[],animations:[{start:35.4,end:40.5,kind:'custom',src:'clipes/broll.mp4'}]};
+            const fixed=normalizeGeneratedMedia(data);
+            assert.deepEqual(fixed.moved,['clipes/broll.mp4']);
+            assert.equal(fixed.data.animations.length,0);
+            assert.equal(fixed.data.inserts[0].fullscreen,true);
+            assert.equal(fixed.data.inserts[0].kind,'video');
+          } finally { rmSync(temp,{recursive:true,force:true}); }
+          console.log('test:fullscreen-broll ok');
+          EOF
+      - run: npm ci
+      - name: Verify fullscreen B-roll
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          node scripts/test-fullscreen-broll.mjs
+          npm run test:split-layout
+      - name: Commit verified block
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-fullscreen-broll-once.yml
+          git config user.name editai-ci
+          git config user.email actions@users.noreply.github.com
+          git add resources/remotion-template/src/Main.tsx src/edit-data-edits.ts scripts/test-fullscreen-broll.mjs .github/workflows/editai-fullscreen-broll-once.yml
+          git commit -m "feat(media): render generated broll fullscreen"
+          git push origin HEAD:editai-fullscreen-broll-20260828
