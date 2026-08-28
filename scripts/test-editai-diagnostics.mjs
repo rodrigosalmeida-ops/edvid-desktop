@@ -86,16 +86,28 @@ try {
     'edit-ai-diagnostico-1.0.0-editai.2-2026-08-27T17-05-06-123.md',
   );
 
-  // O QA fat embute perto de 1 GB de runtimes. O cold-start do Windows 2025
-  // ja ultrapassou 120 s mesmo com verify:editai verde; esse contrato impede
-  // reintroduzir um timeout que mede o I/O do runner em vez do aplicativo.
+  // O smoke de boot deve usar o pacote THIN. O pacote fat (~894 MB) e
+  // preservado como artefato, mas seus runtimes sao exercitados depois no app
+  // instalado e no E2E real, evitando medir antivirus/I/O como se fosse boot.
   const smokeScript = readFileSync(path.join(root, 'scripts', 'editai-smoke-windows.ps1'), 'utf8');
   const timeout = /\[int\]\$TimeoutSeconds\s*=\s*(\d+)/u.exec(smokeScript);
   assert.ok(timeout, 'smoke Windows precisa declarar TimeoutSeconds');
-  assert.ok(Number(timeout[1]) >= 240, 'smoke do pacote fat precisa tolerar cold-start de pelo menos 240 s');
-  assert.match(smokeScript, /Smoke test excedeu \$\{TimeoutSeconds\}s\./u);
+  assert.ok(Number(timeout[1]) >= 240, 'smoke runtime precisa manter margem para Windows frio');
+  assert.match(smokeScript, /\[switch\]\$BootOnly/u);
+  assert.match(smokeScript, /--editai-smoke-boot-only/u);
 
-  console.log('test:editai-diagnostics ok — diagnóstico seguro e timeout do smoke fat protegidos.');
+  const buildScript = readFileSync(path.join(root, 'scripts', 'editai-build-windows.ps1'), 'utf8');
+  assert.doesNotMatch(buildScript, /9\/12 smoke do pacote fat/u);
+  const workflow = readFileSync(path.join(root, '.github', 'workflows', 'editai-rc2-windows.yml'), 'utf8');
+  assert.match(workflow, /out\\EDIT AI-win32-x64\\EDIT AI\.exe.*-BootOnly/u);
+  assert.doesNotMatch(workflow, /Smoke packaged EDIT AI executable[\s\S]{0,250}?EDIT AI-fat-win32-x64/u);
+
+  const mainSource = readFileSync(path.join(root, 'src', 'main.ts'), 'utf8');
+  const splitPromptHandlers = mainSource.match(/ipcMain\.handle\('preview:suggest-split-prompt'/gu) ?? [];
+  assert.equal(splitPromptHandlers.length, 1, 'preview:suggest-split-prompt deve ser registrado uma unica vez');
+  assert.match(mainSource, /--editai-smoke-boot-only/u);
+
+  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin e IPC unico protegidos.');
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

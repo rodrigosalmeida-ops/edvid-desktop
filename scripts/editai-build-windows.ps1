@@ -84,9 +84,7 @@ Write-Host '[EDIT AI] 8/12 gerando pacote QA fat para smoke de runtimes'
 Invoke-Checked 'electron-forge package fat' { npx --yes --package=node@22.23.2 -c "electron-forge package --platform=win32 --arch=x64" }
 
 if ($Mode -eq 'qa') {
-  Write-Host '[EDIT AI] 9/12 smoke do pacote fat antes do instalador thin'
-  & powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1
-  if ($LASTEXITCODE -ne 0) { throw 'Smoke test do executavel empacotado falhou.' }
+  Write-Host '[EDIT AI] 9/12 validando FFmpeg/FFprobe staged antes do instalador thin'
   & powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1
   if ($LASTEXITCODE -ne 0) { throw 'Media smoke FFmpeg/FFprobe falhou.' }
 }

@@ -73,9 +73,9 @@ jobs:
         shell: powershell
         run: npm run build:editai:win:qa
 
-      - name: Smoke packaged EDIT AI executable
+      - name: Smoke packaged thin EDIT AI executable
         shell: powershell
-        run: npm run smoke:editai:win -- -ExecutablePath "out\EDIT AI-fat-win32-x64\EDIT AI.exe"
+        run: npm run smoke:editai:win -- -ExecutablePath "out\EDIT AI-win32-x64\EDIT AI.exe" -BootOnly
 
       - name: Media smoke with bundled EDIT AI FFmpeg
         shell: powershell
