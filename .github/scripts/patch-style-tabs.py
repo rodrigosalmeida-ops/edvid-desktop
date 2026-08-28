@@ -51,7 +51,7 @@ contextual = '''        <div className="apply-style-layers contextual" aria-labe
 text = text[:start] + contextual + text[end:]
 app.write_text(text, encoding='utf-8')
 
-css = Path('src/index.css')
+css = Path('src/styles.css')
 css_text = css.read_text(encoding='utf-8')
 marker = '/* EDIT AI style-layer tabs parity */'
 if marker not in css_text:
@@ -71,7 +71,7 @@ css.write_text(css_text, encoding='utf-8')
 Path('scripts/test-style-tabs.mjs').write_text("""import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 assert.match(app, /useState<StyleLayer>\\('efeitos'\\)/u);
 assert.match(app, /style-layer-tabs[\\s\\S]{0,1000}?STYLE_LAYER_LABEL\\[layer\\]/u);
 assert.match(app, /onApply\\(activeLayer\\)/u);
