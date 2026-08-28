@@ -46,7 +46,6 @@ jobs:
             git diff --name-only --diff-filter=U > merge-evidence/conflicts.txt
             git diff --cc > merge-evidence/conflicts.diff || true
 
-            # Marca/versao do EDIT AI sempre vencem o upstream.
             for file in agent.md package.json; do
               if git ls-files -u -- "$file" | grep -q .; then
                 git checkout --ours -- "$file"
@@ -54,10 +53,6 @@ jobs:
               fi
             done
 
-            # Nos arquivos de infraestrutura, os conflitos desta versao sao
-            # majoritariamente adicoes em regioes que o EDIT AI tambem tocou.
-            # Merge union preserva os dois lados; typecheck/testes abaixo sao o
-            # gate antes de qualquer push.
             for file in src/main.ts src/qa-browser-api.ts src/shared.ts src/styles.css src/App.tsx; do
               if git ls-files -u -- "$file" | grep -q .; then
                 git show ":1:$file" > /tmp/base || true
@@ -71,7 +66,6 @@ jobs:
 
             if git diff --name-only --diff-filter=U | grep -q .; then
               git diff --name-only --diff-filter=U > merge-evidence/unresolved.txt
-              echo "Ainda existem conflitos nao resolvidos."
               exit 1
             fi
             GIT_EDITOR=true git cherry-pick --continue
@@ -95,6 +89,15 @@ jobs:
         continue-on-error: true
         run: npm run typecheck
 
+      - name: Print App syntax context on failure
+        if: steps.typecheck.outcome != 'success'
+        shell: bash
+        run: |
+          echo '===== App.tsx 3850-3925 ====='
+          nl -ba src/App.tsx | sed -n '3850,3925p'
+          echo '===== App.tsx 6840-6910 ====='
+          nl -ba src/App.tsx | sed -n '6840,6910p'
+
       - name: Timeline tests merged candidate
         id: timeline
         continue-on-error: true
@@ -110,12 +113,16 @@ jobs:
             merge-evidence/**
             merge-evidence-stat.txt
             merge-candidate.diff
+            src/App.tsx
+            src/main.ts
+            src/shared.ts
+            src/styles.css
+            src/qa-browser-api.ts
+            src/timeline-model.ts
 
       - name: Gate merged candidate
         if: steps.typecheck.outcome != 'success' || steps.timeline.outcome != 'success'
-        run: |
-          echo "Candidate failed typecheck or timeline tests; no branch changes were pushed."
-          exit 1
+        run: exit 1
 
       - name: Push integrated commit
         run: git push origin HEAD:editai-upstream-047
