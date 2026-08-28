@@ -61,13 +61,17 @@ export async function startBrowserLocalServer(options: BrowserLocalServerOptions
       return;
     }
 
-    const candidate = existsSync(filePath) && statSync(filePath).isFile()
+    const requestedExists = existsSync(filePath) && statSync(filePath).isFile();
+    const requestedExtension = path.extname(requestUrl.pathname);
+    const candidate = requestedExists
       ? filePath
-      : path.join(staticRoot, 'index.html');
+      : requestedExtension
+        ? null
+        : path.join(staticRoot, 'index.html');
 
-    if (!existsSync(candidate) || !statSync(candidate).isFile()) {
+    if (!candidate || !existsSync(candidate) || !statSync(candidate).isFile()) {
       response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('EDIT AI web build not found');
+      response.end('EDIT AI web asset not found');
       return;
     }
 
