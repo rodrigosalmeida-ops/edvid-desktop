@@ -6,6 +6,7 @@ import { build } from 'esbuild';
 import { pathToFileURL } from 'node:url';
 
 const temp = await mkdtemp(path.join(os.tmpdir(), 'editai-browser-launcher-'));
+const TEST_PORT = 4938;
 try {
   const outfile = path.join(temp, 'browser-local-launcher.mjs');
   await build({
@@ -22,7 +23,7 @@ try {
   const opened = [];
   const handle = await launchBrowserLocalEditor({
     staticRoot: temp,
-    port: 0,
+    port: TEST_PORT,
     openExternal: async (url) => opened.push(url),
     healthTimeoutMs: 3000,
     healthPollMs: 20,
@@ -30,7 +31,7 @@ try {
   try {
     assert.equal(opened.length, 1);
     assert.equal(opened[0], handle.editorUrl);
-    assert.match(handle.origin, /^http:\/\/127\.0\.0\.1:\d+$/u);
+    assert.equal(handle.origin, `http://127.0.0.1:${TEST_PORT}`);
     const health = await fetch(handle.healthUrl).then((response) => response.json());
     assert.deepEqual(health, { ok: true, app: 'EDIT AI', mode: 'browser-local' });
   } finally {
@@ -40,7 +41,7 @@ try {
   await assert.rejects(
     () => launchBrowserLocalEditor({
       staticRoot: temp,
-      port: 0,
+      port: TEST_PORT,
       openExternal: async () => { throw new Error('browser unavailable'); },
       healthTimeoutMs: 3000,
       healthPollMs: 20,
