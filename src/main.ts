@@ -3096,7 +3096,7 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
     edl = parseEdl(rawEdl);
     if (!edl) throw new Error('O EDL ficou inválido depois da análise de voz.');
 
-    // 5. Render Phase 1 pelo MESMO pipeline do Edvid: extrai cada segmento
+    // 5. Render Phase 1 pelo MESMO pipeline do EDIT AI: extrai cada segmento
     // individualmente, aplica grade + ganho + fades de 30 ms, concatena com
     // -c copy e normaliza o áudio. J-Cut fica desligado aqui porque o desktop
     // oferece a aprovação visual antes de aplicá-lo.
@@ -3119,9 +3119,9 @@ function runCleanCut(projectDirectory: string): Promise<CleanCutState> {
     );
     rawEdl = JSON.parse(await readFile(edlFile, 'utf8')) as Record<string, unknown>;
     edl = parseEdl(rawEdl);
-    if (!edl) throw new Error('O render do Edvid deixou o EDL inválido.');
+    if (!edl) throw new Error('O render do EDIT AI deixou o EDL inválido.');
 
-    // 6. Verificação numérica oficial do Edvid. Flags não destroem o
+    // 6. Verificação numérica oficial do EDIT AI. Flags não destroem o
     // resultado: ficam registradas para revisão, mas o usuário ainda consegue
     // assistir e aprovar o corte.
     const verification = await runToolAudit(
@@ -5331,6 +5331,114 @@ function promptDaFaixa(prompt: string, uso: ImageUse, isVideo: boolean): string 
   return [prompt.trim(), enquadramento, SEM_TEXTO].filter(Boolean).join('\n\n');
 }
 
+async function generateAtMark(
+  projectDirectory: string,
+  start: number,
+  end: number,
+  tipo: 'imagem' | 'video',
+  prompt: string,
+  destino: 'tela-cheia' | 'tela-dividida',
+): Promise<Record<string, unknown>> {
+  const texto = prompt.trim();
+  if (!texto) throw new Error('Escreva o que a IA deve criar neste trecho.');
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const editDataFile = path.join(publicDirectory, 'edit-data.json');
+
+  if (destino === 'tela-dividida') {
+    const data = JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+    const resultado = applyEditOperations(data, [{ op: 'add-split', start, end, position: 'top' }]);
+    if (!resultado.ok) throw new Error(`Não consegui abrir a tela dividida: ${resultado.reason}.`);
+    if (resultado.changed) {
+      const temporario = `${editDataFile}.tmp`;
+      await writeFile(temporario, `${JSON.stringify(resultado.data, null, 2)}\n`);
+      await rename(temporario, editDataFile);
+    }
+  }
+
+  const pasta = tipo === 'video' ? 'clipes' : 'imagens';
+  const generatedDirectory = path.join(projectDirectory, 'edit', pasta);
+  await mkdir(generatedDirectory, { recursive: true });
+  const requestsFile = path.join(generatedDirectory, 'pedidos.json');
+  // Acrescenta a fila: um pedido do agente ainda pendente nao pode sumir por
+  // causa de um clique aqui.
+  const fila = await readFile(requestsFile, 'utf8')
+    .then((raw) => JSON.parse(raw) as unknown)
+    .then((parsed) => (Array.isArray(parsed) ? parsed : []))
+    .catch(() => [] as unknown[]);
+  await writeFile(requestsFile, `${JSON.stringify([
+    ...fila,
+    { prompt: texto, inicio: start, fim: end, ...(destino === 'tela-dividida' ? { uso: 'tela-dividida' } : null) },
+  ], null, 2)}\n`);
+
+  // Duas rodadas pelo mesmo motivo do botao da faixa: uma geracao ja em voo
+  // devolve a promessa DELA, que leu a fila antes de a nossa entrar.
+  let ultimo: ImageGenState = { status: 'idle' };
+  for (let rodada = 0; rodada < 2; rodada += 1) {
+    ultimo = tipo === 'video'
+      ? await fulfillVideoRequests(projectDirectory)
+      : await fulfillImageRequests(projectDirectory);
+    if ((ultimo.placed ?? 0) > 0) break;
+    if (ultimo.status === 'error') break;
+  }
+  if (!(ultimo.placed ?? 0)) {
+    // O fulfill ja explicou o motivo no chat; aqui a mensagem e do botao.
+    throw new Error(ultimo.status === 'error' && ultimo.error
+      ? ultimo.error
+      : 'A IA não devolveu o arquivo deste trecho.');
+  }
+  return JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+}
+
+// ARQUIVO DO DISCO na marcacao. Sem IA nenhuma no caminho: copia para dentro
+// do projeto e coloca, com as mesmas regras da midia gerada.
+async function attachAtMark(
+  projectDirectory: string,
+  start: number,
+  end: number,
+  source: string,
+  destino: 'tela-cheia' | 'tela-dividida',
+): Promise<Record<string, unknown>> {
+  const extension = path.extname(source).toLowerCase();
+  const isVideo = ['.mp4', '.mov', '.webm'].includes(extension);
+  const pasta = isVideo ? 'clipes' : 'imagens';
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const editDataFile = path.join(publicDirectory, 'edit-data.json');
+
+  if (destino === 'tela-dividida') {
+    const data = JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+    const resultado = applyEditOperations(data, [{ op: 'add-split', start, end, position: 'top' }]);
+    if (!resultado.ok) throw new Error(`Não consegui abrir a tela dividida: ${resultado.reason}.`);
+    if (resultado.changed) {
+      const temporario = `${editDataFile}.tmp`;
+      await writeFile(temporario, `${JSON.stringify(resultado.data, null, 2)}\n`);
+      await rename(temporario, editDataFile);
+    }
+  }
+
+  // Nome achatado e com sufixo se ja existir: nunca sobrescrever um arquivo
+  // que o aluno ja usou em outro trecho.
+  const base = path.basename(source, extension).replace(/[^\w.-]+/gu, '_') || 'midia';
+  const destinoDirectory = path.join(projectDirectory, 'edit', pasta);
+  await mkdir(destinoDirectory, { recursive: true });
+  let nome = `${base}${extension}`;
+  let tentativa = 1;
+  while (await statOf(path.join(destinoDirectory, nome))) {
+    tentativa += 1;
+    nome = `${base}_${tentativa}${extension}`;
+  }
+  await copyFile(source, path.join(destinoDirectory, nome));
+
+  const colocado = await placeGeneratedMedia(projectDirectory, {
+    arquivo: nome,
+    prompt: base,
+    uso: destino === 'tela-dividida' ? 'tela-dividida' : 'tela-cheia',
+    segundos: Math.max(1, end - start),
+    janela: { inicio: start, fim: end },
+  }, pasta);
+  if (!colocado) throw new Error('Não consegui encaixar este arquivo no trecho marcado.');
+  return JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+}
+
 // O aluno DESCREVE a faixa e o EDIT AI gera.
 //
 // Este caminho existe porque sem agente conectado ninguem escrevia
@@ -5435,8 +5543,21 @@ async function suggestSplitPrompt(
   const splits = Array.isArray(data.splits) ? (data.splits as Record<string, unknown>[]) : [];
   const item = splits[index];
   if (!item) throw new Error('Este trecho não existe mais na edição.');
-  const start = Number(item.start);
-  const end = Number.isFinite(Number(item.end)) ? Number(item.end) : start + Number(item.dur);
+  const inicioSplit = Number(item.start);
+  const fimSplit = Number.isFinite(Number(item.end)) ? Number(item.end) : inicioSplit + Number(item.dur);
+  return suggestMediaPrompt(projectDirectory, inicioSplit, fimSplit, tipo);
+}
+
+async function suggestMediaPrompt(
+  projectDirectory: string,
+  start: number,
+  end: number,
+  tipo: 'imagem' | 'video',
+): Promise<{ prompt: string }> {
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const data = JSON.parse(
+    await readFile(path.join(publicDirectory, 'edit-data.json'), 'utf8'),
+  ) as Record<string, unknown>;
 
   // A fala do trecho, palavra a palavra, do MESMO arquivo que a legenda usa.
   let fala = '';
@@ -5454,8 +5575,11 @@ async function suggestSplitPrompt(
   }
   if (!fala) throw new Error('Não há fala neste trecho para basear o prompt.');
 
+  // A orientacao entra na instrucao: "vertical social video" num projeto de
+  // YouTube guiava o LLM a descrever cena de celular.
+  const paisagem = (Number(data.width) || 1080) > (Number(data.height) || 1920);
   const instrucao = [
-    `Write ONE English sentence (max 28 words) describing ${tipo === 'video' ? 'a short b-roll video scene' : 'an illustrative image'} for this spoken excerpt from a vertical social video:`,
+    `Write ONE English sentence (max 28 words) describing ${tipo === 'video' ? 'a short b-roll video scene' : 'an illustrative image'} for this spoken excerpt from a ${paisagem ? 'widescreen 16:9 YouTube video' : 'vertical social video'}:`,
     `"${fala}"`,
     'Describe a concrete visual scene, not the speech. No people talking to camera. No text, letters or logos in the scene.',
   ].join(' ');
@@ -5488,7 +5612,7 @@ async function suggestSplitPrompt(
   // 3. ChatGPT por ASSINATURA: turno utilitario que escreve num arquivo.
   const codexAccount = await (await codexServer()).readAccount().catch(() => null);
   if (codexAccount?.account) {
-    const alvo = path.join(projectDirectory, 'edit', 'imagens', `.prompt-faixa-${index}.txt`);
+    const alvo = path.join(projectDirectory, 'edit', 'imagens', `.prompt-${Math.round(start * 1000)}-${Math.round(end * 1000)}.txt`);
     await mkdir(path.dirname(alvo), { recursive: true });
     await rm(alvo, { force: true });
     await (await codexServer()).runUtilityTurn(
@@ -6395,6 +6519,81 @@ function registerIpcHandlers(): void {
     if (!prompt) throw new Error('Escreva o que você quer ver nesta faixa.');
     const tipo = asText(input.kind) === 'video' ? 'video' : 'imagem';
     return generateSplitMedia(directory, index, prompt, tipo);
+  });
+
+  // O AGENTE ESCREVE O PROMPT da faixa a partir da fala daquele trecho — o
+  // botao "Gerar automaticamente". So o prompt: quem decide gerar (e gastar
+  // credito) continua sendo o clique do aluno no Gerar.
+  ipcMain.handle('preview:suggest-split-prompt', async (
+    _event,
+    input: { directory?: string; index?: unknown; kind?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
+    }
+    const index = Number(input.index);
+    if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
+    return suggestSplitPrompt(directory, index, asText(input.kind) === 'video' ? 'video' : 'imagem');
+  });
+
+  const janelaDoPedido = (input: { start?: unknown; end?: unknown }): { start: number; end: number } => {
+    const start = Number(input.start);
+    const end = Number(input.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 0.2) {
+      throw new Error('Marcação inválida.');
+    }
+    return { start, end };
+  };
+  const destinoDoPedido = (valor: unknown): 'tela-cheia' | 'tela-dividida' => (
+    asText(valor) === 'tela-dividida' ? 'tela-dividida' : 'tela-cheia'
+  );
+
+  ipcMain.handle('preview:generate-at-mark', async (
+    _event,
+    input: { directory?: string; start?: unknown; end?: unknown; kind?: unknown; prompt?: unknown; destino?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
+    }
+    const { start, end } = janelaDoPedido(input);
+    return generateAtMark(
+      directory, start, end,
+      asText(input.kind) === 'video' ? 'video' : 'imagem',
+      asText(input.prompt),
+      destinoDoPedido(input.destino),
+    );
+  });
+
+  ipcMain.handle('preview:attach-at-mark', async (
+    _event,
+    input: { directory?: string; start?: unknown; end?: unknown; destino?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
+    }
+    const { start, end } = janelaDoPedido(input);
+    const escolha = await dialog.showOpenDialog({
+      title: 'Escolher mídia para este trecho',
+      properties: ['openFile'],
+      filters: [{ name: 'Imagens e vídeos', extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'webm'] }],
+    });
+    if (escolha.canceled || !escolha.filePaths[0]) return null;
+    return attachAtMark(directory, start, end, escolha.filePaths[0], destinoDoPedido(input.destino));
+  });
+
+  ipcMain.handle('preview:suggest-mark-prompt', async (
+    _event,
+    input: { directory?: string; start?: unknown; end?: unknown; kind?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
+    }
+    const { start, end } = janelaDoPedido(input);
+    return suggestMediaPrompt(directory, start, end, asText(input.kind) === 'video' ? 'video' : 'imagem');
   });
 
   // O AGENTE ESCREVE O PROMPT da faixa a partir da fala daquele trecho — o

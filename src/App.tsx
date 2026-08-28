@@ -861,6 +861,9 @@ function EditorWorkspace({
   const [draftDestino, setDraftDestino] = useState<'tela-cheia' | 'tela-dividida'>('tela-cheia');
   const [draftBusy, setDraftBusy] = useState<'gerando' | 'sugerindo' | null>(null);
   const [draftErro, setDraftErro] = useState<string | null>(null);
+  const notify = (_kind: string, title: string, detail?: string) => {
+    console.info('[EDIT AI]', title, detail ?? '');
+  };
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const zoomStateRef = useRef(1);
