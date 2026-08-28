@@ -1,9 +1,11 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { startBrowserLocalServer, type BrowserLocalServerHandle } from './browser-local-server';
-import type { BrowserLocalOptions } from './browser-local';
+import {
+  startBrowserLocalServer,
+  type BrowserLocalServerHandle,
+  type BrowserLocalServerOptions,
+} from './browser-local-server';
 
-export type BrowserLocalLauncherOptions = BrowserLocalOptions & {
-  staticRoot: string;
+export type BrowserLocalLauncherOptions = BrowserLocalServerOptions & {
   openExternal: (url: string) => Promise<void> | void;
   healthTimeoutMs?: number;
   healthPollMs?: number;
