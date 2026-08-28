@@ -1,0 +1,93 @@
+name: EDIT AI marked media batch once
+
+on:
+  push:
+    branches:
+      - editai-marked-media-batch-20260828
+    paths:
+      - .github/workflows/editai-marked-media-batch-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: editai-marked-media-batch-20260828
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Fetch upstream batch feature
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/fillrochaa/edvid-desktop.git || true
+          git fetch upstream 9726d948da32699e1fac37a3bbcd9901dcc70ae2
+      - name: Port batch feature preserving EDIT AI customizations
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name editai-ci
+          git config user.email actions@users.noreply.github.com
+          if ! git cherry-pick 9726d948da32699e1fac37a3bbcd9901dcc70ae2; then
+            # Documentation/upstream tests are not authoritative for our fork.
+            for f in agent.md scripts/test-phase2-data.mjs; do
+              if git diff --name-only --diff-filter=U | grep -qx "$f"; then git checkout --ours "$f"; git add "$f"; fi
+            done
+            # main.ts is adapted below against our already-ported In/Out backend.
+            if git diff --name-only --diff-filter=U | grep -qx 'src/main.ts'; then git checkout --ours src/main.ts; git add src/main.ts; fi
+            # App/preload/shared/QA/styles should merge against the immediately previous upstream feature.
+            remaining=$(git diff --name-only --diff-filter=U)
+            if [ -n "$remaining" ]; then echo "Unresolved conflicts:"; echo "$remaining"; exit 1; fi
+            git cherry-pick --continue
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess, json
+          upstream = subprocess.check_output(['git','show','9726d948da32699e1fac37a3bbcd9901dcc70ae2:src/main.ts'], text=True)
+          main = Path('src/main.ts')
+          text = main.read_text()
+          # Replace the single-mark generation/attachment block with upstream batch implementation.
+          ua = upstream.index('async function applyMarkedMedia(')
+          ub = upstream.index('// O aluno DESCREVE a faixa', ua)
+          batch_block = upstream[ua:ub]
+          ca = text.index('async function generateAtMark(')
+          cb = text.index('// O aluno DESCREVE a faixa', ca)
+          text = text[:ca] + batch_block + text[cb:]
+          # Replace only the mark IPC contract block, keeping current surrounding handlers.
+          uhs = upstream.index("  const janelaDoPedido")
+          uhe = upstream.index("  ipcMain.handle('video:fulfill'", uhs)
+          handlers = upstream[uhs:uhe]
+          chs = text.index("  const janelaDoPedido")
+          che = text.index("  ipcMain.handle('video:fulfill'", chs)
+          text = text[:chs] + handlers + text[che:]
+          text = text.replace('seletor do Edvid', 'seletor do EDIT AI').replace('o Edvid', 'o EDIT AI').replace('O Edvid', 'O EDIT AI')
+          main.write_text(text)
+
+          Path('scripts/test-marked-media-batch.mjs').write_text("""import assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nconst app=readFileSync('src/App.tsx','utf8');\nconst main=readFileSync('src/main.ts','utf8');\nconst preload=readFileSync('src/preload.ts','utf8');\nconst shared=readFileSync('src/shared.ts','utf8');\nassert.match(app,/kind\\?: 'imagem' \\| 'video' \\| 'arquivo'/u);\nassert.match(app,/corrections\\.filter\\(ehMarcacaoDeMidia\\)/u);\nassert.match(app,/applyMarkedMedia\\(/u);\nassert.match(main,/async function applyMarkedMedia\\(/u);\nconst body=main.slice(main.indexOf('async function applyMarkedMedia('),main.indexOf('// O aluno DESCREVE a faixa',main.indexOf('async function applyMarkedMedia(')));\nassert.ok(body.indexOf('writeFile(requestsFile') < body.indexOf('fulfillVideoRequests'), 'fila deve ser escrita antes do fulfill');\nassert.match(main,/preview:apply-marked-media/u);\nassert.match(preload,/applyMarkedMedia/u);\nassert.match(shared,/applyMarkedMedia/u);\nassert.doesNotMatch(app,/generateAtMark\\(/u);\nconsole.log('test:marked-media-batch ok');\n""")
+          pkg=Path('package.json'); data=json.loads(pkg.read_text()); scripts=data.setdefault('scripts',{}); scripts['test:marked-media-batch']='node scripts/test-marked-media-batch.mjs'; verify=scripts.get('verify:editai','');
+          if 'test:marked-media-batch' not in verify: scripts['verify:editai']=verify+' && npm run test:marked-media-batch'
+          pkg.write_text(json.dumps(data,indent=2,ensure_ascii=False)+'\n')
+          PY
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify
+        run: |
+          npm run typecheck
+          npm run test:inout-media
+          npm run test:marked-media-batch
+          npm run test:edit-data-edits
+      - name: Commit verified candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-marked-media-batch-once.yml
+          git add -A
+          git commit -m "feat(media): batch timeline mark requests"
+          git push origin HEAD:editai-marked-media-batch-20260828
