@@ -47,6 +47,6 @@ jobs:
           rm -f .github/workflows/editai-style-tabs-once.yml .github/workflows/editai-style-tabs-v2.yml .github/workflows/editai-style-tabs-v3.yml .github/scripts/patch-style-tabs.py
           git config user.name "editai-ci"
           git config user.email "actions@users.noreply.github.com"
-          git add src/App.tsx src/index.css scripts/test-style-tabs.mjs package.json .github/
+          git add src/App.tsx src/styles.css scripts/test-style-tabs.mjs package.json .github/
           git commit -m "feat(styles): add contextual layer tabs"
           git push origin HEAD:editai-style-tabs-20260827
