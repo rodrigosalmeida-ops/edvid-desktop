@@ -14,6 +14,8 @@ try {
   await import('node:fs/promises').then(({ mkdir }) => mkdir(staticRoot, { recursive: true }));
   writeFileSync(path.join(staticRoot, 'index.html'), '<!doctype html><title>EDIT AI</title><div id="root">ok</div>');
   writeFileSync(path.join(staticRoot, 'app.js'), 'window.__EDIT_AI__ = true;');
+  const mediaFile = path.join(temp, 'sample.mp4');
+  writeFileSync(mediaFile, Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));
 
   buildSync({
     entryPoints: [path.join(root, 'src', 'browser-local-server.ts')],
@@ -25,7 +27,12 @@ try {
 
   const { startBrowserLocalServer } = await import(`${pathToFileURL(bundle).href}?t=${Date.now()}`);
   const port = 4937;
-  const handle = await startBrowserLocalServer({ staticRoot, port });
+  const token = 'editai-test-token';
+  const handle = await startBrowserLocalServer({
+    staticRoot, port, secureToken: token,
+    invoke: async (channel, args) => ({ channel, args }),
+    resolveMediaPath: (requestPath) => requestPath === '/api/media/local/demo' ? mediaFile : null,
+  });
 
   try {
     assert.equal(handle.origin, `http://127.0.0.1:${port}`);
@@ -46,6 +53,21 @@ try {
     const spa = await fetch(`${handle.origin}/projeto/demo`);
     assert.equal(spa.status, 200);
     assert.match(await spa.text(), /EDIT AI/u);
+
+
+
+const deniedRpc = await fetch(`${handle.origin}/api/rpc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'desktop:get-info', args: [] }) });
+assert.equal(deniedRpc.status, 403);
+
+const rpc = await fetch(`${handle.origin}/api/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-edit-ai-token': token, origin: handle.origin }, body: JSON.stringify({ channel: 'desktop:get-info', args: [{ ok: true }] }) });
+assert.equal(rpc.status, 200);
+assert.deepEqual(await rpc.json(), { ok: true, value: { channel: 'desktop:get-info', args: [{ ok: true }] } });
+
+const media = await fetch(`${handle.origin}/api/media/local/demo?token=${encodeURIComponent(token)}`, { headers: { range: 'bytes=1-3' } });
+assert.equal(media.status, 206);
+assert.equal(media.headers.get('content-range'), 'bytes 1-3/8');
+assert.deepEqual([...new Uint8Array(await media.arrayBuffer())], [1, 2, 3]);
+// secure RPC + Range
 
     const traversal = await fetch(`${handle.origin}/%2e%2e/package.json`);
     assert.ok([403, 404].includes(traversal.status));

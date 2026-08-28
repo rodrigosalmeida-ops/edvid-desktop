@@ -124,7 +124,7 @@ try {
     'package-lock precisa conter o pacote @electron-forge/plugin-vite resolvido');
 
   const mainSource = readFileSync(path.join(root, 'src', 'main.ts'), 'utf8');
-  const splitPromptHandlers = mainSource.match(/ipcMain\.handle\('preview:suggest-split-prompt'/gu) ?? [];
+  const splitPromptHandlers = mainSource.match(/(?:ipcMain\.handle|registerIpcHandle)\('preview:suggest-split-prompt'/gu) ?? [];
   assert.equal(splitPromptHandlers.length, 1, 'preview:suggest-split-prompt deve ser registrado uma unica vez');
   assert.match(mainSource, /--editai-smoke-boot-only/u);
 
