@@ -121,6 +121,7 @@ import { LivePreview, type PlayerRef } from './live-preview';
 import { remapLiveData, virtualWindows } from './virtual-cut';
 import { activeSplitIndexAt, type EditOperation, type OverlayKind } from './edit-data-edits';
 import { SPLIT_DIVIDER } from './image-format';
+import { STYLE_LAYER_LABEL, type StyleLayer } from './style-layers';
 import { applyPlaybackRate, REVIEW_SPEEDS, type ReviewSpeed } from './playback-speed';
 import { DEFAULT_TIER, TIERS, TIER_LABEL, TIER_NOTE, type GenerationKind } from './generation-tier';
 import {
@@ -3522,7 +3523,7 @@ function StyleWorkspace({
 }: {
   style: StyleSetup;
   onChange: (style: StyleSetup) => void;
-  onApply: () => void;
+  onApply: (layer: StyleLayer) => void;
   canApply: boolean;
   applying: boolean;
   runtime: RemotionRuntimeState;
@@ -3673,9 +3674,20 @@ function StyleWorkspace({
             <span>{runtime.error || 'Falha ao preparar o Remotion.'} Clique em “Salvar e aplicar” para tentar de novo.</span>
           </div>
         ) : <div />}
-        <button type="button" className="btn primary apply-style" onClick={onApply} disabled={!canApply || applying || runtime.status === 'installing'}>
-          <Icon name="sparkles" /> {runtime.status === 'installing' ? 'Preparando...' : applying ? 'Enviando...' : 'Salvar e aplicar'}
-        </button>
+        <div className="apply-style-layers" aria-label="Aplicar camada de estilo">
+          {(['edicao', 'efeitos', 'legendas', 'texto'] as StyleLayer[]).map((layer) => (
+            <button
+              type="button"
+              className="btn primary apply-style"
+              key={layer}
+              onClick={() => onApply(layer)}
+              disabled={!canApply || applying || runtime.status === 'installing'}
+              title={`Aplicar somente ${STYLE_LAYER_LABEL[layer]}`}
+            >
+              <Icon name="sparkles" /> {runtime.status === 'installing' ? 'Preparando...' : applying ? 'Enviando...' : `Aplicar ${STYLE_LAYER_LABEL[layer]}`}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -4813,7 +4825,7 @@ export function App() {
     }
   }
 
-  async function applyStyleSelection() {
+  async function applyStyleSelection(layer: StyleLayer) {
     if (!projectDirectory) return;
     // A origem da mídia que a interface MOSTRA é a que vale — ver
     // splitMediaEfetivo. Aplicar o valor guardado faria o EDIT AI planejar
@@ -4843,7 +4855,7 @@ export function App() {
     // verdade quando não há agente para preencher as janelas.
     let plano = { splits: 0, flashes: 0 };
     try {
-      plano = await window.edvidDesktop.buildPhase2(projectDirectory, escolhas);
+      plano = await window.edvidDesktop.buildPhase2(projectDirectory, escolhas, [layer]);
     } catch (error) {
       setMessages((current) => [...current, { id: `error:${Date.now()}`, role: 'system', text: errorMessage(error) }]);
       return;
@@ -4853,7 +4865,7 @@ export function App() {
     // A trilha, quando escolhida, foi PEDIDA pelo app na montagem. Gerar aqui
     // e o que faltava: numa edição limpa o agente nem é chamado, e antes era
     // ele quem disparava isso.
-    if (escolhas.elements.musicAI) {
+    if (layer === 'efeitos' && escolhas.elements.musicAI) {
       setMusicBusy(true);
       void window.edvidDesktop.fulfillMusicRequests(projectDirectory)
         .catch(() => ({ done: 0 }))
@@ -4913,7 +4925,8 @@ export function App() {
     // resto — legenda, zoom, cor, trilha, medidas — o EDIT AI já escreveu, e
     // pedir de novo era o que fazia o agente sobrescrever tudo com um
     // esqueleto vazio.
-    const precisaDoAgente = escolhas.edit !== 'limpa' || escolhas.note.trim().length > 0;
+    const precisaDoAgente = (layer === 'edicao' && escolhas.edit !== 'limpa')
+      || (layer === 'efeitos' && escolhas.note.trim().length > 0);
     if (!precisaDoAgente || !activeAiConnected) {
       // ESTA MENSAGEM MENTIA DUAS VEZES. Dizia "estou renderizando o vídeo
       // agora" — e desde a prévia ao vivo o render só acontece no botão — e
@@ -4921,8 +4934,8 @@ export function App() {
       // formulário não tinha saído, porque só o agente escrevia os splits e
       // ele não estava conectado. Agora as janelas existem (o app as escreve)
       // e o texto diz exatamente o que ficou pronto e o que falta.
-      const partes = ['Estilos aplicados na edição.'];
-      if (plano.splits > 0) {
+      const partes = [`${STYLE_LAYER_LABEL[layer][0].toUpperCase()}${STYLE_LAYER_LABEL[layer].slice(1)} aplicado na edição.`];
+      if (layer === 'edicao' && plano.splits > 0) {
         // Origem "nenhum" (o único caminho sem agente): a faixa sai INTEIRA e
         // o aluno recorta com a tesoura onde quiser. Com IA de geração
         // conectada, cada pedaço oferece gerar imagem/clipe pelo palco.

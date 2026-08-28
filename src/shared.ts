@@ -1,3 +1,5 @@
+import type { StyleLayer } from './style-layers';
+
 export type RuntimeName =
   | 'node'
   | 'npm'
@@ -571,6 +573,7 @@ export type EdvidDesktopApi = {
   buildPhase2: (
     directory: string,
     style: ProjectStyleState,
+    layers?: readonly StyleLayer[],
   ) => Promise<{ splits: number; flashes: number }>;
   runCleanCut: (directory: string) => Promise<CleanCutState>;
   applyTimelineRanges: (
