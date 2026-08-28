@@ -24,6 +24,15 @@ import thumbCaptionSimples from './brand/thumbs/caption-simples.png';
 import thumbCaptionSerifada from './brand/thumbs/caption-serifada.png';
 import thumbCaptionClassica from './brand/thumbs/caption-classica.png';
 
+// As velocidades que o transporte oferece. Lista fechada de propósito: o
+// navegador só preserva o tom da voz entre 0,25x e 4x — fora disso a revisão
+// vira desenho animado ou grave arrastado, e o áudio é metade da conferência.
+// CICLO DE VELOCIDADE, escolha do aluno: um clique anda 1x -> 1,5x -> 2x ->
+// 4x e volta para 1x. Era um par de botoes − e + sobre uma lista que ia de
+// 0,25x a 4x; a lenta saiu junto com os botoes. Vale dizer que rever uma
+// emenda em 0,25x era um uso real — se fizer falta, o lugar de voltar e aqui.
+const VELOCIDADES = [1, 1.5, 2, 4] as const;
+
 const headlineThumbs: Record<Exclude<HeadlineStyle, 'none'>, string> = {
   outline: thumbHeadlineOutline,
   card: thumbHeadlineCard,
@@ -138,6 +147,7 @@ import {
   modelsEqual,
   nextProgrammeIndexAfter,
   playbackProgramme,
+  cenaVizinha,
   programmeIndexAt,
   razorAtTime,
   rippleDeleteClip,
@@ -188,6 +198,8 @@ type CorrectionRange = {
   // de MARCAR — um lote que abrisse N seletores em sequência seria pior que
   // não ter lote.
   arquivo?: string;
+  escrevendo?: boolean;
+  erro?: string;
 };
 
 // A marcação pede mídia (e vai para o motor de geração) ou é correção (e vai
@@ -247,6 +259,9 @@ type IconName =
   | 'pin'
   | 'play'
   | 'redo'
+  | 'flagIn'
+  | 'flagOut'
+  | 'razor'
   | 'scissors'
   | 'send'
   | 'settings'
@@ -327,6 +342,14 @@ function Icon({ name }: { name: IconName }) {
     pin: <path d="m5 2 6 1-1.4 3 2.1 2.1-3 1.1-2.5 4.5-.5-4.9-3-1.4 2.4-1.8z" />,
     play: <path d="m5 2.5 8 5.5-8 5.5z" />,
     scissors: <><circle cx="4.2" cy="4.4" r="1.9" /><circle cx="4.2" cy="11.6" r="1.9" /><path d="m5.7 5.6 8 6.6M5.7 10.4l8-6.6" /></>,
+    // BANDEIRINHAS do In e do Out: o mastro na borda e o pano apontando para
+    // FORA do trecho marcado — para a esquerda no In, para a direita no Out.
+    // O mesmo desenho aparece na cabeca das linhas da timeline, para o botao e
+    // a marca serem visivelmente a mesma coisa.
+    flagIn: <><path d="M11.6 2.4v11.2" /><path d="M11.6 3.4H4.2l2.4 2.7-2.4 2.7h7.4z" /></>,
+    flagOut: <><path d="M4.4 2.4v11.2" /><path d="M4.4 3.4h7.4L9.4 6.1l2.4 2.7H4.4z" /></>,
+    // NAVALHA, nao tesoura: e o gesto de cortar a fita num ponto so.
+    razor: <><path d="M2.4 9.2h11.2" /><path d="M3.8 9.2V5.4h8.4v3.8" /><path d="M6.2 5.4v3.8M9.8 5.4v3.8" /></>,
     send: <path d="M8 12.8V3.4M3.9 7.4 8 3.3l4.1 4.1" />,
     stop: <rect x="4.4" y="4.4" width="7.2" height="7.2" rx="1.6" />,
     undo: <path d="M3.2 6.4h6.2a3.4 3.4 0 0 1 0 6.8H6.6M3.2 6.4l3-3M3.2 6.4l3 3" />,
@@ -877,6 +900,8 @@ function EditorWorkspace({
   const [draftDestino, setDraftDestino] = useState<'tela-cheia' | 'tela-dividida'>('tela-cheia');
   const [draftArquivo, setDraftArquivo] = useState<string | null>(null);
   const [applyingMedia, setApplyingMedia] = useState(false);
+  // O Aplicar está esperando as escritas de prompt em voo — ver escritasRef.
+  const [esperandoPrompts, setEsperandoPrompts] = useState(false);
   const [draftBusy, setDraftBusy] = useState<'gerando' | 'sugerindo' | null>(null);
   const [draftErro, setDraftErro] = useState<string | null>(null);
   const notify = (_kind: string, title: string, detail?: string) => {
@@ -889,6 +914,8 @@ function EditorWorkspace({
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
   const [inGap, setInGap] = useState(false);
   const correctionHistoryRef = useRef<CorrectionRange[][]>([]);
+  const correctionsRef = useRef<CorrectionRange[]>(corrections);
+  correctionsRef.current = corrections;
   const modelHistoryRef = useRef<TimelineModel[]>([]);
   const modelFutureRef = useRef<TimelineModel[]>([]);
   type EditAiBatchHistoryEntry = { beforeModel: TimelineModel | null; afterModel: TimelineModel | null; visual: EditAiVisualHistoryEntry | null };
@@ -1763,6 +1790,19 @@ function EditorWorkspace({
     seek(currentTimeRef.current + seconds);
   }
 
+  // CENA A CENA, nao de cinco em cinco segundos. Cinco segundos nao quer dizer
+  // nada dentro de um corte — pode ser meia cena ou tres. O que o aluno quer
+  // alcancar e a emenda. Sem programa (fonte crua, ainda sem corte) nao ha
+  // cena nenhuma, e ai o passo de 5s continua sendo o melhor que existe.
+  function pularCena(direcao: 1 | -1) {
+    const alvo = cenaVizinha(programmeRef.current, currentTimeRef.current, direcao);
+    if (alvo === null) {
+      if (!programmeRef.current.length) jumpBy(direcao * 5);
+      return;
+    }
+    seek(alvo);
+  }
+
   function stepByFrames(frames: number) {
     // O ref é atualizado na hora: o seek abaixo não pode "retomar" a
     // reprodução por ler um playingRef ainda não sincronizado pelo efeito.
@@ -1778,6 +1818,19 @@ function EditorWorkspace({
     const index = REVIEW_SPEEDS.indexOf(reviewSpeed);
     const nextIndex = Math.min(REVIEW_SPEEDS.length - 1, Math.max(0, index + direction));
     setReviewSpeed(REVIEW_SPEEDS[nextIndex]);
+  }
+
+  // O passo é discreto, como no transporte de um editor: nada de 1,37x.
+  const indiceDaVelocidade = Math.max(
+    0,
+    VELOCIDADES.findIndex((valor) => Math.abs(valor - reviewSpeed) < 1e-6),
+  );
+
+  function mudarVelocidade(passo: number) {
+    // Ciclo fechado: do fim volta ao comeco, que e o que um botao unico faz.
+    const total = VELOCIDADES.length;
+    const alvo = ((indiceDaVelocidade + passo) % total + total) % total;
+    setReviewSpeed(VELOCIDADES[alvo]);
   }
 
   function toggleMute() {
@@ -2094,6 +2147,25 @@ function EditorWorkspace({
     setDraftNote('');
   }
 
+  // ESCRITAS DE PROMPT EM VOO, por marcação.
+  //
+  // Existe porque o Aplicar as ABANDONAVA. O aluno marcava cinco trechos —
+  // cada um dispara a escrita do prompt em segundo plano, ~17s medidos —,
+  // clicava em Aplicar, e só entravam no lote as duas que já tinham voltado.
+  // As outras ficavam na timeline sem aviso nenhum, e o relato foi exatamente
+  // esse: "faço várias marcações, peço pra aplicar e ele gera 1 ou 2".
+  // Marcar e aplicar rápido dava o outro lado da mesma moeda: um erro
+  // dizendo para esperar. Agora o Aplicar espera por elas.
+  const escritasRef = useRef(new Map<string, Promise<unknown>>());
+
+  // Mexe numa marcação já salva sem tocar nas outras. Usado pela escrita de
+  // prompt em segundo plano, que volta depois de o modal ter fechado.
+  function atualizarMarcacao(id: string, patch: Partial<CorrectionRange>) {
+    onCorrectionsChange(correctionsRef.current.map(
+      (item) => (item.id === id ? { ...item, ...patch } : item),
+    ));
+  }
+
   function commitCorrections(next: CorrectionRange[]) {
     correctionHistoryRef.current.push(corrections);
     modelFutureRef.current = [];
@@ -2405,8 +2477,43 @@ function EditorWorkspace({
   // por causa de uma falha de rede seria castigo duplo.
   async function applyCorrections() {
     if (corrections.length === 0 || applyingMedia) return;
-    const midia = corrections.filter(ehMarcacaoDeMidia);
-    const correcoes = corrections.filter((item) => !ehMarcacaoDeMidia(item));
+    if (corrections.length === 0 || applyingMedia || esperandoPrompts) return;
+
+    // O APLICAR ESPERA OS PROMPTS EM VOO. Não é atraso: é o único jeito de o
+    // clique significar "aplique TUDO o que está marcado".
+    //
+    // Antes daqui, marcação ainda sendo escrita ficava de fora do lote e
+    // sobrava na timeline sem aviso — o aluno marcava cinco, aplicava, e via
+    // dois clipes nascerem. E quando NENHUMA tinha voltado ainda, o clique
+    // era recusado com "espere o EDIT AI terminar", que é devolver o trabalho
+    // para quem pediu. Os dois sintomas eram a mesma coisa.
+    const emVoo = corrections
+      .filter((item) => item.escrevendo)
+      .map((item) => escritasRef.current.get(item.id))
+      .filter((promessa): promessa is Promise<unknown> => Boolean(promessa));
+    if (emVoo.length) {
+      setEsperandoPrompts(true);
+      try {
+        await Promise.allSettled(emVoo);
+      } finally {
+        setEsperandoPrompts(false);
+      }
+    }
+
+    // Depois da espera, o que vale é a lista VIVA: as escritas que acabaram
+    // de voltar mudaram as marcações por baixo do `corrections` deste turno.
+    const atuais = correctionsRef.current;
+    // Sobrou alguém escrevendo? Só se a promessa não estava registrada (uma
+    // marcação de uma sessão anterior, por exemplo). Fica na timeline em vez
+    // de ir com o texto vazio e voltar recusada por falta de descrição.
+    const esperando = atuais.filter((item) => item.escrevendo);
+    const prontas = atuais.filter((item) => !item.escrevendo);
+    const midia = prontas.filter(ehMarcacaoDeMidia);
+    const correcoes = prontas.filter((item) => !ehMarcacaoDeMidia(item));
+    if (!midia.length && !correcoes.length) {
+      notify('erro', 'Ainda escrevendo os prompts', 'Espere o EDIT AI terminar e aplique de novo.');
+      return;
+    }
     let falharam: CorrectionRange[] = [];
 
     if (midia.length && liveDirectory) {
@@ -3500,6 +3607,11 @@ function EditorWorkspace({
                   correction.note,
                 ].filter(Boolean).join(' · ')}
               >
+                {/* Cabeças de bandeirinha nas duas pontas, as mesmas do
+                    botão: pra esquerda onde a marcação abre, pra direita onde
+                    ela fecha. */}
+                <i className="range-flag in" aria-hidden="true"><Icon name="flagIn" /></i>
+                <i className="range-flag out" aria-hidden="true"><Icon name="flagOut" /></i>
                 <span>{index + 1}</span>
                 <button
                   type="button"
@@ -3513,12 +3625,14 @@ function EditorWorkspace({
                 </button>
               </div>
             ))}
+            {/* A linha do In leva a MESMA bandeirinha do botão: o aluno vê no
+                trilho o desenho que acabou de clicar. */}
             {markIn !== null && (
               <div
                 className="timeline-in-marker"
                 style={{ '--marker-left': timelinePoint(effectiveDuration > 0 ? markIn / effectiveDuration : 0) } as CSSProperties}
               >
-                <span>IN</span>
+                <span><Icon name="flagIn" /></span>
               </div>
             )}
             <div className="timeline-playhead" />
@@ -3526,8 +3640,26 @@ function EditorWorkspace({
         </div>
         <div className="timeline-transport" aria-label="Controles de reprodução">
           <div className="marker-controls">
-            <button type="button" className={`marker-button ${markIn !== null ? 'active' : ''}`} onClick={setInPoint} disabled={!media} title="Marcar início da correção (I ou M)">IN</button>
-            <button type="button" className="marker-button" onClick={setOutPoint} disabled={!media || markIn === null || currentTime <= markIn} title="Marcar fim da correção (O ou M)">OUT</button>
+            {/* UM BOTÃO SÓ para In e Out. Eram dois, e o de Out passava a
+                maior parte do tempo apagado ocupando espaço numa barra que já
+                estava encavalando. Aqui ele é o MESMO botão em dois estados:
+                bandeirinha para a esquerda marca o início; depois disso ela
+                vira para a direita e fica apagada até a agulha andar, que é
+                exatamente quando marcar o fim passa a fazer sentido.
+                O portão de dirty saiu dos dois (0.38.1): as marcações valem no
+                eixo da prévia, e o Aplicar roda os cortes pendentes antes. */}
+            <button
+              type="button"
+              className={`marker-button flag${markIn !== null ? ' active' : ''}`}
+              onClick={markIn === null ? setInPoint : setOutPoint}
+              disabled={!media || (markIn !== null && currentTime <= markIn)}
+              title={markIn === null
+                ? 'Marcar início (I ou M)'
+                : currentTime <= markIn
+                  ? 'Mova a agulha para marcar o fim'
+                  : 'Marcar fim (O ou M)'}
+              aria-label={markIn === null ? 'Marcar início' : 'Marcar fim'}
+            ><Icon name={markIn === null ? 'flagIn' : 'flagOut'} /></button>
             <button
               type="button"
               className="marker-button razor"
@@ -3536,19 +3668,29 @@ function EditorWorkspace({
               title={liveActive && selectedElement
                 ? 'Recortar o elemento selecionado na agulha (C)'
                 : 'Dividir o take na agulha (C)'}
-            ><Icon name="scissors" /></button>
-            {corrections.length > 0 && <span className="correction-count">{corrections.length} {corrections.length === 1 ? 'marcação' : 'marcações'}</span>}
+            ><Icon name="razor" /></button>
+            {/* A contagem de marcações saiu: a timeline já mostra cada uma,
+                numerada, logo acima desta barra. */}
           </div>
           <div className="transport-center">
-            <button type="button" className="transport-button" onClick={() => jumpBy(-5)} disabled={!media} title="Voltar 5 segundos">
-              <Icon name="skipBack" /><span>5s</span>
+            <button type="button" className="transport-button step" onClick={() => pularCena(-1)} disabled={!media} title="Cena anterior">
+              <Icon name="skipBack" />
             </button>
             <button type="button" className="transport-button transport-play" onClick={() => void togglePlayback()} disabled={!media} title={playing ? 'Pausar' : 'Reproduzir'}>
               <Icon name={playing ? 'pause' : 'play'} />
             </button>
-            <button type="button" className="transport-button" onClick={() => jumpBy(5)} disabled={!media} title="Avançar 5 segundos">
-              <Icon name="skipForward" /><span>5s</span>
+            <button type="button" className="transport-button step" onClick={() => pularCena(1)} disabled={!media} title="Próxima cena">
+              <Icon name="skipForward" />
             </button>
+            {/* VELOCIDADE num botão só, que cicla. O tom da voz é preservado
+                pelo próprio navegador (e pelo Player, na prévia ao vivo). */}
+            <button
+              type="button"
+              className="transport-button rate"
+              onClick={() => mudarVelocidade(1)}
+              disabled={!media}
+              title="Velocidade de reprodução"
+            >{VELOCIDADES[indiceDaVelocidade].toLocaleString('pt-BR')}×</button>
           </div>
           <div className="transport-right">
             <div className="timeline-zoom" aria-label="Zoom da timeline">
@@ -3557,27 +3699,18 @@ function EditorWorkspace({
               <button type="button" onClick={() => changeZoom(Math.round(zoom) + 1)} disabled={zoom >= 8} title="Aumentar zoom (+)">+</button>
               <button type="button" className="fit" onClick={() => changeZoom(1)} disabled={zoom <= 1} title="Ver a timeline inteira (0)">Fit</button>
             </div>
-            <div className="review-speed" aria-label="Velocidade de revisão">
-              <button
-                type="button"
-                onClick={() => stepReviewSpeed(-1)}
-                disabled={!media || reviewSpeed === REVIEW_SPEEDS[0]}
-                title="Revisar mais devagar (,)"
-              >−</button>
-              <span>{reviewSpeed}×</span>
-              <button
-                type="button"
-                onClick={() => stepReviewSpeed(1)}
-                disabled={!media || reviewSpeed === REVIEW_SPEEDS[REVIEW_SPEEDS.length - 1]}
-                title="Revisar mais rápido (.)"
-              >+</button>
-            </div>
             <button type="button" className="transport-button" onClick={toggleMute} disabled={!media} title={muted ? 'Ativar áudio' : 'Silenciar'}>
               <Icon name={muted ? 'volumeOff' : 'volume'} />
             </button>
             {corrections.length > 0 && (
-              <button type="button" className="apply-corrections" onClick={() => void applyCorrections()} disabled={applyingCorrections || applyingMedia}>
-                {applyingCorrections || applyingMedia ? 'Aplicando...' : 'Aplicar'}
+              <button
+                type="button"
+                className="apply-corrections"
+                onClick={() => void applyCorrections()}
+                disabled={applyingCorrections || applyingMedia || esperandoPrompts}
+              >
+                {esperandoPrompts ? 'Escrevendo…'
+                  : applyingCorrections || applyingMedia ? 'Aplicando...' : 'Aplicar'}
               </button>
             )}
           </div>
@@ -3628,6 +3761,44 @@ function EditorWorkspace({
               .then(({ prompt }) => setDraftNote(prompt))
               .catch((error: unknown) => setDraftErro(errorMessage(error)))
               .finally(() => setDraftBusy(null));
+          };
+          // GERAR É DECISÃO FINAL: o modal fecha na hora e a escrita do prompt
+          // continua em segundo plano. Prender o aluno olhando um spinner por
+          // 17s (a latência medida do EDIT AI) para depois ele só confirmar era
+          // tempo parado à toa — nesse intervalo ele já pode marcar o próximo
+          // trecho. A marcação entra na timeline com o rótulo provisório e
+          // ganha o prompt quando ele chega.
+          const sugerirEFechar = () => {
+            if (!liveDirectory || !ehGeracao || ocupado || !draftRange) return;
+            const id = `correction:${Date.now()}`;
+            const janela = draftRange;
+            const tipo = draftKind === 'video' ? 'video' as const : 'imagem' as const;
+            commitCorrections([
+              ...corrections,
+              {
+                id,
+                start: janela.start,
+                end: janela.end,
+                note: draftNote.trim(),
+                kind: tipo,
+                destino: draftDestino,
+                escrevendo: true,
+              },
+            ]);
+            fechar();
+            const escrita = window.edvidDesktop
+              .suggestMarkPrompt(liveDirectory, janela.start, janela.end, tipo)
+              .then(({ prompt }) => atualizarMarcacao(id, { note: prompt, escrevendo: false }))
+              .catch((error: unknown) => {
+                // Sem prompt a marcação não pode ser aplicada às cegas: ela
+                // fica com o motivo à vista para o aluno escrever ou apagar.
+                atualizarMarcacao(id, { escrevendo: false, erro: errorMessage(error) });
+                notify('erro', 'Não consegui escrever o prompt', errorMessage(error));
+              })
+              .finally(() => { escritasRef.current.delete(id); });
+            // Guardada para o Aplicar poder ESPERAR por ela — ver escritasRef.
+            escritasRef.current.set(id, escrita);
+            void escrita;
           };
           const salvar = (event: FormEvent) => {
             event.preventDefault();
@@ -3697,8 +3868,8 @@ function EditorWorkspace({
                 {/* O agente escreve o prompt a partir da fala DESTE trecho. Só
                     o texto: gerar (e gastar crédito) é o Aplicar da barra. */}
                 {ehGeracao && chatConnected && (
-                  <button type="button" className="btn ghost small" disabled={ocupado} onClick={sugerir}>
-                    {draftBusy === 'sugerindo' ? 'Escrevendo…' : 'Gerar automaticamente'}
+                  <button type="button" className="btn ghost small" disabled={ocupado} onClick={sugerirEFechar}>
+                    Gerar automaticamente
                   </button>
                 )}
                 {draftKind === 'arquivo' && draftArquivo && (
@@ -3979,6 +4150,18 @@ function MemberGate({
   );
 }
 
+function resumoDaReconexao(
+  modelos: { imagem: number | null; video: number | null },
+  conta: { plano: string | null; creditos: number | null } | null,
+): string {
+  const partes = ['Reconectado'];
+  if (modelos.imagem !== null) partes.push(`${modelos.imagem} modelos de imagem`);
+  if (modelos.video !== null) partes.push(`${modelos.video} modelos de vídeo`);
+  if (conta?.plano) partes.push(`plano ${conta.plano}`);
+  if (conta?.creditos !== null && conta?.creditos !== undefined) partes.push(`${conta.creditos} créditos`);
+  return partes.join(' · ');
+}
+
 export function App() {
   const [desktopInfo, setDesktopInfo] = useState<DesktopInfo | null>(null);
   const [runtimes, setRuntimes] = useState<RuntimeCheck[]>([]);
@@ -4066,6 +4249,22 @@ export function App() {
   const [connectTesting, setConnectTesting] = useState(false);
   const [connectTested, setConnectTested] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Hubs cuja sessão vencida já foi denunciada no chat: o aviso vale UMA vez
+  // por conexão, não a cada abertura de projeto. Repetir empurraria a conversa
+  // do aluno para cima com um recado que ele já leu.
+  const sessaoAvisada = useRef(new Set<string>());
+  // Reconectar: o hub as vezes para de responder no meio de uma sessao longa,
+  // e ate agora a saida era Sair e entrar de novo pelo navegador. A nota
+  // guarda o que a religada encontrou — inclusive quantos modelos deu para
+  // ler, que e como o aluno enxerga um catalogo que veio pela metade.
+  // DUAS FASES, e a distincao e o conserto de um defeito relatado: o botao
+  // ficava em "Conclua no navegador…" muito depois de o navegador ter
+  // fechado, porque a leitura dos catalogos acontecia dentro da mesma
+  // chamada. "Da a impressao de que a reconexao nao foi feita" — e dava
+  // mesmo. Agora o login e uma etapa e a conferencia e outra, cada uma com o
+  // seu recado.
+  const [reconnecting, setReconnecting] = useState<null | 'login' | 'conferindo'>(null);
+  const [reconnectNote, setReconnectNote] = useState<string | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateChecked, setUpdateChecked] = useState<string | null>(null);
   const [catalogDraft, setCatalogDraft] = useState<Record<string, Record<string, string>>>({});
@@ -6479,6 +6678,66 @@ export function App() {
                           <div>
                             <strong className="connected-label">Conectado</strong>
                             <small>Gerando pelo crédito do seu plano</small>
+                            {/* Reconectar entra de novo na conta pelo navegador.
+                                Reaproveitar o acesso guardado era o barato e não
+                                resolve sessão vencida — medido: três religadas
+                                com 6 modelos, e um login novo devolveu 37. */}
+                            <small>Gerando pelo crédito do seu plano · Reconectar entra de novo na conta</small>
+                          </div>
+                          <div className="settings-actions">
+                            {/* RECONECTAR antes de Sair, e de proposito: quase
+                                todo caso de "o hub parou de responder" e
+                                sessao derrubada, e sair refaz o login inteiro
+                                no navegador por um problema que a religada
+                                resolve sem tirar o aluno do aplicativo. */}
+                            <button
+                              type="button"
+                              className="account-action"
+                              disabled={Boolean(reconnecting)}
+                              onClick={() => {
+                                setConnectError(null);
+                                setReconnectNote(null);
+                                setReconnecting('login');
+                                void window.edvidDesktop
+                                  .reconnectHub(connectEntry.id)
+                                  .then(async (estado) => {
+                                    // O navegador já fechou: a conta está
+                                    // conectada AGORA, e é isso que a
+                                    // interface passa a dizer enquanto lê os
+                                    // catálogos.
+                                    setAiCatalog(estado);
+                                    // Sessão nova, aviso zerado: se ela vencer
+                                    // de novo, o chat volta a denunciar.
+                                    sessaoAvisada.current.delete(connectEntry.id);
+                                    setReconnecting('conferindo');
+                                    const hubs = await window.edvidDesktop.checkHubs();
+                                    const meu = hubs.find((item) => item.id === connectEntry.id);
+                                    setReconnectNote(meu
+                                      ? resumoDaReconexao(meu.modelos, meu.conta ?? null)
+                                      : 'Reconectado.');
+                                  })
+                                  .catch((error) => setConnectError(errorMessage(error)))
+                                  .finally(() => setReconnecting(null));
+                              }}
+                            >
+                              {reconnecting === 'login' ? 'Conclua no navegador…'
+                                : reconnecting === 'conferindo' ? 'Conferindo o catálogo…'
+                                  : 'Reconectar'}
+                            </button>
+                            <button
+                              type="button"
+                              className="account-action"
+                              disabled={Boolean(reconnecting)}
+                              onClick={() => {
+                                setReconnectNote(null);
+                                void window.edvidDesktop
+                                  .disconnectHub(connectEntry.id)
+                                  .then(setAiCatalog)
+                                  .catch((error) => setConnectError(errorMessage(error)));
+                              }}
+                            >
+                              Sair
+                            </button>
                           </div>
                           <button
                             type="button"
