@@ -26,21 +26,133 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Port upstream InOut media request block
+      - name: Port upstream InOut media request block safely
         shell: bash
         run: |
           set -euo pipefail
           git fetch https://github.com/fillrochaa/edvid-desktop.git 347605d6b4c1c2339b5beecce054ed8ec63a3b08
-          if ! git cherry-pick --no-commit FETCH_HEAD; then
-            echo 'Upstream block conflicts with EDIT AI customizations; refusing unsafe auto-merge.' >&2
-            git status --short
+          git show FETCH_HEAD:src/main.ts > "$RUNNER_TEMP/upstream-main.ts"
+
+          # Let Git merge all non-conflicting functional files. Conflicts are
+          # expected because EDIT AI has newer commercial changes; never choose
+          # the upstream version wholesale for those files.
+          git cherry-pick --no-commit FETCH_HEAD || true
+          git checkout --ours agent.md scripts/test-edit-data-edits.mjs scripts/test-phase2-data.mjs src/main.ts
+          git add agent.md scripts/test-edit-data-edits.mjs scripts/test-phase2-data.mjs src/main.ts
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo 'Unexpected unresolved conflicts remain:' >&2
+            git diff --name-only --diff-filter=U >&2
             exit 1
           fi
-          # Preserve EDIT AI product identity if upstream touched visible names.
-          git diff -- src/App.tsx src/main.ts src/preload.ts src/shared.ts scripts/test-phase2-data.mjs | grep -E '^\+.*Edvid' && {
-            echo 'Unexpected upstream Edvid branding introduced in functional files.' >&2
+
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          current_path = Path('src/main.ts')
+          current = current_path.read_text(encoding='utf-8')
+          upstream = Path(__import__('os').environ['RUNNER_TEMP']).joinpath('upstream-main.ts').read_text(encoding='utf-8')
+
+          def top_function(source: str, name: str) -> str:
+              pattern = re.compile(rf'^(?:export\s+)?async function {re.escape(name)}\(', re.M)
+              match = pattern.search(source)
+              if not match:
+                  raise SystemExit(f'Upstream function {name} not found')
+              nxt = re.compile(r'^(?:export\s+)?(?:async\s+)?function\s+[A-Za-z0-9_]+\(', re.M).search(source, match.end())
+              end = nxt.start() if nxt else len(source)
+              return source[match.start():end].rstrip() + '\n\n'
+
+          # Keep EDIT AI's surrounding main.ts intact; only replace the existing
+          # split prompt function and add the three In/Out media functions from
+          # the verified public implementation.
+          cur_match = re.compile(r'^async function suggestSplitPrompt\(', re.M).search(current)
+          if not cur_match:
+              raise SystemExit('Current suggestSplitPrompt function not found')
+          cur_next = re.compile(r'^(?:export\s+)?(?:async\s+)?function\s+[A-Za-z0-9_]+\(', re.M).search(current, cur_match.end())
+          if not cur_next:
+              raise SystemExit('Could not bound current suggestSplitPrompt function')
+
+          transplant = ''.join(top_function(upstream, name) for name in (
+              'suggestSplitPrompt', 'suggestMediaPrompt', 'generateAtMark', 'attachAtMark'
+          ))
+          transplant = transplant.replace('Edvid', 'EDIT AI')
+          current = current[:cur_match.start()] + transplant + current[cur_next.start():]
+
+          # The IPC handlers live inside registerIpc. Replace only the narrow
+          # cluster between the split prompt handler and video fulfill; this
+          # preserves every EDIT AI handler before and after it.
+          start_marker = "  ipcMain.handle('preview:suggest-split-prompt'"
+          end_marker = "  ipcMain.handle('video:fulfill'"
+          u_start = upstream.find(start_marker)
+          u_end = upstream.find(end_marker, u_start)
+          c_start = current.find(start_marker)
+          c_end = current.find(end_marker, c_start)
+          if min(u_start, u_end, c_start, c_end) < 0:
+              raise SystemExit('IPC transplant markers not found')
+          ipc_cluster = upstream[u_start:u_end].replace('Edvid', 'EDIT AI')
+          current = current[:c_start] + ipc_cluster + current[c_end:]
+          current_path.write_text(current, encoding='utf-8')
+          PY
+
+          cat > scripts/test-inout-media.mjs <<'EOF'
+          import assert from 'node:assert/strict';
+          import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { pathToFileURL } from 'node:url';
+          import { buildSync } from 'esbuild';
+
+          const root = process.cwd();
+          const app = readFileSync(path.join(root, 'src', 'App.tsx'), 'utf8');
+          const main = readFileSync(path.join(root, 'src', 'main.ts'), 'utf8');
+          const preload = readFileSync(path.join(root, 'src', 'preload.ts'), 'utf8');
+          const shared = readFileSync(path.join(root, 'src', 'shared.ts'), 'utf8');
+
+          assert.match(app, /useState<'correcao' \| 'imagem' \| 'video' \| 'arquivo'>\('correcao'\)/u);
+          assert.match(app, /generateAtMark\(/u);
+          assert.match(app, /attachAtMark\(/u);
+          assert.match(app, /suggestMarkPrompt\(/u);
+          assert.match(app, /ehMidia && !paisagem &&/u);
+          assert.match(main, /async function suggestMediaPrompt\(/u);
+          assert.match(main, /async function generateAtMark\(/u);
+          assert.match(main, /async function attachAtMark\(/u);
+          assert.match(main, /preview:generate-at-mark/u);
+          assert.match(preload, /generateAtMark:/u);
+          assert.match(shared, /generateAtMark:/u);
+
+          const temp = mkdtempSync(path.join(os.tmpdir(), 'editai-inout-'));
+          try {
+            const outfile = path.join(temp, 'edit-data-edits.mjs');
+            buildSync({
+              entryPoints: [path.join(root, 'src', 'edit-data-edits.ts')],
+              bundle: true,
+              platform: 'node',
+              format: 'esm',
+              outfile,
+            });
+            const { applyEditOperation } = await import(`${pathToFileURL(outfile).href}?v=${Date.now()}`);
+            const base = { durationSec: 90, splits: [{ kind: 'image', src: 'a.png', start: 4, end: 9, position: 'top' }] };
+            const created = applyEditOperation(base, { op: 'add-split', start: 30, end: 35, position: 'top' });
+            assert.equal(created.ok, true);
+            assert.equal(created.changed, true);
+            assert.equal(created.data.splits.length, 2);
+            const added = created.data.splits.find((item) => item.start === 30);
+            assert.equal(added.src, '');
+            assert.equal(added.position, 'top');
+            const overlap = applyEditOperation(created.data, { op: 'add-split', start: 32, end: 34, position: 'top' });
+            assert.equal(overlap.ok, true);
+            assert.equal(overlap.changed, false, 'overlapping In/Out must reuse the existing split');
+          } finally {
+            rmSync(temp, { recursive: true, force: true });
+          }
+          console.log('test:inout-media ok — In/Out can request image, clip or file and create one idempotent split.');
+          EOF
+
+          # Product identity must stay EDIT AI in newly merged application code.
+          if git diff -- src/App.tsx src/main.ts src/preload.ts src/shared.ts | grep -E '^\+.*\bEdvid\b'; then
+            echo 'Unexpected upstream Edvid branding introduced.' >&2
             exit 1
-          } || true
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -50,6 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           npm run typecheck
+          node scripts/test-inout-media.mjs
           npm run test:phase2-data
 
       - name: Commit verified parity block
