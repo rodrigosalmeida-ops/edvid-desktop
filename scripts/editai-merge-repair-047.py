@@ -90,6 +90,9 @@ helper = '''function resumoDaReconexao(
 if app_anchor not in s:
     raise SystemExit('App helper anchor not found')
 s = s.replace(app_anchor, helper + app_anchor, 1)
+# O retorno de hub:check deixa `conta` opcional. Normaliza no limite da UI
+# para o helper não precisar carregar `undefined` pelo restante do código.
+s = s.replace('resumoDaReconexao(meu.modelos, meu.conta)', 'resumoDaReconexao(meu.modelos, meu.conta ?? null)', 1)
 p.write_text(s, encoding='utf-8')
 
 # 5) Reconexão adaptada ao HubGeneration que já está validado no EDIT AI.
