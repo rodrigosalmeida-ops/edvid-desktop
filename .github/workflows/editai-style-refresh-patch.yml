@@ -1,0 +1,70 @@
+name: EDIT AI style preview patch
+
+on:
+  push:
+    branches: [editai-v1]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply focused style preview fix and regression
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app_path = Path('src/App.tsx')
+          app = app_path.read_text(encoding='utf-8')
+          old = """    localStorage.setItem(styleStorageKey(projectDirectory), JSON.stringify(escolhas));
+    setStyleApplied(true);
+    // A trilha, quando escolhida, foi PEDIDA pelo app na montagem. Gerar aqui
+"""
+          new = """    localStorage.setItem(styleStorageKey(projectDirectory), JSON.stringify(escolhas));
+    setStyleApplied(true);
+    // Aplicar uma camada altera o edit-data no disco sem necessariamente
+    // chamar o agente (legenda/texto são caminhos locais). Releia o workspace
+    // agora para a prévia ao vivo e as faixas refletirem a escolha no mesmo
+    // clique, em vez de esperar um turno de IA ou reabrir o projeto.
+    await refreshWorkspace();
+    // A trilha, quando escolhida, foi PEDIDA pelo app na montagem. Gerar aqui
+"""
+          if old not in app:
+              raise SystemExit('applyStyleSelection anchor not found or already changed')
+          app_path.write_text(app.replace(old, new, 1), encoding='utf-8')
+
+          test_path = Path('scripts/test-style-layer-integration.mjs')
+          test = test_path.read_text(encoding='utf-8')
+          anchor = """assert.match(app, /async function applyStyleSelection\\(layer: StyleLayer\\)[\\s\\S]{0,2200}?buildPhase2\\(projectDirectory, escolhas, \\[layer\\]\\)/u, 'renderer aplica somente a camada escolhida');
+"""
+          addition = anchor + """const applyStyleStart = app.indexOf('async function applyStyleSelection(layer: StyleLayer)');
+const applyStyleEnd = app.indexOf('\\n  async function approveCleanCut(', applyStyleStart);
+assert.ok(applyStyleStart >= 0 && applyStyleEnd > applyStyleStart, 'applyStyleSelection precisa ser isolável no renderer');
+const applyStyleBody = app.slice(applyStyleStart, applyStyleEnd);
+const buildIndex = applyStyleBody.indexOf('buildPhase2(projectDirectory, escolhas, [layer])');
+const refreshIndex = applyStyleBody.indexOf('await refreshWorkspace()');
+assert.ok(buildIndex >= 0 && refreshIndex > buildIndex, 'aplicar estilo precisa recarregar workspace/prévia depois de persistir a camada');
+"""
+          if anchor not in test:
+              raise SystemExit('style integration test anchor not found')
+          test_path.write_text(test.replace(anchor, addition, 1), encoding='utf-8')
+
+          Path('.github/workflows/editai-style-refresh-patch.yml').unlink()
+      - name: Verify focused regression
+        run: |
+          npm ci
+          npm run typecheck
+          npm run test:style-layer-integration
+      - name: Commit focused fix
+        run: |
+          git config user.name "EDIT AI Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/App.tsx scripts/test-style-layer-integration.mjs .github/workflows/editai-style-refresh-patch.yml
+          git commit -m "fix(styles): refresh live preview after layer apply"
+          git push origin HEAD:editai-v1
