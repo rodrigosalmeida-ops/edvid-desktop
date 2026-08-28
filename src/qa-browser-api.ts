@@ -390,15 +390,17 @@ export function createQaBrowserApi(): EdvidDesktopApi {
     // AS TRES ACOES DA MARCACAO na bancada: mesma forma do caminho real —
     // insert de tela cheia, ou split criado e preenchido quando o destino e
     // tela dividida.
-    generateAtMark: async (_directory, start, end, kind, prompt, destino) => {
-      if (!prompt.trim()) throw new Error('Escreva o que a IA deve criar neste trecho.');
+    pickMediaFile: async () => '/bancada/midia-escolhida.png',
+    applyMarkedMedia: async (_directory, items) => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
-      if (/falhar/iu.test(prompt)) throw new Error('A IA não devolveu o arquivo deste trecho.');
-      return qaColocarNaMarcacao(start, end, kind === 'video' ? 'video' : 'image', destino);
-    },
-    attachAtMark: async (_directory, start, end, destino) => {
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      return qaColocarNaMarcacao(start, end, 'image', destino);
+      const erros = items.map((item) => (/falhar/iu.test(item.prompt ?? '') ? 'A IA não devolveu o arquivo deste trecho.' : ''));
+      let colocados = 0;
+      for (const [index, item] of items.entries()) {
+        if (erros[index]) continue;
+        await qaColocarNaMarcacao(item.start, item.end, item.kind === 'video' ? 'video' : 'image', item.destino);
+        colocados += 1;
+      }
+      return { colocados, erros };
     },
     suggestMarkPrompt: async (_directory, _start, _end, kind) => {
       await new Promise((resolve) => setTimeout(resolve, 900));

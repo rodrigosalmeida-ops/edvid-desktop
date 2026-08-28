@@ -514,20 +514,23 @@ export type EdvidDesktopApi = {
   // so e escolhido em projeto VERTICAL — no horizontal a tela dividida
   // encolheria o quadro a toa e a entrega e sempre tela cheia. As tres
   // devolvem o edit-data ja atualizado (ou null quando o aluno cancela).
-  generateAtMark: (
+  // Seletor puro: devolve o caminho, sem copiar nem colocar. A escolha
+  // acontece na hora de MARCAR; a colocacao acontece no lote do Aplicar.
+  pickMediaFile: () => Promise<string | null>;
+  // O LOTE: todas as marcacoes de midia de uma vez. Os pedidos de geracao
+  // entram na fila ANTES do fulfill, entao os clipes saem num lote so do hub
+  // em vez de uma ida por marcacao.
+  applyMarkedMedia: (
     directory: string,
-    start: number,
-    end: number,
-    kind: 'imagem' | 'video',
-    prompt: string,
-    destino: 'tela-cheia' | 'tela-dividida',
-  ) => Promise<Record<string, unknown>>;
-  attachAtMark: (
-    directory: string,
-    start: number,
-    end: number,
-    destino: 'tela-cheia' | 'tela-dividida',
-  ) => Promise<Record<string, unknown> | null>;
+    items: ReadonlyArray<{
+      start: number;
+      end: number;
+      kind: 'imagem' | 'video' | 'arquivo';
+      destino: 'tela-cheia' | 'tela-dividida';
+      prompt?: string;
+      arquivo?: string;
+    }>,
+  ) => Promise<{ colocados: number; erros: string[] }>;
   suggestMarkPrompt: (
     directory: string,
     start: number,
