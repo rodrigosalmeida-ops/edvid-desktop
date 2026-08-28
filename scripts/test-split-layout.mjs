@@ -44,6 +44,17 @@ try {
   assert.equal(ehVideo('sem-extensao', 'video'), true, 'sem extensao conhecida o rotulo continua valendo');
   assert.doesNotThrow(() => aoFalharMidia(), 'falha de midia auxiliar precisa ser tolerada');
 
+  // O video-base deve existir em um unico caminho estrutural. Um ternario
+  // com <DynamicVideo /> nos dois ramos remonta o elemento na emenda e produz
+  // frame preto/congelado no Player.
+  const baseStart = mainSource.indexOf('const BaseWithSplits: React.FC');
+  const baseEnd = mainSource.indexOf('// ============ SOUNDTRACK', baseStart);
+  const baseSource = mainSource.slice(baseStart, baseEnd);
+  assert.equal((baseSource.match(/<DynamicVideo \/>/g) || []).length, 1, 'video-base precisa ter uma unica montagem React');
+  assert.ok(!baseSource.includes('{s && g ? ('), 'BaseWithSplits nao pode voltar ao ternario que remonta o video');
+  assert.ok(baseSource.includes('height: g ? g.videoHeight : height'), 'sem split o container precisa continuar ocupando o quadro inteiro');
+  assert.ok(baseSource.includes('translateY(${g ? g.videoOffset : 0}px)'), 'o deslocamento muda por estilo, nao por montagem');
+
   // 1. A divisa NAO fica no meio — a regressao que o aluno viu no video.
   assert.notEqual(SPLIT_DIVIDER, 0.5, 'divisa no meio e o defeito, nao o padrao');
   assert.ok(Math.abs(SPLIT_DIVIDER - 0.39) < 1e-9, 'a marca do aluno caiu em 0,39 da altura');

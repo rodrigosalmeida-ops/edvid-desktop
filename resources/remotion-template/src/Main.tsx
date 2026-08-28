@@ -782,15 +782,33 @@ const BaseWithSplits: React.FC = () => {
           </Sequence>
         );
       })}
-      {s && g ? (
-        <div style={{position: 'absolute', left: 0, width, height: g.videoHeight, top: g.videoTop, overflow: 'hidden'}}>
-          <div style={{position: 'absolute', left: 0, top: 0, width, height, transform: `translateY(${g.videoOffset}px)`}}>
-            <DynamicVideo />
-          </div>
+      {/* O video-base permanece na MESMA posicao da arvore React.
+          Trocar entre um DynamicVideo solto e outro dentro de containers
+          desmontava/remontava o elemento no quadro da emenda, causando preto
+          ou frame congelado. Agora somente a geometria muda. */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          width,
+          height: g ? g.videoHeight : height,
+          top: g ? g.videoTop : 0,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width,
+            height,
+            transform: `translateY(${g ? g.videoOffset : 0}px)`,
+          }}
+        >
+          <DynamicVideo />
         </div>
-      ) : (
-        <DynamicVideo />
-      )}
+      </div>
     </AbsoluteFill>
   );
 };
