@@ -1,0 +1,58 @@
+name: EDIT AI 0.48 Integration
+
+on:
+  push:
+    branches:
+      - editai-048-integration
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "EDIT AI Integration Bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Fetch upstream 0.48
+        run: |
+          git remote add upstream https://github.com/fillrochaa/edvid-desktop.git || true
+          git fetch upstream b47be8c1691cfa342f90d8636908450b1af87379
+
+      - name: Cherry-pick upstream 0.48
+        run: |
+          set +e
+          git cherry-pick b47be8c1691cfa342f90d8636908450b1af87379
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "--- unresolved files ---"
+            git diff --name-only --diff-filter=U
+            echo "--- status ---"
+            git status --short
+            exit "$status"
+          fi
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full EDIT AI verification
+        run: npm run verify:editai
+
+      - name: Push validated integration
+        run: git push origin HEAD:editai-048-integration
