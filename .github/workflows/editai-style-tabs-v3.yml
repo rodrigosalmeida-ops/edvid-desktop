@@ -1,0 +1,52 @@
+name: EDIT AI style tabs v3
+
+on:
+  push:
+    branches:
+      - editai-style-tabs-20260827
+    paths:
+      - .github/workflows/editai-style-tabs-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: editai-style-tabs-20260827
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply guarded patch
+        run: python .github/scripts/patch-style-tabs.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify style tabs parity
+        run: |
+          npm run typecheck
+          npm run test:style-tabs
+          npm run test:style-layers
+          npm run test:style-layer-integration
+          npm run test:phase2-data
+
+      - name: Commit verified style tabs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/editai-style-tabs-once.yml .github/workflows/editai-style-tabs-v2.yml .github/workflows/editai-style-tabs-v3.yml .github/scripts/patch-style-tabs.py
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/App.tsx src/index.css scripts/test-style-tabs.mjs package.json .github/
+          git commit -m "feat(styles): add contextual layer tabs"
+          git push origin HEAD:editai-style-tabs-20260827
