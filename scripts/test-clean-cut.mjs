@@ -175,6 +175,18 @@ try {
   // Frase vazia não derruba a regra.
   assert.equal(refeito('', 'qualquer coisa'), false);
 
+  // --- Aprovação leva os ajustes e retoma o pedido -------------------------
+  const appSource = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');
+  assert.match(appSource, /cutsPendingRef = useRef\(cutsPending\)/u,
+    'aprovação precisa enxergar o estado atual dos ajustes pendentes');
+  assert.match(appSource,
+    /async function approveCleanCut[\s\S]{0,2200}?if \(cutsPendingRef\.current\)[\s\S]{0,900}?await applyTimelineEdits\(\)[\s\S]{0,900}?setApprovingCut\(false\);\s*return;/u,
+    'aprovação aplica os ajustes antes e para se eles falharem');
+  assert.match(appSource, /RETOME AGORA/u,
+    'aprovação manda a IA retomar o pedido interrompido pelo corte');
+  assert.match(appSource, /releia a transcrição e o EDL antes de usar qualquer tempo/u,
+    'tempos precisam ser relidos após trims/deletes do usuário');
+
   console.log('test:clean-cut ok — silêncio manda, bordas apertadas e take refeito descartado sem levar frase boa junto.');
 } finally {
   rmSync(work, { recursive: true, force: true });

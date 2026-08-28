@@ -3836,6 +3836,10 @@ export function App() {
   // e EXPORTAR, nao um modo de ver.
   const [renderPending, setRenderPending] = useState(false);
   const [cutsPending, setCutsPending] = useState(false);
+  // A aprovação roda dentro de callback assíncrono; use o valor atual,
+  // não um snapshot de render anterior, para nunca aprovar EDL velho.
+  const cutsPendingRef = useRef(cutsPending);
+  cutsPendingRef.current = cutsPending;
   // Muda quando um render termina: o EditorWorkspace re-busca os dados da
   // previa (e o pendente cai sozinho, pela impressao digital).
   const [renderStamp, setRenderStamp] = useState('');
@@ -4970,10 +4974,27 @@ export function App() {
   async function approveCleanCut(messageId: string) {
     if (approvingCut || sending) return;
     setApprovingCut(true);
+    // O corte aprovado precisa ser exatamente o que o usuário editou.
+    // Se trims/deletes ainda estão pendentes, materialize antes; falha
+    // interrompe a aprovação em vez de oficializar silenciosamente o EDL velho.
+    if (cutsPendingRef.current) {
+      const applied = await applyTimelineEdits().catch(() => false);
+      if (!applied) {
+        setMessages((current) => [...current, {
+          id: `error:${Date.now()}`,
+          role: 'system',
+          text: 'Não consegui aplicar os seus ajustes da timeline antes de aprovar. Resolva o erro indicado e aprove novamente, para o corte aprovado ser exatamente o que você editou.',
+        }]);
+        setApprovingCut(false);
+        return;
+      }
+    }
     const prompt = [
       'Aprovado. Considere o corte limpo oficialmente aprovado e preserve este gate.',
+      'O usuário pode ter ajustado a timeline antes de aprovar; o corte aprovado é o que está no disco agora, então releia a transcrição e o EDL antes de usar qualquer tempo.',
+      'Se havia um pedido em andamento quando você pediu o corte, RETOME AGORA sem pedir que o usuário repita: o corte era o gate que faltava.',
       'Não faça perguntas de estilo no chat: o usuário escolherá tipo de edição, headline, legendas e elementos visualmente na aba Estilos.',
-      'Aguarde o briefing estruturado que será enviado automaticamente ao clicar em “Salvar e aplicar”.',
+      'Sem pedido em andamento, apenas confirme e aguarde o briefing estruturado que será enviado automaticamente ao aplicar os estilos.',
     ].join(' ');
     const sent = await dispatchMessage(prompt, 'Aprovado');
     if (sent) {
