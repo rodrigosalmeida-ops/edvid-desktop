@@ -739,11 +739,33 @@ async function inspectProjectMedia(directory: string): Promise<InspectedProjectM
   const width = rotated ? stream.height : stream.width;
   const height = rotated ? stream.width : stream.height;
   const kind = mediaKind(candidate.relativePath, candidate.tier);
-  const token = authorizeMediaToken(candidate.absolutePath, `${candidate.modifiedAt}`);
+
+  // O primeiro preview do projeto precisa da mesma proteção do preview
+  // mapeado: ProRes/DNxHD/CineForm existem no disco, mas o Chromium não os
+  // decodifica diretamente. Reutiliza o MESMO fingerprint/cache do caminho
+  // de buildProjectSources para nunca transcodificar a mesma fonte duas vezes.
+  const fingerprint = await fingerprintOf(candidate.absolutePath) ?? `${candidate.modifiedAt}`;
+  let playable: string | null = candidate.absolutePath;
+  if (precisaProxy(stream.codec_name)) {
+    playable = await proxyReady(candidate.absolutePath, fingerprint);
+    if (!playable) {
+      void ensurePreviewProxy(
+        candidate.absolutePath,
+        fingerprint,
+        Number(probe.format?.duration) || 0,
+        { largura: stream.width, altura: stream.height, rotacao: rotation },
+      ).then((proxyPath) => {
+        if (proxyPath) broadcastCodexEvent({ type: 'workspace-refresh' });
+      }).catch(() => {});
+    }
+  }
+  const token = playable
+    ? authorizeMediaToken(playable, playable === candidate.absolutePath ? fingerprint : 'proxy')
+    : null;
   return {
     absolutePath: candidate.absolutePath,
     media: {
-      url: `edvid-media://local/${token}`,
+      url: token ? `edvid-media://local/${token}` : null,
       name: path.basename(candidate.absolutePath),
       width,
       height,

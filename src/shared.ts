@@ -38,7 +38,8 @@ export type ProjectSummary = {
 };
 
 export type ProjectMedia = {
-  url: string;
+  // null = a fonte existe, mas o navegador ainda aguarda um proxy reproduzível.
+  url: string | null;
   name: string;
   width: number;
   height: number;

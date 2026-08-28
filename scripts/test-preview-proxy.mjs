@@ -1,7 +1,7 @@
 // Teste do PROXY DE PRÉVIA — a cópia que o navegador consegue tocar.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -89,6 +89,22 @@ try {
   assert.ok(argsGpu.indexOf('-hwaccel_output_format') < argsGpu.indexOf('-i'));
   assert.equal(argsGpu[argsGpu.indexOf('-c:v') + 1], 'h264_videotoolbox');
   assert.equal(argsGpu.includes('-pix_fmt'), false, 'GPU integral não força download por pix_fmt');
+
+  // --- 4b. O PRIMEIRO PREVIEW TAMBÉM USA PROXY ------------------------------
+  const mainSource = readFileSync(path.join(projectRoot, 'src', 'main.ts'), 'utf8');
+  const appSource = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');
+  const sharedSource = readFileSync(path.join(projectRoot, 'src', 'shared.ts'), 'utf8');
+  assert.match(
+    mainSource,
+    /async function inspectProjectMedia[\s\S]{0,6500}?precisaProxy\(stream\.codec_name\)[\s\S]{0,2600}?ensurePreviewProxy\([\s\S]{0,1800}?workspace-refresh/u,
+    'inspectProjectMedia precisa preparar proxy antes do Corte Limpo',
+  );
+  assert.match(
+    appSource,
+    /mapped \? Boolean\(activeSourceId\)[\s\S]{0,500}?: !media\.url/u,
+    'palco precisa explicar proxy pendente também no primeiro preview',
+  );
+  assert.match(sharedSource, /export type ProjectMedia = \{[\s\S]{0,220}?url: string \| null;/u);
 
   // --- 5. O ANDAMENTO -------------------------------------------------------
   assert.equal(proxyProgress('out_time_ms=80000000\n', 160), 0.5);
