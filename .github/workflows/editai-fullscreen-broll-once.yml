@@ -26,8 +26,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch https://github.com/fillrochaa/edvid-desktop.git 3c509e56911170bf757d4c1fed181eebdffa5437^ 3c509e56911170bf757d4c1fed181eebdffa5437
-          git diff FETCH_HEAD^ FETCH_HEAD -- resources/remotion-template/src/Main.tsx src/edit-data-edits.ts > "$RUNNER_TEMP/broll.patch"
+          git fetch https://github.com/fillrochaa/edvid-desktop.git 4f04eec00110430cbb8a2cc872119e0954452146 3c509e56911170bf757d4c1fed181eebdffa5437
+          git diff 4f04eec00110430cbb8a2cc872119e0954452146 3c509e56911170bf757d4c1fed181eebdffa5437 -- resources/remotion-template/src/Main.tsx src/edit-data-edits.ts > "$RUNNER_TEMP/broll.patch"
           if ! git apply --3way "$RUNNER_TEMP/broll.patch"; then
             echo 'Narrow B-roll patch conflicts with current EDIT AI template; refusing unsafe replacement.' >&2
             git status --short >&2
