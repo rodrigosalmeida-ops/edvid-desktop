@@ -349,7 +349,14 @@ function Icon({ name }: { name: IconName }) {
     flagIn: <><path d="M11.6 2.4v11.2" /><path d="M11.6 3.4H4.2l2.4 2.7-2.4 2.7h7.4z" /></>,
     flagOut: <><path d="M4.4 2.4v11.2" /><path d="M4.4 3.4h7.4L9.4 6.1l2.4 2.7H4.4z" /></>,
     // NAVALHA, nao tesoura: e o gesto de cortar a fita num ponto so.
-    razor: <><path d="M2.4 9.2h11.2" /><path d="M3.8 9.2V5.4h8.4v3.8" /><path d="M6.2 5.4v3.8M9.8 5.4v3.8" /></>,
+    //
+    // Terceiro desenho, e os dois primeiros erraram por motivos diferentes: um
+    // retangulo com tracinhos dentro virou uma pilula, e uma lamina com bico
+    // virou uma seta apontando para a direita. O que le como navalha e a
+    // silhueta de FACA — corpo largo com o gume reto embaixo e um cabo curto
+    // destacado na diagonal. Conferido ampliado e no tamanho real de 12px, que
+    // e onde a maioria dos desenhos desmonta.
+    razor: <><path d="M2 13.4 9 6.4l2.6 2.6-4.4 4.4z" /><path d="M9.8 5.6 12.2 3.2 14 5l-2.4 2.4z" /></>,
     send: <path d="M8 12.8V3.4M3.9 7.4 8 3.3l4.1 4.1" />,
     stop: <rect x="4.4" y="4.4" width="7.2" height="7.2" rx="1.6" />,
     undo: <path d="M3.2 6.4h6.2a3.4 3.4 0 0 1 0 6.8H6.6M3.2 6.4l3-3M3.2 6.4l3 3" />,
