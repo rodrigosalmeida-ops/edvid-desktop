@@ -70,7 +70,7 @@ jobs:
             fi
 
             python scripts/editai-merge-repair-047.py
-            git add src/App.tsx
+            git add src/App.tsx src/main.ts src/preload.ts
             GIT_EDITOR=true git cherry-pick --continue
           fi
 
@@ -109,6 +109,7 @@ jobs:
             merge-candidate.diff
             src/App.tsx
             src/main.ts
+            src/preload.ts
             src/shared.ts
             src/styles.css
             src/qa-browser-api.ts
