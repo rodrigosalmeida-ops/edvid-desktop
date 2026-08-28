@@ -1,0 +1,32 @@
+name: EDIT AI Upstream 0.47 Full Verify
+
+on:
+  push:
+    branches:
+      - editai-upstream-047-verify
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout clean promotion candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full EDIT AI verification
+        run: npm run verify:editai
