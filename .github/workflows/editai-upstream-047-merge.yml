@@ -68,6 +68,27 @@ jobs:
               git diff --name-only --diff-filter=U > merge-evidence/unresolved.txt
               exit 1
             fi
+
+            # O union juntou dois caminhos legítimos do popover, mas deixou o
+            # novo fluxo sugerirEFechar dentro da função sugerir. Fecha a função
+            # antiga e aponta o botão automático ao fluxo 0.47 em segundo plano.
+            python - <<'PY'
+          from pathlib import Path
+          p = Path('src/App.tsx')
+          s = p.read_text(encoding='utf-8')
+          old = ".finally(() => setDraftBusy(null));\n          // GERAR É DECISÃO FINAL"
+          new = ".finally(() => setDraftBusy(null));\n          };\n          // GERAR É DECISÃO FINAL"
+          if old not in s:
+              raise SystemExit('App merge repair anchor not found')
+          s = s.replace(old, new, 1)
+          s = s.replace(
+              'className="btn ghost small" disabled={ocupado} onClick={sugerir}>\n                    {draftBusy === \'sugerindo\' ? \'Escrevendo…\' : \'Gerar automaticamente\'}',
+              'className="btn ghost small" disabled={ocupado} onClick={sugerirEFechar}>\n                    Gerar automaticamente',
+              1,
+          )
+          p.write_text(s, encoding='utf-8')
+          PY
+            git add src/App.tsx
             GIT_EDITOR=true git cherry-pick --continue
           fi
 
@@ -88,15 +109,6 @@ jobs:
         id: typecheck
         continue-on-error: true
         run: npm run typecheck
-
-      - name: Print App syntax context on failure
-        if: steps.typecheck.outcome != 'success'
-        shell: bash
-        run: |
-          echo '===== App.tsx 3850-3925 ====='
-          nl -ba src/App.tsx | sed -n '3850,3925p'
-          echo '===== App.tsx 6840-6910 ====='
-          nl -ba src/App.tsx | sed -n '6840,6910p'
 
       - name: Timeline tests merged candidate
         id: timeline
