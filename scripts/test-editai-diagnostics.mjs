@@ -101,6 +101,11 @@ try {
   const mediaSmokeScript = readFileSync(path.join(root, 'scripts', 'editai-media-smoke-windows.ps1'), 'utf8');
   assert.doesNotMatch(mediaSmokeScript, /Resolve-Path\s+\$SmokeReportPath/u, 'media smoke nao pode exigir relatorio futuro');
   assert.match(mediaSmokeScript, /Test-Path\s+\$SmokeReportPath\s+-PathType\s+Leaf/u);
+  assert.match(mediaSmokeScript, /if \(\$ffmpegEntry -and \$ffmpegEntry\.available -and \$ffmpegEntry\.executablePath -and[\s\S]*\$ffprobeEntry -and \$ffprobeEntry\.available -and \$ffprobeEntry\.executablePath\)/u,
+    'relatorio BootOnly sem runtimes precisa cair no fallback staged');
+  assert.match(mediaSmokeScript, /if \(-not \$ffmpeg -or -not \$ffprobe\)/u,
+    'fallback staged precisa funcionar mesmo quando o smoke report ja existe');
+  assert.match(mediaSmokeScript, /smoke report sem runtimes utilizaveis; usando FFmpeg\/FFprobe staged/u);
   assert.match(mediaSmokeScript, /resources\\runtimes\\win32-x64/u);
   assert.match(mediaSmokeScript, /Get-ChildItem[\s\S]*ffmpeg\.exe/u);
   assert.match(mediaSmokeScript, /Get-ChildItem[\s\S]*ffprobe\.exe/u);
@@ -114,7 +119,7 @@ try {
   assert.equal(splitPromptHandlers.length, 1, 'preview:suggest-split-prompt deve ser registrado uma unica vez');
   assert.match(mainSource, /--editai-smoke-boot-only/u);
 
-  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin, fallback de media e IPC unico protegidos.');
+  console.log('test:editai-diagnostics ok — diagnostico seguro, smoke thin, fallback BootOnly de media e IPC unico protegidos.');
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
