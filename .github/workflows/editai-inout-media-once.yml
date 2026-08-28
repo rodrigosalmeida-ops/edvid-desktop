@@ -1,0 +1,64 @@
+name: EDIT AI InOut media parity once
+
+on:
+  push:
+    branches:
+      - editai-inout-media-20260828
+    paths:
+      - .github/workflows/editai-inout-media-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout EDIT AI feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: editai-inout-media-20260828
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Port upstream InOut media request block
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/fillrochaa/edvid-desktop.git 347605d6b4c1c2339b5beecce054ed8ec63a3b08
+          if ! git cherry-pick --no-commit FETCH_HEAD; then
+            echo 'Upstream block conflicts with EDIT AI customizations; refusing unsafe auto-merge.' >&2
+            git status --short
+            exit 1
+          fi
+          # Preserve EDIT AI product identity if upstream touched visible names.
+          git diff -- src/App.tsx src/main.ts src/preload.ts src/shared.ts scripts/test-phase2-data.mjs | grep -E '^\+.*Edvid' && {
+            echo 'Unexpected upstream Edvid branding introduced in functional files.' >&2
+            exit 1
+          } || true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify port
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:phase2-data
+
+      - name: Commit verified parity block
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-inout-media-once.yml
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(media): request image clip or file from InOut marks"
+          git push origin HEAD:editai-inout-media-20260828
