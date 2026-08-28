@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const media = readFileSync('src/media-request.ts','utf8');
+const main = readFileSync('src/main.ts','utf8');
+const clean = readFileSync('resources/helpers/clean_cut.py','utf8');
+const remotion = readFileSync('resources/remotion-template/src/Main.tsx','utf8');
+const cleanTs = readFileSync('src/clean-cut.ts','utf8');
+assert.match(media, /function assinatura\(/u);
+assert.match(media, /export function arquivoLegado\(/u);
+assert.match(media, /assinatura\(limpo\)/u);
+assert.match(main, /async function migrarNomeLegado\(/u);
+assert.match(main, /migrarNomeLegado\(clipsDirectory, request, 'video'\)/u);
+assert.match(main, /migrarNomeLegado\(imagesDirectory, request, 'imagem'\)/u);
+assert.match(clean, /RETAKE_MIN_COVERAGE = 0\.58/u);
+assert.match(clean, /def subsequence_length\(/u);
+assert.match(cleanTs, /secondary_removed/u);
+assert.doesNotMatch(remotion, /<AbsoluteFill style=\{\{opacity, backgroundColor: 'black'\}\}>/u);
+console.log('test:editai-048 ok — retakes por cobertura, fala secundaria, nomes unicos e B-roll sem fade.');

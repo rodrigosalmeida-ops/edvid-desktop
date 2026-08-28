@@ -40,7 +40,7 @@ import {
   type ImageUse,
 } from './image-format';
 import { applyEditOperations, type EditOperation } from './edit-data-edits';
-import { colocacaoPara, type MediaRequest, parseMediaRequests } from './media-request';
+import { arquivoLegado, colocacaoPara, type MediaRequest, parseMediaRequests } from './media-request';
 import {
   planejarProxy,
   precisaProxy,
@@ -4880,6 +4880,16 @@ async function readVideoRequests(projectDirectory: string): Promise<MediaRequest
   }
 }
 
+async function migrarNomeLegado(pasta: string, request: MediaRequest, kind: 'video' | 'imagem'): Promise<void> {
+  const antigo = arquivoLegado(request.prompt, kind);
+  if (antigo === request.arquivo) return;
+  const destino = path.join(pasta, request.arquivo);
+  if (await stat(destino).then(() => true, () => false)) return;
+  const origem = path.join(pasta, antigo);
+  if (!await stat(origem).then(() => true, () => false)) return;
+  await rename(origem, destino);
+}
+
 function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> {
   if (videoGenJob?.directory === projectDirectory) return videoGenJob.promise;
   const job = (async (): Promise<ImageGenState> => {
@@ -4891,6 +4901,7 @@ function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> 
     const pending: MediaRequest[] = [];
     let placed = 0;
     for (const request of requests) {
+      await migrarNomeLegado(clipsDirectory, request, 'video');
       try {
         await stat(path.join(clipsDirectory, request.arquivo));
         if (request.janela && await placeGeneratedMedia(projectDirectory, request, 'clipes').catch(() => false)) placed += 1;
@@ -5112,6 +5123,7 @@ function fulfillImageRequests(projectDirectory: string): Promise<ImageGenState> 
     const pending = [] as MediaRequest[];
     let placed = 0;
     for (const request of requests) {
+      await migrarNomeLegado(imagesDirectory, request, 'imagem');
       try {
         await stat(path.join(imagesDirectory, request.arquivo));
         if (request.janela && await placeGeneratedMedia(projectDirectory, request, 'imagens').catch(() => false)) placed += 1;

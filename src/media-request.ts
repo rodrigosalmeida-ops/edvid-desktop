@@ -57,8 +57,44 @@ const JANELA_MINIMA = 0.5;
 // nome derivado tem uma propriedade util de graca: o mesmo pedido gera o mesmo
 // nome, entao pedir duas vezes o mesmo clipe encontra o arquivo no disco e nao
 // gasta credito de novo.
-export function arquivoDoPrompt(prompt: string, kind: MediaKind): string {
-  const base = prompt
+//
+// O NOME PRECISA SER DO PROMPT INTEIRO, e nao das primeiras palavras dele.
+// Eram as seis primeiras, e dois pedidos DIFERENTES colidiram no mesmo arquivo:
+// "Over-the-shoulder shot of a man..." e "Over-the-shoulder shot of a
+// person..." normalizam os dois para `over-the-shoulder-shot-of-a` — o hifen
+// de "over-the-shoulder" sozinho ja come tres das seis palavras, e as que
+// distinguiriam os pedidos nunca chegam ao nome. Os dois clipes foram gerados
+// e pagos, um sobrescreveu o outro no disco, e as DUAS janelas da edicao
+// apontaram para o mesmo arquivo: o aluno viu o primeiro video repetido no
+// lugar do segundo.
+//
+// A ASSINATURA no fim resolve sem perder nada: as palavras continuam la para
+// o arquivo ser reconhecivel na pasta, e o sufixo vem do prompt COMPLETO,
+// entao prompt igual continua dando nome igual (a economia de credito segue
+// valendo) e prompt diferente nunca mais cai no mesmo lugar.
+function assinatura(texto: string): string {
+  // FNV-1a de 32 bits: quatro linhas, sem dependencia, e a colisao aqui custa
+  // um arquivo sobrescrito, nao um dado corrompido.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < texto.length; i += 1) {
+    hash ^= texto.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(6, '0').slice(-6);
+}
+
+// O NOME QUE ESTE MODULO USAVA ANTES DA ASSINATURA — so as palavras.
+//
+// Existe para nao cobrar duas vezes pelo mesmo clipe: quem ja tem midia gerada
+// no disco com o nome antigo tem midia PAGA, e trocar o esquema de nomes nao
+// pode transformar isso em credito gasto de novo. Quem chama procura por este
+// nome quando o novo nao existe e renomeia o arquivo no lugar.
+export function arquivoLegado(prompt: string, kind: MediaKind): string {
+  return `${palavrasDoPrompt(prompt)}${EXTENSAO[kind]}`;
+}
+
+function palavrasDoPrompt(prompt: string): string {
+  return prompt
     .normalize('NFD')
     .replace(/[̀-ͯ]/gu, '')
     .toLowerCase()
@@ -67,8 +103,12 @@ export function arquivoDoPrompt(prompt: string, kind: MediaKind): string {
     .split('-')
     .filter(Boolean)
     .slice(0, 6)
-    .join('-');
-  return `${base || 'midia'}${EXTENSAO[kind]}`;
+    .join('-') || 'midia';
+}
+
+export function arquivoDoPrompt(prompt: string, kind: MediaKind): string {
+  const limpo = prompt.trim();
+  return `${palavrasDoPrompt(limpo)}-${assinatura(limpo)}${EXTENSAO[kind]}`;
 }
 
 function numero(valor: unknown): number | null {

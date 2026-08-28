@@ -629,15 +629,19 @@ export const CARD_TOP = 90;
 // B-ROLL DE TELA CHEIA: cobre o quadro inteiro, sem cartao, sem whoosh e sem a
 // subida de entrada. E um CORTE PARA outra imagem, nao um adorno por cima do
 // apresentador — o cartao arredondado e idioma de vertical curto e no longform
-// horizontal ele fica pequeno no meio da tela. Fade curto nas duas pontas para
-// a emenda nao piscar, e o mesmo Ken-Burns discreto dos cartoes.
+// horizontal ele fica pequeno no meio da tela.
+//
+// CORTE SECO, sem fade nenhum. Havia um fade de 5 quadros em cada ponta aqui,
+// com a justificativa de "a emenda nao piscar" — a MESMA que ja tinha sido
+// derrubada no SplitMedia na 0.33.1, e pela mesma razao: com dois b-rolls
+// seguidos, o fade de saida de um cruza com o de entrada do outro e vira uma
+// DISSOLVENCIA. Foi o que o aluno viu num print, com dois rostos sobrepostos,
+// depois de ja ter pedido para eliminar fade: "todos os cortes devem ser
+// diretos". Corte de midia e como corte de take: instantaneo.
+//
+// O Ken-Burns fica: e movimento DENTRO do plano, nao transicao entre planos.
 const InsertFullscreen: React.FC<{src: string; totalFrames: number; kind?: 'image' | 'video'; crop?: MediaCrop}> = ({src, totalFrames, kind, crop}) => {
   const frame = useCurrentFrame();
-  const fade = 5;
-  const opacity = Math.min(
-    interpolate(frame, [0, fade], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
-    interpolate(frame, [totalFrames - fade, totalFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
-  );
   const scale = interpolate(frame, [0, totalFrames], [1, 1.05], {extrapolateRight: 'clamp'});
   const clip = mediaCropCss(crop);
   const midia: React.CSSProperties = {
@@ -645,7 +649,7 @@ const InsertFullscreen: React.FC<{src: string; totalFrames: number; kind?: 'imag
     ...(clip ? {clipPath: clip} : null),
   };
   return (
-    <AbsoluteFill style={{opacity, backgroundColor: 'black'}}>
+    <AbsoluteFill style={{backgroundColor: 'black'}}>
       <AbsoluteFill style={{scale: String(scale)}}>
         {kind === 'video'
           ? <OffthreadVideo src={staticFile(src)} muted style={midia} />

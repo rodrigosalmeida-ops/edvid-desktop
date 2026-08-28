@@ -27,6 +27,9 @@ export type CleanCutEdl = {
   total_duration_s: number;
   // Tentativas abandonadas que o helper descartou (o aluno recomeçou a frase).
   retakes_removed: number;
+  // Trechos que sairam por ESTAREM MUITO ABAIXO do nivel da fala principal:
+  // outra pessoa ao fundo, ou o proprio aluno lendo o roteiro em voz baixa.
+  secondary_removed: number;
 };
 
 // Ordem das fontes: a MESMA da timeline, senao o corte sai numa ordem e o
@@ -67,6 +70,7 @@ export function parseEdl(raw: unknown): CleanCutEdl | null {
     total_duration_s: Number(document.total_duration_s)
       || parsed.reduce((total, range) => total + (range.end - range.start), 0),
     retakes_removed: Number(document.retakes_removed) || 0,
+    secondary_removed: Number(document.secondary_removed) || 0,
   };
 }
 
@@ -205,6 +209,7 @@ export function cleanCutSummary(edl: CleanCutEdl, originalSeconds: number): stri
   };
   const blocks = edl.ranges.length;
   const retakes = edl.retakes_removed;
+  const secundarias = edl.secondary_removed;
   return [
     `Corte limpo pronto: ${blocks} ${blocks === 1 ? 'bloco' : 'blocos'} de fala.`,
     `Tirei ${clock(removed)} de pausa e silêncio (${percent}%), e o vídeo ficou com ${clock(kept)}.`,
@@ -212,6 +217,12 @@ export function cleanCutSummary(edl: CleanCutEdl, originalSeconds: number): stri
     // embora, e ele tem de poder discordar.
     retakes > 0
       ? `Também tirei ${retakes === 1 ? 'uma frase que você recomeçou' : `${retakes} trechos de frases que você recomeçou`}.`
+      : '',
+    // Idem, e este é ainda mais importante de dizer: som que ficou abaixo do
+    // nível da fala principal saiu SEM passar pelo texto, então o aluno não
+    // tem outro jeito de descobrir que saiu.
+    secundarias > 0
+      ? `E ${secundarias === 1 ? 'um trecho que estava' : `${secundarias} trechos que estavam`} muito abaixo do volume da sua voz — fala de fundo ou leitura de roteiro.`
       : '',
     'Assista no preview e aprove para escolher os estilos.',
   ].filter(Boolean).join(' ');

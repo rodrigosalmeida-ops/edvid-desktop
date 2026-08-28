@@ -143,6 +143,42 @@ RETAKE_MIN_PREFIX = 3
 # blocos que só começam igual ("E aí…") não são retake.
 RETAKE_PREFIX_RATIO = 0.70
 
+# --- A TENTATIVA QUE NÃO COMEÇA IGUAL --------------------------------------
+# O prefixo só enxerga o erro que acontece DEPOIS de um começo idêntico. O
+# relato do aluno era outro: ele troca uma palavra no meio e refaz a frase.
+# Medido no projeto real dele:
+#
+#   "Eles acabaram de ANUNCIAR a nova GoPro Mission One Pro"       (abandonada)
+#   "Eles acabaram de LANÇAR a nova GoPro Mission One Pro e LS…"   (a boa)
+#
+# O prefixo comum morre na quarta palavra de dez — 30%, longe dos 70% da regra
+# — e a tentativa sobrevivia ao corte. Mas NOVE das dez palavras dela aparecem,
+# NA ORDEM, dentro da frase seguinte. É essa a medida certa: quanto do que ele
+# disse foi redito depois, e não quanto do começo bateu.
+#
+# CALIBRADO em seis projetos reais, não escolhido no olho. As duas tentativas
+# abandonadas de verdade dão 90,0% e 68,2%; o par legítimo mais parecido de
+# todos os projetos dá 45,5%, e a maioria fica abaixo de 25%. O limiar cai no
+# meio desse vão, com cerca de onze pontos de folga para cada lado.
+RETAKE_MIN_COVERAGE = 0.58
+# Bloco curto demais não entra nesta regra: em três ou quatro palavras a
+# cobertura vira ruído — "e tem" dentro de qualquer frase dá 100%.
+RETAKE_MIN_WORDS = 6
+
+
+def subsequence_length(first: list[str], second: list[str]) -> int:
+    """Maior subsequência comum: quantas palavras de `first` reaparecem, na
+    ordem, dentro de `second`."""
+    if not first or not second:
+        return 0
+    previous = [0] * (len(second) + 1)
+    for a in first:
+        current = [0] * (len(second) + 1)
+        for j, b in enumerate(second):
+            current[j + 1] = previous[j] + 1 if a == b else max(previous[j + 1], current[j])
+        previous = current
+    return previous[len(second)]
+
 
 def normalized_words(text: str) -> list[str]:
     """Palavras em minúscula, sem acento e sem pontuação."""
@@ -176,6 +212,13 @@ def is_retake(previous: list[str], following: list[str]) -> bool:
             if previous[i:i + RETAKE_MIN_PREFIX] == opening
         )
         if repeats >= 1:
+            return True
+    # 3. Frase REDITA com outras palavras no meio: quase tudo o que ele disse
+    #    reaparece, na ordem, na frase seguinte — mesmo que o começo divirja
+    #    cedo. Ver RETAKE_MIN_COVERAGE para a calibração.
+    if len(previous) >= RETAKE_MIN_WORDS:
+        cobertura = subsequence_length(previous, following) / len(previous)
+        if cobertura >= RETAKE_MIN_COVERAGE:
             return True
     return False
 
@@ -288,6 +331,119 @@ def blocks_from_words(
     return out
 
 
+# --- FALA SECUNDÁRIA -------------------------------------------------------
+# Outra pessoa falando ao fundo, ou o próprio aluno LENDO O ROTEIRO em voz
+# baixa antes de gravar a tomada. O silencedetect não pega: está acima de
+# -32 dB, é fala de verdade, e a transcrição não distingue quem falou.
+#
+# O que distingue é o NÍVEL. A fala principal fica num patamar; a secundária
+# vive bem abaixo dele — foi o que o aluno descreveu, e é a única medida
+# objetiva disponível sem separação de locutor.
+#
+# O NÍVEL DE CADA BLOCO É O PERCENTIL 90 das janelas de 50 ms, não a média. A
+# média afunda com as pausas dentro do bloco e com o fim de frase morrendo, e
+# aí um bloco legítimo pareceria secundário. O p90 mede a VOZ.
+#
+# O LIMIAR É LARGO DE PROPÓSITO, e isto precisa ficar escrito: no projeto real
+# que originou o pedido NÃO HÁ fala secundária nenhuma — medido, os quinze
+# blocos ficam entre -12,8 e -20,5 dB, uma variação de 7,7 dB de ponta a
+# ponta, e o mais ALTO é justamente uma tentativa abandonada. Ou seja: esta
+# regra não foi validada contra material que a exercite, e por isso ela está
+# ajustada para não poder errar contra o que eu medi. 14 dB é quase o dobro da
+# maior variação observada dentro da mesma voz. Quando aparecer material com
+# fala secundária de verdade, MEÇA antes de apertar este número.
+LIMIAR_SECUNDARIA_DB = 14.0
+# Abaixo disto não há patamar para comparar: com dois ou três blocos, a
+# "mediana" é o próprio bloco.
+MIN_BLOCOS_PARA_NIVEL = 5
+# Válvula de segurança: se a regra quiser derrubar mais de um terço da fala,
+# a premissa está errada (gravação inteira baixa, mudança de microfone no
+# meio) e é melhor não cortar nada do que devolver um corte mutilado.
+MAX_FRACAO_SECUNDARIA = 0.34
+
+
+def block_levels(media: Path, blocks: list[dict]) -> list[float] | None:
+    """Nível (dBFS, percentil 90) de cada bloco. None quando não deu para medir."""
+    if not blocks:
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    taxa = 8000
+    try:
+        bruto = subprocess.run(
+            [ffmpeg_binary(), "-v", "error", "-i", str(media), "-map", "0:a:0",
+             "-ac", "1", "-ar", str(taxa), "-f", "s16le", "-"],
+            capture_output=True, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if bruto.returncode != 0 or not bruto.stdout:
+        return None
+    onda = np.abs(np.frombuffer(bruto.stdout, dtype=np.int16).astype(np.float32) / 32768.0)
+    janela = taxa // 20  # 50 ms
+    niveis: list[float] = []
+    for bloco in blocks:
+        trecho = onda[int(bloco["start"] * taxa):int(bloco["end"] * taxa)]
+        quantas = trecho.size // janela
+        if quantas < 1:
+            niveis.append(float("-inf"))
+            continue
+        rms = np.sqrt((trecho[:quantas * janela].reshape(quantas, janela).astype(np.float64) ** 2).mean(axis=1))
+        alto = float(np.percentile(rms, 90))
+        niveis.append(20.0 * float(np.log10(max(alto, 1e-9))))
+    return niveis
+
+
+def main_level(blocks: list[dict], levels: list[float]) -> float:
+    """O patamar da fala principal: mediana dos níveis PESADA PELA DURAÇÃO.
+
+    Pesar pela duração é o que impede o contrário do que se quer: numa
+    gravação com muitos apartes curtos e baixos, a mediana simples seria a voz
+    secundária, e a regra derrubaria a fala principal.
+    """
+    pares = sorted(
+        ((nivel, max(0.0, bloco["end"] - bloco["start"]))
+         for bloco, nivel in zip(blocks, levels) if nivel > float("-inf")),
+        key=lambda item: item[0],
+    )
+    total = sum(peso for _, peso in pares)
+    if not pares or total <= 0:
+        return float("-inf")
+    meio = total / 2
+    acumulado = 0.0
+    for nivel, peso in pares:
+        acumulado += peso
+        if acumulado >= meio:
+            return nivel
+    return pares[-1][0]
+
+
+def drop_secondary_speech(media: Path, blocks: list[dict]) -> tuple[list[dict], int]:
+    """Remove os blocos que estão muito abaixo do patamar da fala principal."""
+    if len(blocks) < MIN_BLOCOS_PARA_NIVEL:
+        return blocks, 0
+    levels = block_levels(media, blocks)
+    if not levels:
+        return blocks, 0
+    patamar = main_level(blocks, levels)
+    if patamar == float("-inf"):
+        return blocks, 0
+    corte = patamar - LIMIAR_SECUNDARIA_DB
+    mantidos = [b for b, nivel in zip(blocks, levels) if nivel >= corte]
+    total = sum(b["end"] - b["start"] for b in blocks)
+    perdido = total - sum(b["end"] - b["start"] for b in mantidos)
+    if total > 0 and perdido / total > MAX_FRACAO_SECUNDARIA:
+        print(
+            f"AVISO: a regra de fala secundária derrubaria {perdido / total * 100:.0f}% da fala "
+            f"de {media.name}; premissa errada, nada removido por nível.",
+            file=sys.stderr,
+        )
+        return blocks, 0
+    return mantidos, len(blocks) - len(mantidos)
+
+
 def media_duration(media: Path) -> float:
     probe = os.environ.get("EDVID_FFPROBE") or "ffprobe"
     try:
@@ -316,6 +472,8 @@ def main() -> int:
     parser.add_argument("--noise-db", type=float, default=DEFAULT_NOISE_DB)
     parser.add_argument("--keep-retakes", action="store_true",
                         help="nao descarta as tentativas abandonadas de uma frase")
+    parser.add_argument("--keep-secondary", action="store_true",
+                        help="nao descarta fala muito abaixo do nivel da fala principal")
     args = parser.parse_args()
 
     if len(args.transcript) != len(args.audio):
@@ -330,6 +488,7 @@ def main() -> int:
     kept_total = 0.0
     beat = 0
     retakes = 0
+    secundarias = 0
     retake_spans: list[dict] = []
 
     for transcript_path, media_path, source_id in zip(args.transcript, args.audio, sources):
@@ -358,6 +517,12 @@ def main() -> int:
             before = len(blocks)
             blocks = [b for b in blocks if not inside_retake(b["start"], b["end"], discard)]
             retakes += before - len(blocks)
+        if not args.keep_secondary:
+            # DEPOIS dos retakes: uma tentativa abandonada costuma ser dita
+            # mais baixo, e medir o patamar com ela dentro puxaria a mediana
+            # para baixo justamente por causa do que ja vai sair.
+            blocks, caiu = drop_secondary_speech(media_path, blocks)
+            secundarias += caiu
         source_map[source_id] = str(media_path.name if media_path.parent == Path(".") else media_path)
         for block in blocks:
             beat += 1
@@ -380,6 +545,7 @@ def main() -> int:
         "total_duration_s": round(kept_total, 3),
         "retakes_removed": retakes,
         "retakes_ranges": retake_spans,
+        "secondary_removed": secundarias,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -390,6 +556,7 @@ def main() -> int:
         f"{len(ranges)} blocos mantidos | original {original_total:.2f}s "
         f"| final {kept_total:.2f}s | removido {removed:.2f}s ({percent:.0f}%)"
         + (f" | {retakes} repeticoes descartadas" if retakes else "")
+        + (f" | {secundarias} trechos de fala secundaria" if secundarias else "")
     )
     return 0
 
