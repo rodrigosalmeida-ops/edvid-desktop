@@ -31,9 +31,6 @@ jobs:
         run: |
           from pathlib import Path
 
-          # 1) O smoke do pacote intermediario deve validar somente que o
-          # Electron empacotado sobe. Os runtimes pesados sao exercitados
-          # depois, no app instalado + E2E real.
           smoke = Path('scripts/editai-smoke-windows.ps1')
           text = smoke.read_text(encoding='utf-8')
           old = """  [int]$TimeoutSeconds = 240,\n  [switch]$EnsureRuntimePack\n)"""
@@ -52,9 +49,6 @@ jobs:
               raise SystemExit('Guard failed: smoke report validation context changed')
           smoke.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          # 2) Modo boot-only no processo principal: nenhuma hidratacao ou
-          # spawn de runtime pesado, apenas prova que o Electron empacotado
-          # chegou ao main process e consegue escrever o relatorio.
           main = Path('src/main.ts')
           text = main.read_text(encoding='utf-8')
           old = """  const shouldEnsureRuntimePack = process.argv.includes('--editai-smoke-ensure-runtime');\n  const runtimePackReady = shouldEnsureRuntimePack\n    ? (await ensureRuntimePack()).status === 'ready'\n    : await runtimePackIsReady().catch(() => false);\n  const runtimes = await Promise.all(runtimeCommands.map(({ name, args }) => {\n    const resolution = resolveRuntime(name, appRuntimeContext());\n    return checkRuntime(resolution, args);\n  }));\n  const ok = runtimePackReady && runtimes.every((item) => item.available);\n  const report = {\n    schemaVersion: 1,\n    generatedAt: new Date().toISOString(),\n    ok,\n    platform: process.platform,\n    arch: process.arch,\n    appVersion: app.getVersion(),\n    electronVersion: process.versions.electron,\n    runtimePackReady,\n    runtimes,\n  };"""
@@ -63,7 +57,6 @@ jobs:
               raise SystemExit('Guard failed: runEditAiSmokeIfRequested context changed')
           text = text.replace(old, new, 1)
 
-          # 3) Remove o SEGUNDO registro duplicado do IPC de sugestao de prompt.
           marker = "  ipcMain.handle('preview:suggest-split-prompt', async ("
           positions = []
           start = 0
@@ -83,7 +76,6 @@ jobs:
           text = text[:second] + text[end + 2:]
           main.write_text(text, encoding='utf-8')
 
-          # 4) Nao abre mais o pacote fat de ~894 MB no caminho critico do build.
           build = Path('scripts/editai-build-windows.ps1')
           text = build.read_text(encoding='utf-8')
           old = """if ($Mode -eq 'qa') {\n  Write-Host '[EDIT AI] 9/12 smoke do pacote fat antes do instalador thin'\n  & powershell -ExecutionPolicy Bypass -File scripts/editai-smoke-windows.ps1\n  if ($LASTEXITCODE -ne 0) { throw 'Smoke test do executavel empacotado falhou.' }\n  & powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1\n  if ($LASTEXITCODE -ne 0) { throw 'Media smoke FFmpeg/FFprobe falhou.' }\n}"""
@@ -92,8 +84,9 @@ jobs:
               raise SystemExit('Guard failed: fat smoke build context changed')
           build.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          # 5) O workflow prova o boot do pacote THIN; a prova completa de
-          # runtimes permanece no app instalado e no E2E real.
+          # Modificamos o workflow localmente apenas para validar o contrato do
+          # teste. O runner nao tenta publica-lo; o conector fara essa mudanca
+          # em um commit separado depois que este codigo estiver verde.
           wf = Path('.github/workflows/editai-rc2-windows.yml')
           text = wf.read_text(encoding='utf-8')
           old = """      - name: Smoke packaged EDIT AI executable\n        shell: powershell\n        run: npm run smoke:editai:win -- -ExecutablePath \"out\\EDIT AI-fat-win32-x64\\EDIT AI.exe\""""
@@ -102,7 +95,6 @@ jobs:
               raise SystemExit('Guard failed: packaged smoke workflow context changed')
           wf.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          # 6) Regressao: um unico IPC e QA thin no ponto certo.
           test = Path('scripts/test-editai-diagnostics.mjs')
           text = test.read_text(encoding='utf-8')
           old = """  // O QA fat embute perto de 1 GB de runtimes. O cold-start do Windows 2025\n  // ja ultrapassou 120 s mesmo com verify:editai verde; esse contrato impede\n  // reintroduzir um timeout que mede o I/O do runner em vez do aplicativo.\n  const smokeScript = readFileSync(path.join(root, 'scripts', 'editai-smoke-windows.ps1'), 'utf8');\n  const timeout = /\\[int\\]\\$TimeoutSeconds\\s*=\\s*(\\d+)/u.exec(smokeScript);\n  assert.ok(timeout, 'smoke Windows precisa declarar TimeoutSeconds');\n  assert.ok(Number(timeout[1]) >= 240, 'smoke do pacote fat precisa tolerar cold-start de pelo menos 240 s');\n  assert.match(smokeScript, /Smoke test excedeu \\$\\{TimeoutSeconds\\}s\\./u);\n\n  console.log('test:editai-diagnostics ok — diagnóstico seguro e timeout do smoke fat protegidos.');"""
@@ -120,13 +112,14 @@ jobs:
           npm run test:editai-diagnostics
           npm run test:marked-media-batch
 
-      - name: Commit verified changes
+      - name: Commit verified source changes
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/editai-qa-smoke-ipc-once.yml
+          # Nao publique alteracoes de workflow com o token do runner.
+          git checkout -- .github/workflows/editai-rc2-windows.yml
           git config user.name "editai-ci"
           git config user.email "actions@users.noreply.github.com"
-          git add src/main.ts scripts/editai-smoke-windows.ps1 scripts/editai-build-windows.ps1 scripts/test-editai-diagnostics.mjs .github/workflows/editai-rc2-windows.yml .github/workflows/editai-qa-smoke-ipc-once.yml
+          git add src/main.ts scripts/editai-smoke-windows.ps1 scripts/editai-build-windows.ps1 scripts/test-editai-diagnostics.mjs
           git commit -m "fix(qa): smoke thin package and dedupe split prompt IPC"
           git push origin HEAD:editai-qa-smoke-ipc-20260828
