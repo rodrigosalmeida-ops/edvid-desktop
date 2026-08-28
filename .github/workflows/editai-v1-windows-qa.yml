@@ -1,0 +1,58 @@
+name: EDIT AI Windows QA
+
+on:
+  push:
+    branches:
+      - editai-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-qa:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout EDIT AI
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify EDIT AI source on Windows
+        run: npm run verify:editai
+
+      - name: Record QA evidence
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $report = [ordered]@{
+            schemaVersion = 1
+            generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+            commit = $env:GITHUB_SHA
+            branch = $env:GITHUB_REF_NAME
+            node = (node --version)
+            npm = (npm --version)
+          }
+          $report | ConvertTo-Json -Depth 4 | Set-Content out/editai-windows-qa.json -Encoding UTF8
+          Get-Content out/editai-windows-qa.json
+
+      - name: Upload QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editai-windows-qa-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: out/editai-windows-qa.json
