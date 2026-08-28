@@ -1,0 +1,68 @@
+name: EDIT AI Upstream 0.47 Merge Lab
+
+on:
+  push:
+    branches:
+      - editai-upstream-047
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cherry-pick-upstream-047:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[047-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: editai-upstream-047
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "EDIT AI Merge Bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Fetch approved upstream 0.47.0 commit
+        run: |
+          git remote add upstream https://github.com/fillrochaa/edvid-desktop.git || true
+          git fetch --no-tags upstream 2bfadfd619e39c87704c08f37d4e02f92da7d9f2
+
+      - name: Apply upstream 0.47.0
+        id: cherry
+        shell: bash
+        run: |
+          set +e
+          git cherry-pick 2bfadfd619e39c87704c08f37d4e02f92da7d9f2
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ]; then
+            echo "UPSTREAM_047_CONFLICTS=1" >> "$GITHUB_ENV"
+            git status --short
+            git diff --name-only --diff-filter=U | tee upstream-047-conflicts.txt
+            git diff --cc > upstream-047-conflict.diff || true
+            exit 0
+          fi
+          git commit --amend -m "feat(editai): integrate upstream 0.47.0 [047-applied]"
+
+      - name: Upload conflict evidence
+        if: env.UPSTREAM_047_CONFLICTS == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: editai-upstream-047-conflicts
+          path: |
+            upstream-047-conflicts.txt
+            upstream-047-conflict.diff
+
+      - name: Stop on conflicts
+        if: env.UPSTREAM_047_CONFLICTS == '1'
+        run: |
+          echo "Upstream 0.47.0 has merge conflicts; no branch changes were pushed."
+          exit 1
+
+      - name: Push integrated commit
+        if: env.UPSTREAM_047_CONFLICTS != '1'
+        run: git push origin HEAD:editai-upstream-047
