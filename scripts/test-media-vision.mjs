@@ -83,11 +83,11 @@ try {
   assert.deepEqual(win.env, {}, 'Windows resolve DLLs ao lado do executável');
 
   const mac = remotionFfmpegCandidate('/tmp/remotion', 'darwin', 'arm64');
-  assert.match(mac.command, /@remotion\/compositor-darwin-arm64\/ffmpeg$/u);
+  assert.match(mac.command.replaceAll('\\', '/'), /@remotion\/compositor-darwin-arm64\/ffmpeg$/u);
   assert.equal(mac.env.DYLD_LIBRARY_PATH, mac.libraryDirectory);
 
   const linux = remotionFfmpegCandidate('/tmp/remotion', 'linux', 'x64');
-  assert.match(linux.command, /@remotion\/compositor-linux-x64\/ffmpeg$/u);
+  assert.match(linux.command.replaceAll('\\', '/'), /@remotion\/compositor-linux-x64\/ffmpeg$/u);
   assert.equal(linux.env.LD_LIBRARY_PATH, linux.libraryDirectory);
 
   console.log('test:media-vision ok — visão, cache, AV1 e runtime Remotion classificados.');
