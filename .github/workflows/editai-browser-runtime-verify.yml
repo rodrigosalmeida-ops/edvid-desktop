@@ -1,0 +1,299 @@
+name: EDIT AI Browser Runtime Verify
+
+on:
+  push:
+    branches:
+      - editai-browser-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: ${{ !contains(github.event.head_commit.message || '', '[browser-runtime-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout browser runtime
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "EDIT AI Browser Bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Wire browser runtime into main process
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, re
+
+          main = Path('src/main.ts')
+          s = main.read_text(encoding='utf-8')
+
+          # Capture every IPC handler for localhost RPC, while preserving the
+          # original Electron preload path as a fallback.
+          if 'function registerIpcHandle(' not in s:
+              s = s.replace('ipcMain.handle(', 'registerIpcHandle(')
+              anchor = 'function registerIpcHandlers(): void {'
+              bridge = '''type RegisteredIpcHandler = Parameters<typeof ipcMain.handle>[1];
+          const browserLocalInvokeHandlers = new Map<string, RegisteredIpcHandler>();
+          type BrowserLocalEvent = { channel: string; payload: unknown };
+          const browserLocalEventListeners = new Set<(event: BrowserLocalEvent) => void>();
+          let browserLocalHandle: BrowserLocalLauncherHandle | null = null;
+
+          function registerIpcHandle(channel: string, listener: RegisteredIpcHandler): void {
+            browserLocalInvokeHandlers.set(channel, listener);
+            ipcMain.handle(channel, listener);
+          }
+
+          function browserLocalBroadcast(channel: string, payload: unknown): void {
+            for (const listener of browserLocalEventListeners) listener({ channel, payload });
+          }
+
+          function restoreBrowserLocalMedia(value: unknown): unknown {
+            if (typeof value === 'string') {
+              try {
+                const url = new URL(value);
+                if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.pathname.startsWith('/api/media/')) {
+                  const rest = url.pathname.slice('/api/media/'.length);
+                  const slash = rest.indexOf('/');
+                  if (slash > 0) {
+                    const kind = rest.slice(0, slash);
+                    const target = rest.slice(slash + 1);
+                    if (kind === 'local' || kind === 'preview') return `edvid-media://${kind}/${target}`;
+                  }
+                }
+              } catch {}
+              return value;
+            }
+            if (Array.isArray(value)) return value.map(restoreBrowserLocalMedia);
+            if (value && typeof value === 'object') {
+              return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+                .map(([key, item]) => [key, restoreBrowserLocalMedia(item)]));
+            }
+            return value;
+          }
+
+          function resolveBrowserLocalMediaPath(requestPath: string): string | null {
+            const localPrefix = '/api/media/local/';
+            if (requestPath.startsWith(localPrefix)) {
+              return authorizedMedia.get(requestPath.slice(localPrefix.length)) ?? null;
+            }
+            const previewPrefixes = ['/api/media/preview/', '/edvid-preview/'];
+            for (const prefix of previewPrefixes) {
+              if (!requestPath.startsWith(prefix)) continue;
+              const rest = requestPath.slice(prefix.length).split('/');
+              const token = rest.shift() ?? '';
+              const root = previewRoots.get(token);
+              if (!root) return null;
+              return resolvePreviewPath(root, rest);
+            }
+            return null;
+          }
+
+          async function startBrowserLocalMode(mainWindow: BrowserWindow): Promise<boolean> {
+            if (!app.isPackaged || MAIN_WINDOW_VITE_DEV_SERVER_URL || process.argv.includes('--editai-electron') || process.env.EDITAI_DISABLE_BROWSER_LOCAL === '1') {
+              return false;
+            }
+            const staticRoot = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
+            const secureToken = randomUUID();
+            let lastError: unknown = null;
+            for (let port = 4820; port <= 4829; port += 1) {
+              try {
+                browserLocalHandle = await launchBrowserLocalEditor({
+                  staticRoot,
+                  port,
+                  secureToken,
+                  openExternal: (url) => shell.openExternal(url),
+                  invoke: async (channel, args) => {
+                    const handler = browserLocalInvokeHandlers.get(channel);
+                    if (!handler) throw new Error(`Canal local desconhecido: ${channel}`);
+                    const restored = restoreBrowserLocalMedia(args) as unknown[];
+                    return handler({} as Electron.IpcMainInvokeEvent, ...restored);
+                  },
+                  subscribe: (listener) => {
+                    browserLocalEventListeners.add(listener);
+                    return () => browserLocalEventListeners.delete(listener);
+                  },
+                  resolveMediaPath: resolveBrowserLocalMediaPath,
+                });
+                mainWindow.hide();
+                return true;
+              } catch (error) {
+                lastError = error;
+              }
+            }
+            console.error('Nao foi possivel abrir o EDIT AI no navegador; usando a janela local.', lastError);
+            browserLocalHandle = null;
+            return false;
+          }
+
+          '''
+              if anchor not in s:
+                  raise SystemExit('registerIpcHandlers anchor missing')
+              s = s.replace(anchor, bridge + anchor, 1)
+
+          # Import the production launcher.
+          import_anchor = "import { STYLE_LAYERS, mergeStyleLayers, type StyleLayer } from './style-layers';"
+          browser_import = "import { launchBrowserLocalEditor, type BrowserLocalLauncherHandle } from './browser-local-launcher';"
+          if browser_import not in s:
+              if import_anchor not in s:
+                  raise SystemExit('import anchor missing')
+              s = s.replace(import_anchor, import_anchor + '\n' + browser_import, 1)
+
+          # Mirror all existing native renderer events to localhost SSE.
+          pattern = re.compile(r"(for \(const window of BrowserWindow\.getAllWindows\(\)\) \{\n\s*window\.webContents\.send\('([^']+)', ([^;\n]+)\);\n\s*\})")
+          def add_broadcast(match):
+              block, channel, payload = match.group(1), match.group(2), match.group(3)
+              marker = f"browserLocalBroadcast('{channel}', {payload});"
+              return block + '\n  ' + marker
+          if 'browserLocalBroadcast(' in s:
+              # helper itself exists; only add mirrors that are not already next to send blocks
+              pass
+          # Run substitution and avoid duplicating markers already present.
+          pieces = []
+          last = 0
+          count = 0
+          for match in pattern.finditer(s):
+              pieces.append(s[last:match.end()])
+              channel, payload = match.group(2), match.group(3)
+              tail = s[match.end():match.end()+180]
+              marker = f"browserLocalBroadcast('{channel}', {payload});"
+              if marker not in tail:
+                  pieces.append('\n  ' + marker)
+                  count += 1
+              last = match.end()
+          if pieces:
+              pieces.append(s[last:])
+              s = ''.join(pieces)
+          if count == 0 and "browserLocalBroadcast('codex:event'" not in s:
+              raise SystemExit('no renderer event broadcasts mirrored')
+
+          # Hidden native window owns dialogs/runtime; browser is the visible UI.
+          window_anchor = '  const mainWindow = new BrowserWindow({\n    width: 1400,'
+          if window_anchor in s:
+              s = s.replace(window_anchor, '  const mainWindow = new BrowserWindow({\n    show: false,\n    width: 1400,', 1)
+          elif 'show: false' not in s:
+              raise SystemExit('BrowserWindow anchor missing')
+
+          old_else = '''  } else {
+            void pageLoad;
+          }
+          }'''
+          # Preserve screenshot mode; normal packaged startup opens localhost.
+          exact = '''  } else {
+            void pageLoad;
+          }
+          }
+          '''
+          # The source has function closing immediately after the else.
+          target = '''  } else {
+            void pageLoad;
+          }
+          }'''.replace('          ', '')
+          replacement = '''  } else {
+            void pageLoad
+              .then(async () => {
+                const openedInBrowser = await startBrowserLocalMode(mainWindow);
+                if (!openedInBrowser && !mainWindow.isDestroyed()) mainWindow.show();
+              })
+              .catch((error: unknown) => {
+                console.error('Falha ao carregar a interface do EDIT AI:', error);
+                if (!mainWindow.isDestroyed()) mainWindow.show();
+              });
+          }
+          }'''.replace('          ', '')
+          if target in s:
+              s = s.replace(target, replacement, 1)
+          elif 'openedInBrowser' not in s:
+              raise SystemExit('createWindow pageLoad else anchor missing')
+
+          # Close localhost server when the backend exits.
+          quit_anchor = "app.on('window-all-closed', () => {"
+          cleanup = '''app.on('before-quit', () => {
+            const handle = browserLocalHandle;
+            browserLocalHandle = null;
+            browserLocalEventListeners.clear();
+            if (handle) void handle.close().catch(() => undefined);
+          });
+
+          '''
+          if "app.on('before-quit'" not in s:
+              if quit_anchor not in s:
+                  raise SystemExit('quit anchor missing')
+              s = s.replace(quit_anchor, cleanup + quit_anchor, 1)
+
+          main.write_text(s, encoding='utf-8')
+
+          # Production contract: every preload invoke/event channel must also
+          # exist in browser-local-api, plus the main must default to browser.
+          test = Path('scripts/test-browser-production.mjs')
+          test.write_text(r'''import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const preload = readFileSync('src/preload.ts','utf8');
+          const browser = readFileSync('src/browser-local-api.ts','utf8');
+          const main = readFileSync('src/main.ts','utf8');
+          const server = readFileSync('src/browser-local-server.ts','utf8');
+          const renderer = readFileSync('src/renderer.tsx','utf8');
+          const invokes = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/gu)].map((m) => m[1]);
+          const browserInvokes = new Set([...browser.matchAll(/invoke\('([^']+)'/gu)].map((m) => m[1]));
+          for (const channel of invokes) assert.ok(browserInvokes.has(channel), `browser RPC missing ${channel}`);
+          const nativeEvents = [...preload.matchAll(/ipcRenderer\.on\('([^']+)'/gu)].map((m) => m[1]);
+          const browserEvents = new Set([...browser.matchAll(/on\('([^']+)'/gu)].map((m) => m[1]));
+          for (const channel of nativeEvents) assert.ok(browserEvents.has(channel), `browser SSE missing ${channel}`);
+          assert.match(main, /launchBrowserLocalEditor\(/u);
+          assert.match(main, /registerIpcHandle\(/u);
+          assert.match(main, /EDITAI_DISABLE_BROWSER_LOCAL/u);
+          assert.match(main, /resolveBrowserLocalMediaPath/u);
+          assert.match(main, /show: false/u);
+          assert.match(server, /\/api\/rpc/u);
+          assert.match(server, /text\/event-stream/u);
+          assert.match(server, /content-range/u);
+          assert.match(renderer, /createBrowserLocalApi\(\)/u);
+          console.log(`test:browser-production ok — ${invokes.length} RPCs e ${nativeEvents.length} eventos cobertos.`);
+          ''', encoding='utf-8')
+
+          pkg_path = Path('package.json')
+          pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+          pkg['scripts']['test:browser-production'] = 'node scripts/test-browser-production.mjs'
+          verify = pkg['scripts']['verify:editai']
+          if 'test:browser-production' not in verify:
+              needle = 'npm run test:browser-local-launcher'
+              pkg['scripts']['verify:editai'] = verify.replace(needle, needle + ' && npm run test:browser-production')
+          pkg_path.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          # Expand server regression with real token/RPC/range checks.
+          server_test = Path('scripts/test-browser-local-server.mjs')
+          t = server_test.read_text(encoding='utf-8')
+          if 'secure RPC + Range' not in t:
+              t = t.replace("  writeFileSync(path.join(staticRoot, 'app.js'), 'window.__EDIT_AI__ = true;');",
+                  "  writeFileSync(path.join(staticRoot, 'app.js'), 'window.__EDIT_AI__ = true;');\n  const mediaFile = path.join(temp, 'sample.mp4');\n  writeFileSync(mediaFile, Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));")
+              t = t.replace("  const handle = await startBrowserLocalServer({ staticRoot, port });",
+                  "  const token = 'editai-test-token';\n  const handle = await startBrowserLocalServer({\n    staticRoot, port, secureToken: token,\n    invoke: async (channel, args) => ({ channel, args }),\n    resolveMediaPath: (requestPath) => requestPath === '/api/media/local/demo' ? mediaFile : null,\n  });")
+              insertion = '''\n    const deniedRpc = await fetch(`${handle.origin}/api/rpc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'desktop:get-info', args: [] }) });\n    assert.equal(deniedRpc.status, 403);\n\n    const rpc = await fetch(`${handle.origin}/api/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-edit-ai-token': token, origin: handle.origin }, body: JSON.stringify({ channel: 'desktop:get-info', args: [{ ok: true }] }) });\n    assert.equal(rpc.status, 200);\n    assert.deepEqual(await rpc.json(), { ok: true, value: { channel: 'desktop:get-info', args: [{ ok: true }] } });\n\n    const media = await fetch(`${handle.origin}/api/media/local/demo?token=${encodeURIComponent(token)}`, { headers: { range: 'bytes=1-3' } });\n    assert.equal(media.status, 206);\n    assert.equal(media.headers.get('content-range'), 'bytes 1-3/8');\n    assert.deepEqual([...new Uint8Array(await media.arrayBuffer())], [1, 2, 3]);\n    // secure RPC + Range\n'''
+              t = t.replace("    const traversal = await fetch(`${handle.origin}/%2e%2e/package.json`);", insertion + "\n    const traversal = await fetch(`${handle.origin}/%2e%2e/package.json`);")
+              server_test.write_text(t, encoding='utf-8')
+
+      - name: Commit browser runtime wiring
+        run: |
+          git add src/main.ts package.json scripts/test-browser-production.mjs scripts/test-browser-local-server.mjs
+          git commit -m "feat(web): make browser-local the packaged EDIT AI interface [browser-runtime-applied]"
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full EDIT AI verification
+        run: npm run verify:editai
+
+      - name: Push validated browser runtime
+        run: git push origin HEAD:editai-browser-runtime
