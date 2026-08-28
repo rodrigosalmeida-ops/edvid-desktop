@@ -13,7 +13,7 @@ jobs:
   cherry-pick-upstream-047:
     if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[047-applied]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout integration branch
         uses: actions/checkout@v4
@@ -31,38 +31,91 @@ jobs:
           git remote add upstream https://github.com/fillrochaa/edvid-desktop.git || true
           git fetch --no-tags upstream 2bfadfd619e39c87704c08f37d4e02f92da7d9f2
 
-      - name: Apply upstream 0.47.0
-        id: cherry
+      - name: Apply and conservatively resolve upstream 0.47.0
         shell: bash
         run: |
+          set -euo pipefail
           set +e
           git cherry-pick 2bfadfd619e39c87704c08f37d4e02f92da7d9f2
           code=$?
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" -ne 0 ]; then
-            echo "UPSTREAM_047_CONFLICTS=1" >> "$GITHUB_ENV"
-            git status --short
-            git diff --name-only --diff-filter=U | tee upstream-047-conflicts.txt
-            git diff --cc > upstream-047-conflict.diff || true
-            exit 0
-          fi
-          git commit --amend -m "feat(editai): integrate upstream 0.47.0 [047-applied]"
+          set -e
 
-      - name: Upload conflict evidence
-        if: env.UPSTREAM_047_CONFLICTS == '1'
+          if [ "$code" -ne 0 ]; then
+            mkdir -p merge-evidence
+            git status --short > merge-evidence/status-before.txt
+            git diff --name-only --diff-filter=U > merge-evidence/conflicts.txt
+            git diff --cc > merge-evidence/conflicts.diff || true
+
+            # Marca/versao do EDIT AI sempre vencem o upstream.
+            for file in agent.md package.json; do
+              if git ls-files -u -- "$file" | grep -q .; then
+                git checkout --ours -- "$file"
+                git add "$file"
+              fi
+            done
+
+            # Nos arquivos de infraestrutura, os conflitos desta versao sao
+            # majoritariamente adicoes em regioes que o EDIT AI tambem tocou.
+            # Merge union preserva os dois lados; typecheck/testes abaixo sao o
+            # gate antes de qualquer push.
+            for file in src/main.ts src/qa-browser-api.ts src/shared.ts src/styles.css src/App.tsx; do
+              if git ls-files -u -- "$file" | grep -q .; then
+                git show ":1:$file" > /tmp/base || true
+                git show ":2:$file" > /tmp/ours || true
+                git show ":3:$file" > /tmp/theirs || true
+                git merge-file --union /tmp/ours /tmp/base /tmp/theirs || true
+                cp /tmp/ours "$file"
+                git add "$file"
+              fi
+            done
+
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              git diff --name-only --diff-filter=U > merge-evidence/unresolved.txt
+              echo "Ainda existem conflitos nao resolvidos."
+              exit 1
+            fi
+            GIT_EDITOR=true git cherry-pick --continue
+          fi
+
+          git commit --amend -m "feat(editai): integrate upstream 0.47.0 [047-applied]"
+          git diff HEAD^ HEAD --stat | tee merge-evidence-stat.txt
+          git diff HEAD^ HEAD > merge-candidate.diff
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck merged candidate
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+
+      - name: Timeline tests merged candidate
+        id: timeline
+        continue-on-error: true
+        run: npm run test:timeline
+
+      - name: Upload merge candidate evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: editai-upstream-047-conflicts
+          name: editai-upstream-047-merge-candidate
+          if-no-files-found: warn
           path: |
-            upstream-047-conflicts.txt
-            upstream-047-conflict.diff
+            merge-evidence/**
+            merge-evidence-stat.txt
+            merge-candidate.diff
 
-      - name: Stop on conflicts
-        if: env.UPSTREAM_047_CONFLICTS == '1'
+      - name: Gate merged candidate
+        if: steps.typecheck.outcome != 'success' || steps.timeline.outcome != 'success'
         run: |
-          echo "Upstream 0.47.0 has merge conflicts; no branch changes were pushed."
+          echo "Candidate failed typecheck or timeline tests; no branch changes were pushed."
           exit 1
 
       - name: Push integrated commit
-        if: env.UPSTREAM_047_CONFLICTS != '1'
         run: git push origin HEAD:editai-upstream-047
