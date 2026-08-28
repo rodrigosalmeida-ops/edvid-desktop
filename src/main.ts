@@ -5785,18 +5785,24 @@ async function runEditAiSmokeIfRequested(): Promise<boolean> {
   const outputPrefix = '--editai-smoke-output=';
   const outputArg = process.argv.find((arg) => arg.startsWith(outputPrefix));
   const outputPath = outputArg ? path.resolve(outputArg.slice(outputPrefix.length)) : null;
+  const bootOnly = process.argv.includes('--editai-smoke-boot-only');
   const shouldEnsureRuntimePack = process.argv.includes('--editai-smoke-ensure-runtime');
-  const runtimePackReady = shouldEnsureRuntimePack
-    ? (await ensureRuntimePack()).status === 'ready'
-    : await runtimePackIsReady().catch(() => false);
-  const runtimes = await Promise.all(runtimeCommands.map(({ name, args }) => {
-    const resolution = resolveRuntime(name, appRuntimeContext());
-    return checkRuntime(resolution, args);
-  }));
-  const ok = runtimePackReady && runtimes.every((item) => item.available);
+  const runtimePackReady = bootOnly
+    ? false
+    : shouldEnsureRuntimePack
+      ? (await ensureRuntimePack()).status === 'ready'
+      : await runtimePackIsReady().catch(() => false);
+  const runtimes = bootOnly
+    ? []
+    : await Promise.all(runtimeCommands.map(({ name, args }) => {
+      const resolution = resolveRuntime(name, appRuntimeContext());
+      return checkRuntime(resolution, args);
+    }));
+  const ok = bootOnly || (runtimePackReady && runtimes.every((item) => item.available));
   const report = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
+    mode: bootOnly ? 'boot' : 'runtime',
     ok,
     platform: process.platform,
     arch: process.arch,
@@ -6638,19 +6644,6 @@ function registerIpcHandlers(): void {
   // O AGENTE ESCREVE O PROMPT da faixa a partir da fala daquele trecho — o
   // botao "Gerar automaticamente". So o prompt: quem decide gerar (e gastar
   // credito) continua sendo o clique do aluno no Gerar.
-  ipcMain.handle('preview:suggest-split-prompt', async (
-    _event,
-    input: { directory?: string; index?: unknown; kind?: unknown },
-  ) => {
-    const directory = path.resolve(asText(input.directory));
-    if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
-    }
-    const index = Number(input.index);
-    if (!Number.isInteger(index) || index < 0) throw new Error('Trecho inválido.');
-    return suggestSplitPrompt(directory, index, asText(input.kind) === 'video' ? 'video' : 'imagem');
-  });
-
   ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {

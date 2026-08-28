@@ -6,7 +6,8 @@ param(
   # mesmo com todos os testes e runtimes verdes. Mantemos um limite finito,
   # mas largo o bastante para medir o executavel em vez da velocidade do disco.
   [int]$TimeoutSeconds = 240,
-  [switch]$EnsureRuntimePack
+  [switch]$EnsureRuntimePack,
+  [switch]$BootOnly
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -38,6 +39,7 @@ Write-Host "[EDIT AI] smoke timeout: ${TimeoutSeconds}s"
 $arg = "--editai-smoke-output=$OutputPath"
 $arguments = @('--editai-smoke', $arg)
 if ($EnsureRuntimePack) { $arguments += '--editai-smoke-ensure-runtime' }
+if ($BootOnly) { $arguments += '--editai-smoke-boot-only' }
 $process = Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru
 if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
   try { $process.Kill() } catch {}
@@ -48,11 +50,16 @@ if (-not (Test-Path $OutputPath)) { throw "Relatorio smoke nao foi gerado: $Outp
 
 $report = Get-Content -Raw $OutputPath | ConvertFrom-Json
 if (-not $report.ok) { throw 'Relatorio smoke marcou ok=false.' }
-$required = @('node','npm','ffmpeg','ffprobe','uv','yt-dlp','python','whisperx')
-foreach ($name in $required) {
-  $item = @($report.runtimes | Where-Object { $_.name -eq $name }) | Select-Object -First 1
-  if (-not $item) { throw "Runtime ausente no relatorio: $name" }
-  if (-not $item.available) { throw "Runtime indisponivel: $name - $($item.error)" }
+if ($BootOnly) {
+  if ($report.mode -ne 'boot') { throw 'Smoke boot-only nao foi reconhecido pelo executavel.' }
+  Write-Host '[EDIT AI] smoke boot PASS - Electron empacotado iniciou e respondeu.'
+} else {
+  $required = @('node','npm','ffmpeg','ffprobe','uv','yt-dlp','python','whisperx')
+  foreach ($name in $required) {
+    $item = @($report.runtimes | Where-Object { $_.name -eq $name }) | Select-Object -First 1
+    if (-not $item) { throw "Runtime ausente no relatorio: $name" }
+    if (-not $item.available) { throw "Runtime indisponivel: $name - $($item.error)" }
+  }
+  Write-Host "[EDIT AI] smoke PASS - $($required.Count) runtimes disponiveis."
 }
-Write-Host "[EDIT AI] smoke PASS - $($required.Count) runtimes disponiveis."
 Write-Host "[EDIT AI] relatorio: $OutputPath"
