@@ -1451,7 +1451,7 @@ function EditorWorkspace({
 
   const progress = effectiveDuration > 0 ? Math.min(1, currentTime / effectiveDuration) : 0;
   const activeSource = activeSourceId ? sourceById.get(activeSourceId) ?? null : null;
-  const videoSrc = mapped ? activeSource?.url ?? undefined : media?.url;
+  const videoSrc = mapped ? activeSource?.url ?? undefined : media?.url ?? undefined;
   const selectedClip = selectedClipId
     ? model?.clips.find((clip) => clip.id === selectedClipId) ?? null
     : null;
@@ -3152,13 +3152,16 @@ function EditorWorkspace({
                 }}
               />
               {mapped && inGap && <div className="video-stage-note">Espaço vazio na timeline</div>}
-              {mapped && activeSourceId && !activeSource?.url && (
+              {/* Fonte sem URL pode ser um formato que o Chromium não toca.
+                  Isto vale tanto no preview mapeado quanto no PRIMEIRO preview,
+                  antes do Corte Limpo. */}
+              {(mapped ? Boolean(activeSourceId) && !activeSource?.url : !media.url) && (
                 <div className="video-stage-note">
                   {previewProxy?.status === 'building'
                     ? `Preparando a prévia de ${previewProxy.name}${previewProxy.progress ? ` · ${Math.round(previewProxy.progress * 100)}%` : ''}`
                     : previewProxy?.status === 'error'
                       ? `Não consegui preparar a prévia de ${previewProxy.name}. O corte final não é afetado.`
-                      : 'Arquivo-fonte indisponível para a prévia'}
+                      : 'Preparando a prévia deste formato de vídeo...'}
                 </div>
               )}
             </>
