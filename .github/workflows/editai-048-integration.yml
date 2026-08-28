@@ -34,7 +34,6 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            # Preserve EDIT AI identity and tests that diverged intentionally.
             git checkout --ours agent.md package.json scripts/test-helpers.mjs scripts/test-split-layout.mjs src/codex-app-server.ts src/main.ts
             git rm -f scripts/test-media-request.mjs || true
             git add agent.md package.json scripts/test-helpers.mjs scripts/test-split-layout.mjs src/codex-app-server.ts src/main.ts
@@ -124,7 +123,7 @@ jobs:
           assert.match(main, /migrarNomeLegado\(imagesDirectory, request, 'imagem'\)/u);
           assert.match(clean, /RETAKE_MIN_COVERAGE = 0\.58/u);
           assert.match(clean, /def subsequence_length\(/u);
-          assert.match(cleanTs, /secondary_speech_removed/u);
+          assert.match(cleanTs, /secondary_removed/u);
           assert.doesNotMatch(remotion, /<AbsoluteFill style=\{\{opacity, backgroundColor: 'black'\}\}>/u);
           console.log('test:editai-048 ok — retakes por cobertura, fala secundaria, nomes unicos e B-roll sem fade.');
           """, encoding='utf-8')
