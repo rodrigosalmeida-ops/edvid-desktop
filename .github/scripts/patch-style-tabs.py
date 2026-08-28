@@ -37,10 +37,12 @@ for old, new in swaps:
     text = text.replace(old, new, 1)
 
 footer_start = '        <div className="apply-style-layers" aria-label="Aplicar camada de estilo">'
-footer_end = '        </div>\n      </div>\n    </div>\n  );\n}\n\nfunction MemberGate'
+footer_close = '        </div>\n'
+footer_tail = '      </div>\n    </div>\n  );\n}\n\nfunction MemberGate'
 start = text.find(footer_start)
-end = text.find(footer_end, start)
-if start < 0 or end < 0:
+close = text.find(footer_close, start)
+tail = text.find(footer_tail, close + len(footer_close))
+if start < 0 or close < 0 or tail < 0:
     raise SystemExit('Guard failed: style footer bounds')
 contextual = '''        <div className="apply-style-layers contextual" aria-label={`Aplicar ${STYLE_LAYER_LABEL[activeLayer]}`}>
           <button type="button" className="btn primary apply-style" onClick={() => onApply(activeLayer)} disabled={!canApply || applying || runtime.status === 'installing'} title={`Aplicar somente ${STYLE_LAYER_LABEL[activeLayer]}`}>
@@ -48,7 +50,7 @@ contextual = '''        <div className="apply-style-layers contextual" aria-labe
           </button>
         </div>
 '''
-text = text[:start] + contextual + text[end:]
+text = text[:start] + contextual + text[tail:]
 app.write_text(text, encoding='utf-8')
 
 css = Path('src/styles.css')
