@@ -169,6 +169,7 @@ import { buildTikTokShopVariants } from './editai/tiktok-shop-engine';
 import { applyAiEditPlan } from './editai/timeline-operations';
 import { FilaDeTrabalho } from './work-queue';
 import { STYLE_LAYERS, mergeStyleLayers, type StyleLayer } from './style-layers';
+import { launchBrowserLocalEditor, type BrowserLocalLauncherHandle } from './browser-local-launcher';
 
 // Proxy e waveform disputam a mesma CPU/disco que o resto do app. Sem um
 // limite, abrir um projeto com varias fontes pesadas (ProRes, HEVC) dispara
@@ -536,6 +537,7 @@ function broadcastRuntimePackState(state: RuntimePackState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('runtime-pack:state', state);
   }
+  browserLocalBroadcast('runtime-pack:state', state);
 }
 
 async function runtimePackIsReady(): Promise<boolean> {
@@ -1041,6 +1043,7 @@ function proxyState(state: PreviewProxyState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('preview-proxy:state', state);
   }
+  browserLocalBroadcast('preview-proxy:state', state);
 }
 
 async function proxyReady(absolutePath: string, fingerprint: string): Promise<string | null> {
@@ -1541,6 +1544,7 @@ function emitCodexEvent(event: CodexEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('codex:event', event);
   }
+  browserLocalBroadcast('codex:event', event);
 }
 
 // Portao unico de tudo que o agente fala. As tres integracoes (Codex, Claude,
@@ -1651,6 +1655,7 @@ function broadcastModelState(state: WhisperModelState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('whisper-model:state', state);
   }
+  browserLocalBroadcast('whisper-model:state', state);
 }
 
 async function directorySize(directory: string): Promise<number> {
@@ -1947,6 +1952,7 @@ function broadcastRemotionState(state: RemotionRuntimeState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('remotion:state', state);
   }
+  browserLocalBroadcast('remotion:state', state);
 }
 
 function runCommand(
@@ -2215,6 +2221,7 @@ function broadcastPhase2State(state: Phase2RenderState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('phase2:state', state);
   }
+  browserLocalBroadcast('phase2:state', state);
 }
 
 async function phase2Fingerprint(publicDirectory: string): Promise<string | null> {
@@ -2758,6 +2765,7 @@ function broadcastCleanCut(state: CleanCutState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('cleancut:state', state);
   }
+  browserLocalBroadcast('cleancut:state', state);
 }
 
 // Roda um comando do pacote e devolve stdout. Erro traz a linha que informa,
@@ -3983,6 +3991,7 @@ function broadcastAiRoles(): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('ai:roles', aiRoles);
   }
+  browserLocalBroadcast('ai:roles', aiRoles);
 }
 
 async function setImageCatalogProvider(id: string | null): Promise<AiRolesState> {
@@ -4052,6 +4061,7 @@ function broadcastClaudeAccount(state: ClaudeAccountState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('claude:account', state);
   }
+  browserLocalBroadcast('claude:account', state);
 }
 
 function getClaudeAgent(): ClaudeAgent {
@@ -4086,6 +4096,7 @@ function broadcastGeminiAccount(state: GeminiAccountState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('gemini:account', state);
   }
+  browserLocalBroadcast('gemini:account', state);
 }
 
 function getGeminiAgent(): GeminiAgent {
@@ -4548,12 +4559,14 @@ function broadcastCatalog(state: CatalogState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('ai-catalog:state', state);
   }
+  browserLocalBroadcast('ai-catalog:state', state);
 }
 
 function broadcastActiveModel(state: ActiveModelState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('ai-catalog:active-model', state);
   }
+  browserLocalBroadcast('ai-catalog:active-model', state);
 }
 
 // Motor de chat vindo do catálogo (ex.: Ollama). Devolve o que o Codex precisa
@@ -4781,6 +4794,7 @@ function broadcastImageGenState(state: ImageGenState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('image-gen:state', state);
   }
+  browserLocalBroadcast('image-gen:state', state);
 }
 
 // ChatGPT conectado por CHAVE tambem gera imagem — pela API de imagens da
@@ -6089,8 +6103,101 @@ async function runEditAiE2eIfRequested(): Promise<boolean> {
   return true;
 }
 
+
+type RegisteredIpcHandler = Parameters<typeof ipcMain.handle>[1];
+const browserLocalInvokeHandlers = new Map<string, RegisteredIpcHandler>();
+type BrowserLocalEvent = { channel: string; payload: unknown };
+const browserLocalEventListeners = new Set<(event: BrowserLocalEvent) => void>();
+let browserLocalHandle: BrowserLocalLauncherHandle | null = null;
+
+function registerIpcHandle(channel: string, listener: RegisteredIpcHandler): void {
+  browserLocalInvokeHandlers.set(channel, listener);
+  ipcMain.handle(channel, listener);
+}
+
+function browserLocalBroadcast(channel: string, payload: unknown): void {
+  for (const listener of browserLocalEventListeners) listener({ channel, payload });
+}
+
+function restoreBrowserLocalMedia(value: unknown): unknown {
+  if (typeof value === 'string') {
+    try {
+      const url = new URL(value);
+      if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.pathname.startsWith('/api/media/')) {
+        const rest = url.pathname.slice('/api/media/'.length);
+        const slash = rest.indexOf('/');
+        if (slash > 0) {
+          const kind = rest.slice(0, slash);
+          const target = rest.slice(slash + 1);
+          if (kind === 'local' || kind === 'preview') return `edvid-media://${kind}/${target}`;
+        }
+      }
+    } catch {}
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(restoreBrowserLocalMedia);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key, restoreBrowserLocalMedia(item)]));
+  }
+  return value;
+}
+
+function resolveBrowserLocalMediaPath(requestPath: string): string | null {
+  const localPrefix = '/api/media/local/';
+  if (requestPath.startsWith(localPrefix)) {
+    return authorizedMedia.get(requestPath.slice(localPrefix.length)) ?? null;
+  }
+  for (const prefix of ['/api/media/preview/', '/edvid-preview/']) {
+    if (!requestPath.startsWith(prefix)) continue;
+    const parts = requestPath.slice(prefix.length).split('/');
+    const token = parts.shift() ?? '';
+    const root = previewRoots.get(token);
+    if (!root) return null;
+    return resolvePreviewPath(root, parts);
+  }
+  return null;
+}
+
+async function startBrowserLocalMode(mainWindow: BrowserWindow): Promise<boolean> {
+  if (!app.isPackaged || MAIN_WINDOW_VITE_DEV_SERVER_URL || process.argv.includes('--editai-electron') || process.env.EDITAI_DISABLE_BROWSER_LOCAL === '1') {
+    return false;
+  }
+  const staticRoot = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
+  const secureToken = randomUUID();
+  let lastError: unknown = null;
+  for (let port = 4820; port <= 4829; port += 1) {
+    try {
+      browserLocalHandle = await launchBrowserLocalEditor({
+        staticRoot,
+        port,
+        secureToken,
+        openExternal: (url) => shell.openExternal(url),
+        invoke: async (channel, args) => {
+          const handler = browserLocalInvokeHandlers.get(channel);
+          if (!handler) throw new Error(`Canal local desconhecido: ${channel}`);
+          const restored = restoreBrowserLocalMedia(args) as unknown[];
+          return handler({} as Electron.IpcMainInvokeEvent, ...restored);
+        },
+        subscribe: (listener) => {
+          browserLocalEventListeners.add(listener);
+          return () => { browserLocalEventListeners.delete(listener); };
+        },
+        resolveMediaPath: resolveBrowserLocalMediaPath,
+      });
+      mainWindow.hide();
+      return true;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.error('Nao foi possivel abrir o EDIT AI no navegador; usando a janela local.', lastError);
+  browserLocalHandle = null;
+  return false;
+}
+
 function registerIpcHandlers(): void {
-  ipcMain.handle('desktop:get-info', () => ({
+  registerIpcHandle('desktop:get-info', () => ({
     platform: process.platform,
     arch: process.arch,
     appVersion: app.getVersion(),
@@ -6098,14 +6205,14 @@ function registerIpcHandlers(): void {
     embeddedNodeVersion: process.versions.node,
   }));
 
-  ipcMain.handle('runtime:check', () =>
+  registerIpcHandle('runtime:check', () =>
     Promise.all(runtimeCommands.map(({ name, args }) => {
       const resolution = resolveRuntime(name, appRuntimeContext());
       return checkRuntime(resolution, args);
     })),
   );
 
-  ipcMain.handle('project:list', async () => {
+  registerIpcHandle('project:list', async () => {
     const projects = await readRecentProjects();
     const qa = qaProject();
     return qa
@@ -6113,7 +6220,7 @@ function registerIpcHandlers(): void {
       : projects;
   });
 
-  ipcMain.handle('project:select-directory', async (_event, input?: { name?: string }) => {
+  registerIpcHandle('project:select-directory', async (_event, input?: { name?: string }) => {
     const result = await dialog.showOpenDialog({
       title: 'Escolha a pasta do projeto de video',
       buttonLabel: 'Usar esta pasta',
@@ -6124,23 +6231,23 @@ function registerIpcHandlers(): void {
     return openProject(result.filePaths[0], true, asText(input?.name));
   });
 
-  ipcMain.handle('project:rename', async (_event, input: { directory?: string; name?: string }) => {
+  registerIpcHandle('project:rename', async (_event, input: { directory?: string; name?: string }) => {
     const name = asText(input.name).slice(0, 60);
     if (!name) throw new Error('Escolha um nome para o projeto.');
     return mutateRecentProject(asText(input.directory), (project) => ({ ...project, name }));
   });
 
-  ipcMain.handle('project:pin', (_event, input: { directory?: string; pinned?: boolean }) =>
+  registerIpcHandle('project:pin', (_event, input: { directory?: string; pinned?: boolean }) =>
     mutateRecentProject(asText(input.directory), (project) => ({
       ...project,
       pinned: Boolean(input.pinned),
     })));
 
   // Remove apenas da lista de recentes; a pasta do usuario fica intacta.
-  ipcMain.handle('project:remove-recent', (_event, input: { directory?: string }) =>
+  registerIpcHandle('project:remove-recent', (_event, input: { directory?: string }) =>
     mutateRecentProject(asText(input.directory), () => null));
 
-  ipcMain.handle('project:open-folder', async (_event, input: { directory?: string }) => {
+  registerIpcHandle('project:open-folder', async (_event, input: { directory?: string }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     const projects = await readRecentProjects();
     const known = selectedProjectDirectories.has(requestedDirectory) ||
@@ -6149,7 +6256,7 @@ function registerIpcHandlers(): void {
     await shell.openPath(requestedDirectory);
   });
 
-  ipcMain.handle('project:open-recent', async (_event, input: { directory?: string }) => {
+  registerIpcHandle('project:open-recent', async (_event, input: { directory?: string }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     const projects = await readRecentProjects();
     const qa = qaProject();
@@ -6160,7 +6267,7 @@ function registerIpcHandlers(): void {
     return openProject(requestedDirectory, qa?.directory !== requestedDirectory);
   });
 
-  ipcMain.handle(
+  registerIpcHandle(
     'project:refresh-workspace',
     async (_event, input: { directory?: string }) => {
       const requestedDirectory = path.resolve(asText(input.directory));
@@ -6171,7 +6278,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('editai:analysis-context', async (_event, input: { directory?: string }) => {
+  registerIpcHandle('editai:analysis-context', async (_event, input: { directory?: string }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(requestedDirectory)) {
       throw new Error('Abra o projeto antes de analisar retenção.');
@@ -6179,7 +6286,7 @@ function registerIpcHandlers(): void {
     return readEditAiAnalysisContext(requestedDirectory);
   });
 
-  ipcMain.handle(
+  registerIpcHandle(
     'timeline:save',
     async (_event, input: { directory?: string; model?: unknown; loadStamp?: unknown }) => {
       const requestedDirectory = path.resolve(asText(input.directory));
@@ -6212,11 +6319,11 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('whisper-model:ensure', () => ensureWhisperModel());
+  registerIpcHandle('whisper-model:ensure', () => ensureWhisperModel());
 
-  ipcMain.handle('remotion:ensure', () => ensureRemotionRuntime());
+  registerIpcHandle('remotion:ensure', () => ensureRemotionRuntime());
 
-  ipcMain.handle('remotion:scaffold', async (_event, input: { directory?: string }) => {
+  registerIpcHandle('remotion:scaffold', async (_event, input: { directory?: string }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(requestedDirectory)) {
       throw new Error('Abra o projeto antes de preparar a Fase 2.');
@@ -6226,7 +6333,7 @@ function registerIpcHandlers(): void {
 
   // Monta a Fase 2 INTEIRA a partir do formulario de estilos: copia o corte,
   // mede o arquivo, gera legenda e segmentos e escreve os dados da edicao.
-  ipcMain.handle('phase2:build', async (_event, input: { directory?: string; style?: ProjectStyleState; layers?: unknown }) => {
+  registerIpcHandle('phase2:build', async (_event, input: { directory?: string; style?: ProjectStyleState; layers?: unknown }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(requestedDirectory)) {
       throw new Error('Abra o projeto antes de aplicar os estilos.');
@@ -6239,7 +6346,7 @@ function registerIpcHandlers(): void {
     return buildPhase2(requestedDirectory, input.style, requestedLayers);
   });
 
-  ipcMain.handle('cleancut:run', (_event, input: { directory?: string }) => {
+  registerIpcHandle('cleancut:run', (_event, input: { directory?: string }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(requestedDirectory)) {
       throw new Error('Abra o projeto antes de fazer o corte limpo.');
@@ -6247,7 +6354,7 @@ function registerIpcHandlers(): void {
     return runCleanCut(requestedDirectory);
   });
 
-  ipcMain.handle('cleancut:apply-timeline', (
+  registerIpcHandle('cleancut:apply-timeline', (
     _event,
     input: { directory?: string; ranges?: Array<{ sourceId?: string; start?: number; end?: number; label?: string }> },
   ) => {
@@ -6265,7 +6372,7 @@ function registerIpcHandlers(): void {
     return applyTimelineRanges(requestedDirectory, ranges);
   });
 
-  ipcMain.handle('phase2:render', (_event, input: { directory?: string }) => {
+  registerIpcHandle('phase2:render', (_event, input: { directory?: string }) => {
     const requestedDirectory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(requestedDirectory)) {
       throw new Error('Abra o projeto antes de renderizar a Fase 2.');
@@ -6273,12 +6380,12 @@ function registerIpcHandlers(): void {
     return renderPhase2(requestedDirectory);
   });
 
-  ipcMain.handle('waveform:get', (_event, input: { url?: string }) =>
+  registerIpcHandle('waveform:get', (_event, input: { url?: string }) =>
     readSourceWaveform(asText(input.url)));
 
-  ipcMain.handle('codex:account', async () => (await codexServer()).readAccount());
+  registerIpcHandle('codex:account', async () => (await codexServer()).readAccount());
 
-  ipcMain.handle('codex:login', async () => {
+  registerIpcHandle('codex:login', async () => {
     const login = await retryIfServerDied('login do ChatGPT', async () => (await codexServer()).startChatGptLogin());
     const authUrl = new URL(login.authUrl);
     if (authUrl.protocol !== 'https:' || authUrl.origin !== 'https://auth.openai.com') {
@@ -6288,11 +6395,11 @@ function registerIpcHandlers(): void {
     return login.state;
   });
 
-  ipcMain.handle('codex:login-cancel', async () => (await codexServer()).cancelLogin());
+  registerIpcHandle('codex:login-cancel', async () => (await codexServer()).cancelLogin());
 
-  ipcMain.handle('codex:logout', async () => (await codexServer()).logout());
+  registerIpcHandle('codex:logout', async () => (await codexServer()).logout());
 
-  ipcMain.handle('codex:message', async (_event, input: CodexSendMessageInput) => {
+  registerIpcHandle('codex:message', async (_event, input: CodexSendMessageInput) => {
     const projectDirectory = asText(input.projectDirectory);
     const text = input.text?.trim();
     if (!projectDirectory) throw new Error('Escolha uma pasta de projeto.');
@@ -6319,7 +6426,7 @@ function registerIpcHandlers(): void {
     return (await codexServer()).sendMessage(resolvedProjectDirectory, outgoing);
   });
 
-  ipcMain.handle(
+  registerIpcHandle(
     'codex:interrupt',
     async (_event, input: { threadId: string; turnId: string }) => {
       if (getClaudeAgent().ownsThread(asText(input.threadId))) {
@@ -6332,7 +6439,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  registerIpcHandle(
     'codex:approval',
     async (
       _event,
@@ -6348,21 +6455,21 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('ai:roles-get', () => aiRoles);
+  registerIpcHandle('ai:roles-get', () => aiRoles);
 
-  ipcMain.handle('ai:image-catalog', (_event, input: { id?: string | null }) =>
+  registerIpcHandle('ai:image-catalog', (_event, input: { id?: string | null }) =>
     setImageCatalogProvider(input.id ? asText(input.id) : null));
 
-  ipcMain.handle('ai:video-catalog', (_event, input: { id?: string | null }) =>
+  registerIpcHandle('ai:video-catalog', (_event, input: { id?: string | null }) =>
     setVideoCatalogProvider(input.id ? asText(input.id) : null));
 
-  ipcMain.handle('ai:tier-set', (_event, input: { kind?: unknown; tier?: unknown }) =>
+  registerIpcHandle('ai:tier-set', (_event, input: { kind?: unknown; tier?: unknown }) =>
     setGenerationTier(input.kind === 'video' ? 'video' : 'imagem', asText(input.tier)));
 
   // --- Hubs de geracao por MCP ----------------------------------------------
   // O login abre o navegador e espera o retorno em 127.0.0.1. Nada de chave
   // para o aluno colar: o token fica no cofre do hub e nunca passa por aqui.
-  ipcMain.handle('hub:login', async (_event, input: { hub?: unknown }) => {
+  registerIpcHandle('hub:login', async (_event, input: { hub?: unknown }) => {
     const entry = catalogEntry(asText(input.hub));
     if (!entry?.oauthHub) throw new Error('Essa conexão não entra por login.');
     await hubFor(entry.oauthHub).login();
@@ -6372,7 +6479,7 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle('hub:disconnect', async (_event, input: { hub?: unknown }) => {
+  registerIpcHandle('hub:disconnect', async (_event, input: { hub?: unknown }) => {
     const entry = catalogEntry(asText(input.hub));
     if (!entry?.oauthHub) throw new Error('Essa conexão não entra por login.');
     await hubFor(entry.oauthHub).forget();
@@ -6394,7 +6501,7 @@ function registerIpcHandlers(): void {
   // casa. Sem esta checagem o aluno so descobre quando o pedido volta com
   // "gaste 50 creditos" por um clipe de 5. Nao levanta erro: hub que nao
   // respondeu vira `null`, e quem chama nao escreve nada no chat.
-  ipcMain.handle('hub:check', async () => {
+  registerIpcHandle('hub:check', async () => {
     const saida: Array<{
       id: string;
       nome: string;
@@ -6436,7 +6543,7 @@ function registerIpcHandlers(): void {
   // A CONTAGEM DE MODELOS VOLTA JUNTO, com o plano e o credito. E o unico
   // jeito de o aluno enxergar se o catalogo veio inteiro — e de separar
   // "sessao vencida" de "outra conta".
-  ipcMain.handle('hub:reconnect', async (_event, input: { hub?: unknown }) => {
+  registerIpcHandle('hub:reconnect', async (_event, input: { hub?: unknown }) => {
     const entry = catalogEntry(asText(input.hub));
     if (!entry?.oauthHub) throw new Error('Essa conexão não entra por login.');
     const hub = hubFor(entry.oauthHub);
@@ -6457,7 +6564,7 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle(
+  registerIpcHandle(
     'ai:role-set',
     (_event, input: { role?: unknown; provider?: unknown; pinned?: unknown }) => {
       const role = input.role === 'image' ? 'image' : 'chat';
@@ -6469,7 +6576,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('music:fulfill', async (_event, input: { directory?: string }) => {
+  registerIpcHandle('music:fulfill', async (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6482,7 +6589,7 @@ function registerIpcHandlers(): void {
   // segmentos, cues), a base de arquivos e as camadas de grafico. A leitura e
   // tolerante: projeto sem legenda ainda toca, sem track ainda toca — o que
   // nao pode e a camera dividir por zero num segments vazio.
-  ipcMain.handle('preview:data', async (_event, input: { directory?: string }) => {
+  registerIpcHandle('preview:data', async (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6590,7 +6697,7 @@ function registerIpcHandlers(): void {
   // operacao validada sobre o edit-data.json. Nada renderiza aqui — o aluno
   // ajusta ao vivo e renderiza uma vez, no fim. A escrita e atomica (tmp +
   // rename): um crash no meio nao pode deixar meio-JSON para o render ler.
-  ipcMain.handle('preview:edit', async (_event, input: { directory?: string; operations?: unknown }) => {
+  registerIpcHandle('preview:edit', async (_event, input: { directory?: string; operations?: unknown }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6613,7 +6720,7 @@ function registerIpcHandlers(): void {
   // seletor, copia para public/ (imagens/ ou clipes/) e grava o src no split.
   // Copia, nunca referencia: o render roda no sandbox com public/ como raiz, e
   // um caminho de fora quebraria ao mover o projeto de maquina.
-  ipcMain.handle('preview:pick-split-media', async (_event, input: { directory?: string; index?: unknown }) => {
+  registerIpcHandle('preview:pick-split-media', async (_event, input: { directory?: string; index?: unknown }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6634,7 +6741,7 @@ function registerIpcHandlers(): void {
 
   // Mesmo espaco vazio, outra origem: em vez de apontar um arquivo, o aluno
   // DESCREVE o que quer ver e o EDIT AI gera. Ver generateSplitMedia.
-  ipcMain.handle('preview:generate-split-media', async (
+  registerIpcHandle('preview:generate-split-media', async (
     _event,
     input: { directory?: string; index?: unknown; prompt?: unknown; kind?: unknown },
   ) => {
@@ -6653,7 +6760,7 @@ function registerIpcHandlers(): void {
   // O AGENTE ESCREVE O PROMPT da faixa a partir da fala daquele trecho — o
   // botao "Gerar automaticamente". So o prompt: quem decide gerar (e gastar
   // credito) continua sendo o clique do aluno no Gerar.
-  ipcMain.handle('preview:suggest-split-prompt', async (
+  registerIpcHandle('preview:suggest-split-prompt', async (
     _event,
     input: { directory?: string; index?: unknown; kind?: unknown },
   ) => {
@@ -6678,7 +6785,7 @@ function registerIpcHandlers(): void {
     asText(valor) === 'tela-dividida' ? 'tela-dividida' : 'tela-cheia'
   );
 
-  ipcMain.handle('media:pick-file', async () => {
+  registerIpcHandle('media:pick-file', async () => {
     const escolha = await dialog.showOpenDialog({
       title: 'Escolher mídia para este trecho',
       properties: ['openFile'],
@@ -6687,7 +6794,7 @@ function registerIpcHandlers(): void {
     return escolha.canceled ? null : escolha.filePaths[0] ?? null;
   });
 
-  ipcMain.handle('preview:apply-marked-media', async (
+  registerIpcHandle('preview:apply-marked-media', async (
     _event,
     input: { directory?: string; items?: unknown },
   ) => {
@@ -6712,7 +6819,7 @@ function registerIpcHandlers(): void {
     return applyMarkedMedia(directory, items);
   });
 
-  ipcMain.handle('preview:suggest-mark-prompt', async (
+  registerIpcHandle('preview:suggest-mark-prompt', async (
     _event,
     input: { directory?: string; start?: unknown; end?: unknown; kind?: unknown },
   ) => {
@@ -6727,7 +6834,7 @@ function registerIpcHandlers(): void {
   // O AGENTE ESCREVE O PROMPT da faixa a partir da fala daquele trecho — o
   // botao "Gerar automaticamente". So o prompt: quem decide gerar (e gastar
   // credito) continua sendo o clique do aluno no Gerar.
-  ipcMain.handle('video:fulfill', (_event, input: { directory?: string }) => {
+  registerIpcHandle('video:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6735,7 +6842,7 @@ function registerIpcHandlers(): void {
     return fulfillVideoRequests(directory);
   });
 
-  ipcMain.handle('image:fulfill', (_event, input: { directory?: string }) => {
+  registerIpcHandle('image:fulfill', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6743,7 +6850,7 @@ function registerIpcHandlers(): void {
     return fulfillImageRequests(directory);
   });
 
-  ipcMain.handle('jcut:apply', (_event, input: { directory?: string }) => {
+  registerIpcHandle('jcut:apply', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6751,7 +6858,7 @@ function registerIpcHandlers(): void {
     return applyJcutToProject(directory);
   });
 
-  ipcMain.handle('jcut:sync', (_event, input: { directory?: string }) => {
+  registerIpcHandle('jcut:sync', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6759,7 +6866,7 @@ function registerIpcHandlers(): void {
     return syncJcutForProject(directory);
   });
 
-  ipcMain.handle('animations:pending-custom', (_event, input: { directory?: string }) => {
+  registerIpcHandle('animations:pending-custom', (_event, input: { directory?: string }) => {
     const directory = path.resolve(asText(input.directory));
     if (!selectedProjectDirectories.has(directory)) {
       throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
@@ -6767,9 +6874,9 @@ function registerIpcHandlers(): void {
     return pendingCustomAnimations(directory);
   });
 
-  ipcMain.handle('claude:account', () => getClaudeAgent().readAccount());
+  registerIpcHandle('claude:account', () => getClaudeAgent().readAccount());
 
-  ipcMain.handle('claude:login', async () => {
+  registerIpcHandle('claude:login', async () => {
     const login = await getClaudeAgent().startLogin();
     const authUrl = new URL(login.authUrl);
     // claude.com/cai e o authorize atual de contas Claude.ai (CLI 2.1.x).
@@ -6780,31 +6887,31 @@ function registerIpcHandlers(): void {
     return login.state;
   });
 
-  ipcMain.handle('claude:login-code', (_event, input: { code?: string }) =>
+  registerIpcHandle('claude:login-code', (_event, input: { code?: string }) =>
     getClaudeAgent().submitLoginCode(asText(input.code)));
 
-  ipcMain.handle('claude:login-cancel', () => getClaudeAgent().cancelLogin());
+  registerIpcHandle('claude:login-cancel', () => getClaudeAgent().cancelLogin());
 
-  ipcMain.handle('claude:logout', () => getClaudeAgent().logout());
+  registerIpcHandle('claude:logout', () => getClaudeAgent().logout());
 
-  ipcMain.handle('claude:connect-key', (_event, input: { apiKey?: string }) =>
+  registerIpcHandle('claude:connect-key', (_event, input: { apiKey?: string }) =>
     getClaudeAgent().connectApiKey(asText(input.apiKey)));
 
-  ipcMain.handle('codex:login-api-key', async (_event, input: { apiKey?: string }) => {
+  registerIpcHandle('codex:login-api-key', async (_event, input: { apiKey?: string }) => {
     const apiKey = asText(input.apiKey).trim();
     if (!apiKey) throw new Error('Cole a chave de API da OpenAI.');
     await validateOpenAiKey(apiKey);
     return retryIfServerDied('login por chave', async () => (await codexServer()).startApiKeyLogin(apiKey));
   });
 
-  ipcMain.handle('gemini:account', () => getGeminiAgent().readAccount());
+  registerIpcHandle('gemini:account', () => getGeminiAgent().readAccount());
 
-  ipcMain.handle('gemini:connect-key', (_event, input: { apiKey?: string }) =>
+  registerIpcHandle('gemini:connect-key', (_event, input: { apiKey?: string }) =>
     getGeminiAgent().connectApiKey(asText(input.apiKey)));
 
-  ipcMain.handle('gemini:disconnect', () => getGeminiAgent().disconnect());
+  registerIpcHandle('gemini:disconnect', () => getGeminiAgent().disconnect());
 
-  ipcMain.handle('ai-catalog:read', async () => {
+  registerIpcHandle('ai-catalog:read', async () => {
     // Confere o cofre de token ANTES de responder. A leitura do arranque pode
     // nao ter terminado quando a tela monta, e o card abriria dizendo "nao
     // conectado" para uma conta que esta conectada.
@@ -6812,7 +6919,7 @@ function registerIpcHandlers(): void {
     return catalogStateFrom(await readStoredCatalog());
   });
 
-  ipcMain.handle(
+  registerIpcHandle(
     'ai-catalog:connect',
     async (_event, input: { id?: string; fields?: Record<string, string> }) => {
       const entry = catalogEntry(asText(input.id));
@@ -6833,7 +6940,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('ai-catalog:disconnect', async (_event, input: { id?: string }) => {
+  registerIpcHandle('ai-catalog:disconnect', async (_event, input: { id?: string }) => {
     const stored = await readStoredCatalog();
     const providers = { ...(stored.providers ?? {}) };
     delete providers[asText(input.id)];
@@ -6847,7 +6954,7 @@ function registerIpcHandlers(): void {
   // Testa a credencial contra a API do provedor ANTES de salvar. Uma chamada
   // barata que devolve "ok" ou o motivo — melhor que o aluno descobrir que
   // colou errado só quando a edição precisar da imagem.
-  ipcMain.handle(
+  registerIpcHandle(
     'ai-catalog:test',
     async (_event, input: { id?: string; fields?: Record<string, string> }) => {
       const entry = catalogEntry(asText(input.id));
@@ -6898,7 +7005,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('ai-catalog:chat-provider', async (_event, input: { id?: string | null }) => {
+  registerIpcHandle('ai-catalog:chat-provider', async (_event, input: { id?: string | null }) => {
     const stored = await readStoredCatalog();
     const next = { ...stored, chatProviderId: input.id ? asText(input.id) : null };
     await writeStoredCatalog(next);
@@ -6907,7 +7014,7 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle('ai-catalog:free-only', async (_event, input: { freeOnly?: boolean }) => {
+  registerIpcHandle('ai-catalog:free-only', async (_event, input: { freeOnly?: boolean }) => {
     const stored = await readStoredCatalog();
     const next = { ...stored, freeOnly: Boolean(input.freeOnly) };
     await writeStoredCatalog(next);
@@ -6916,11 +7023,12 @@ function registerIpcHandlers(): void {
     return state;
   });
 
-  ipcMain.handle('runtime-pack:ensure', () => ensureRuntimePack());
+  registerIpcHandle('runtime-pack:ensure', () => ensureRuntimePack());
 }
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
+    show: false,
     width: 1400,
     height: 900,
     minWidth: 1060,
@@ -6967,8 +7075,17 @@ function createWindow(): void {
         console.error('Falha ao capturar screenshot de QA:', error);
         app.exit(1);
       });
+
   } else {
-    void pageLoad;
+    void pageLoad
+      .then(async () => {
+        const openedInBrowser = await startBrowserLocalMode(mainWindow);
+        if (!openedInBrowser && !mainWindow.isDestroyed()) mainWindow.show();
+      })
+      .catch((error: unknown) => {
+        console.error('Falha ao carregar a interface do EDIT AI:', error);
+        if (!mainWindow.isDestroyed()) mainWindow.show();
+      });
   }
 }
 
@@ -7047,6 +7164,7 @@ function broadcastMemberAuth(state: MemberAuthState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('member:state', state);
   }
+  browserLocalBroadcast('member:state', state);
 }
 
 async function readStoredMemberAuth(): Promise<StoredMemberAuth | null> {
@@ -7316,6 +7434,7 @@ function broadcastAppUpdateState(state: AppUpdateState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('update:state', state);
   }
+  browserLocalBroadcast('update:state', state);
 }
 
 // O MESMO id do forge.config.ts (appBundleId). O Squirrel.Mac nomeia a pasta
@@ -7404,14 +7523,14 @@ function setupAutoUpdate(): void {
 }
 
 registerIpcHandlers();
-ipcMain.handle('update:install', () => {
+registerIpcHandle('update:install', () => {
   if (appUpdateState.status === 'ready') autoUpdater.quitAndInstall();
 });
 
 // Procura atualizacao sob demanda (Configuracoes → Geral). O app ja checa no
 // boot; este botao existe para quem quer conferir na hora. Em desenvolvimento
 // o autoUpdater nao roda, entao devolve o estado atual sem tentar.
-ipcMain.handle('update:check', async () => {
+registerIpcHandle('update:check', async () => {
   if (!app.isPackaged) return appUpdateState;
   // Mesma pergunta do boot: o que ja esta no disco conta como pronto.
   const baixada = await stagedUpdateVersion().catch(() => null);
@@ -7429,10 +7548,10 @@ ipcMain.handle('update:check', async () => {
   }
   return appUpdateState;
 });
-ipcMain.handle('member:get', () => memberAuthState);
-ipcMain.handle('member:login', (_event, input: { email?: string; password?: string }) =>
+registerIpcHandle('member:get', () => memberAuthState);
+registerIpcHandle('member:login', (_event, input: { email?: string; password?: string }) =>
   memberLogin(asText(input.email).toLocaleLowerCase('pt-BR'), asText(input.password)));
-ipcMain.handle('member:logout', () => memberLogout());
+registerIpcHandle('member:logout', () => memberLogout());
 
 void app.whenReady().then(async () => {
   // Os caches precisam existir antes do Codex iniciar: eles entram como
