@@ -334,6 +334,8 @@ export type ImageGenState = {
   // dinheiro do aluno, e o badge e onde ele ja olha para saber o que o Edvid
   // esta fazendo.
   note?: string;
+  placed?: number;
+  kind?: 'imagem' | 'video';
 };
 
 // J-Cut deterministico aplicado pelo aplicativo: o video do corte e copiado
