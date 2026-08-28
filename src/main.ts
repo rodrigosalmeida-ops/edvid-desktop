@@ -5331,62 +5331,109 @@ function promptDaFaixa(prompt: string, uso: ImageUse, isVideo: boolean): string 
   return [prompt.trim(), enquadramento, SEM_TEXTO].filter(Boolean).join('\n\n');
 }
 
-async function generateAtMark(
-  projectDirectory: string,
-  start: number,
-  end: number,
-  tipo: 'imagem' | 'video',
-  prompt: string,
-  destino: 'tela-cheia' | 'tela-dividida',
-): Promise<Record<string, unknown>> {
-  const texto = prompt.trim();
-  if (!texto) throw new Error('Escreva o que a IA deve criar neste trecho.');
-  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
-  const editDataFile = path.join(publicDirectory, 'edit-data.json');
+type MarcacaoDeMidia = {
+  start: number;
+  end: number;
+  kind: 'imagem' | 'video' | 'arquivo';
+  destino: 'tela-cheia' | 'tela-dividida';
+  prompt?: string;
+  arquivo?: string;
+};
 
-  if (destino === 'tela-dividida') {
-    const data = JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
-    const resultado = applyEditOperations(data, [{ op: 'add-split', start, end, position: 'top' }]);
-    if (!resultado.ok) throw new Error(`Não consegui abrir a tela dividida: ${resultado.reason}.`);
-    if (resultado.changed) {
-      const temporario = `${editDataFile}.tmp`;
-      await writeFile(temporario, `${JSON.stringify(resultado.data, null, 2)}\n`);
-      await rename(temporario, editDataFile);
+async function abrirTelaDividida(publicDirectory: string, start: number, end: number): Promise<void> {
+  const file = path.join(publicDirectory, 'edit-data.json');
+  const data = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  const resultado = applyEditOperations(data, [{ op: 'add-split', start, end, position: 'top' }]);
+  if (!resultado.ok) throw new Error(`Não consegui abrir a tela dividida: ${resultado.reason}.`);
+  if (!resultado.changed) return;
+  const temporario = `${file}.tmp`;
+  await writeFile(temporario, `${JSON.stringify(resultado.data, null, 2)}\n`);
+  await rename(temporario, file);
+}
+
+async function applyMarkedMedia(
+  projectDirectory: string,
+  items: readonly MarcacaoDeMidia[],
+): Promise<{ colocados: number; erros: string[] }> {
+  const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
+  const erros: string[] = items.map(() => '');
+  let colocados = 0;
+  // Fila por tipo: video e imagem tem pedidos.json proprios.
+  const fila: Record<'clipes' | 'imagens', unknown[]> = { clipes: [], imagens: [] };
+  const geracoes: Array<{ index: number; pasta: 'clipes' | 'imagens' }> = [];
+
+  for (const [index, item] of items.entries()) {
+    try {
+      if (item.destino === 'tela-dividida') {
+        await abrirTelaDividida(publicDirectory, item.start, item.end);
+      }
+      if (item.kind === 'arquivo') {
+        if (!item.arquivo) throw new Error('Nenhum arquivo foi escolhido para este trecho.');
+        await attachAtMark(projectDirectory, item.start, item.end, item.arquivo, item.destino);
+        colocados += 1;
+        continue;
+      }
+      const prompt = (item.prompt ?? '').trim();
+      if (!prompt) throw new Error('Este trecho não tem descrição para a IA criar.');
+      const pasta = item.kind === 'video' ? 'clipes' : 'imagens';
+      fila[pasta].push({
+        prompt,
+        inicio: item.start,
+        fim: item.end,
+        ...(item.destino === 'tela-dividida' ? { uso: 'tela-dividida' } : null),
+      });
+      geracoes.push({ index, pasta });
+    } catch (error) {
+      erros[index] = error instanceof Error ? error.message : String(error);
     }
   }
 
-  const pasta = tipo === 'video' ? 'clipes' : 'imagens';
-  const generatedDirectory = path.join(projectDirectory, 'edit', pasta);
-  await mkdir(generatedDirectory, { recursive: true });
-  const requestsFile = path.join(generatedDirectory, 'pedidos.json');
-  // Acrescenta a fila: um pedido do agente ainda pendente nao pode sumir por
-  // causa de um clique aqui.
-  const fila = await readFile(requestsFile, 'utf8')
-    .then((raw) => JSON.parse(raw) as unknown)
-    .then((parsed) => (Array.isArray(parsed) ? parsed : []))
-    .catch(() => [] as unknown[]);
-  await writeFile(requestsFile, `${JSON.stringify([
-    ...fila,
-    { prompt: texto, inicio: start, fim: end, ...(destino === 'tela-dividida' ? { uso: 'tela-dividida' } : null) },
-  ], null, 2)}\n`);
+  // As filas vao para o disco ANTES de qualquer fulfill: e isso que junta os
+  // pedidos num lote so do hub.
+  for (const pasta of ['clipes', 'imagens'] as const) {
+    if (!fila[pasta].length) continue;
+    const generatedDirectory = path.join(projectDirectory, 'edit', pasta);
+    await mkdir(generatedDirectory, { recursive: true });
+    const requestsFile = path.join(generatedDirectory, 'pedidos.json');
+    const anterior = await readFile(requestsFile, 'utf8')
+      .then((raw) => JSON.parse(raw) as unknown)
+      .then((parsed) => (Array.isArray(parsed) ? parsed : []))
+      .catch(() => [] as unknown[]);
+    await writeFile(requestsFile, `${JSON.stringify([...anterior, ...fila[pasta]], null, 2)}\n`);
+  }
 
-  // Duas rodadas pelo mesmo motivo do botao da faixa: uma geracao ja em voo
-  // devolve a promessa DELA, que leu a fila antes de a nossa entrar.
-  let ultimo: ImageGenState = { status: 'idle' };
-  for (let rodada = 0; rodada < 2; rodada += 1) {
-    ultimo = tipo === 'video'
-      ? await fulfillVideoRequests(projectDirectory)
-      : await fulfillImageRequests(projectDirectory);
-    if ((ultimo.placed ?? 0) > 0) break;
-    if (ultimo.status === 'error') break;
+  const estados: Partial<Record<'clipes' | 'imagens', ImageGenState>> = {};
+  if (fila.clipes.length) estados.clipes = await fulfillVideoRequests(projectDirectory);
+  if (fila.imagens.length) estados.imagens = await fulfillImageRequests(projectDirectory);
+
+  // Quem entrou e quem nao entrou: o fulfill coloca por JANELA, entao a
+  // verdade final e o edit-data — nao o contador do estado, que conta o lote
+  // inteiro (inclusive pedidos que ja estavam na fila do agente).
+  let editData: Record<string, unknown> = {};
+  try {
+    editData = JSON.parse(await readFile(path.join(publicDirectory, 'edit-data.json'), 'utf8')) as Record<string, unknown>;
+  } catch {
+    // Sem edit-data legivel nada pode ser confirmado; todos falham abaixo.
   }
-  if (!(ultimo.placed ?? 0)) {
-    // O fulfill ja explicou o motivo no chat; aqui a mensagem e do botao.
-    throw new Error(ultimo.status === 'error' && ultimo.error
-      ? ultimo.error
-      : 'A IA não devolveu o arquivo deste trecho.');
+  const inserts = Array.isArray(editData.inserts) ? (editData.inserts as Record<string, unknown>[]) : [];
+  const splits = Array.isArray(editData.splits) ? (editData.splits as Record<string, unknown>[]) : [];
+  for (const { index, pasta } of geracoes) {
+    const item = items[index];
+    const entrou = item.destino === 'tela-dividida'
+      ? splits.some((split) => Number(split.start) < item.end && Number(split.end) > item.start
+        && String(split.src ?? '').trim())
+      : inserts.some((insert) => Math.abs(Number(insert.start) - item.start) < 0.01
+        && String(insert.src ?? '').startsWith(`${pasta}/`));
+    if (entrou) {
+      colocados += 1;
+    } else {
+      const estado = estados[pasta];
+      erros[index] = estado?.error ?? 'A IA não devolveu o arquivo deste trecho.';
+    }
   }
-  return JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+
+  if (colocados > 0) broadcastCodexEvent({ type: 'workspace-refresh' });
+  return { colocados, erros };
 }
 
 // ARQUIVO DO DISCO na marcacao. Sem IA nenhuma no caminho: copia para dentro
@@ -5398,22 +5445,15 @@ async function attachAtMark(
   source: string,
   destino: 'tela-cheia' | 'tela-dividida',
 ): Promise<Record<string, unknown>> {
+  // Arquivo movido ou renomeado entre marcar e aplicar: o lote pode demorar
+  // minutos, e um ENOENT cru no chat nao diz ao aluno o que fazer.
+  if (!(await statOf(source))) {
+    throw new Error(`Não encontrei mais o arquivo ${path.basename(source)} — ele foi movido ou renomeado?`);
+  }
   const extension = path.extname(source).toLowerCase();
   const isVideo = ['.mp4', '.mov', '.webm'].includes(extension);
   const pasta = isVideo ? 'clipes' : 'imagens';
   const publicDirectory = path.join(projectDirectory, 'edit', 'remotion', 'public');
-  const editDataFile = path.join(publicDirectory, 'edit-data.json');
-
-  if (destino === 'tela-dividida') {
-    const data = JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
-    const resultado = applyEditOperations(data, [{ op: 'add-split', start, end, position: 'top' }]);
-    if (!resultado.ok) throw new Error(`Não consegui abrir a tela dividida: ${resultado.reason}.`);
-    if (resultado.changed) {
-      const temporario = `${editDataFile}.tmp`;
-      await writeFile(temporario, `${JSON.stringify(resultado.data, null, 2)}\n`);
-      await rename(temporario, editDataFile);
-    }
-  }
 
   // Nome achatado e com sufixo se ja existir: nunca sobrescrever um arquivo
   // que o aluno ja usou em outro trecho.
@@ -5436,7 +5476,7 @@ async function attachAtMark(
     janela: { inicio: start, fim: end },
   }, pasta);
   if (!colocado) throw new Error('Não consegui encaixar este arquivo no trecho marcado.');
-  return JSON.parse(await readFile(editDataFile, 'utf8')) as Record<string, unknown>;
+  return JSON.parse(await readFile(path.join(publicDirectory, 'edit-data.json'), 'utf8')) as Record<string, unknown>;
 }
 
 // O aluno DESCREVE a faixa e o EDIT AI gera.
@@ -6549,39 +6589,38 @@ function registerIpcHandlers(): void {
     asText(valor) === 'tela-dividida' ? 'tela-dividida' : 'tela-cheia'
   );
 
-  ipcMain.handle('preview:generate-at-mark', async (
-    _event,
-    input: { directory?: string; start?: unknown; end?: unknown; kind?: unknown; prompt?: unknown; destino?: unknown },
-  ) => {
-    const directory = path.resolve(asText(input.directory));
-    if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
-    }
-    const { start, end } = janelaDoPedido(input);
-    return generateAtMark(
-      directory, start, end,
-      asText(input.kind) === 'video' ? 'video' : 'imagem',
-      asText(input.prompt),
-      destinoDoPedido(input.destino),
-    );
-  });
-
-  ipcMain.handle('preview:attach-at-mark', async (
-    _event,
-    input: { directory?: string; start?: unknown; end?: unknown; destino?: unknown },
-  ) => {
-    const directory = path.resolve(asText(input.directory));
-    if (!selectedProjectDirectories.has(directory)) {
-      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
-    }
-    const { start, end } = janelaDoPedido(input);
+  ipcMain.handle('media:pick-file', async () => {
     const escolha = await dialog.showOpenDialog({
       title: 'Escolher mídia para este trecho',
       properties: ['openFile'],
       filters: [{ name: 'Imagens e vídeos', extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'mov', 'webm'] }],
     });
-    if (escolha.canceled || !escolha.filePaths[0]) return null;
-    return attachAtMark(directory, start, end, escolha.filePaths[0], destinoDoPedido(input.destino));
+    return escolha.canceled ? null : escolha.filePaths[0] ?? null;
+  });
+
+  ipcMain.handle('preview:apply-marked-media', async (
+    _event,
+    input: { directory?: string; items?: unknown },
+  ) => {
+    const directory = path.resolve(asText(input.directory));
+    if (!selectedProjectDirectories.has(directory)) {
+      throw new Error('Escolha a pasta do projeto pelo seletor do EDIT AI.');
+    }
+    const items = (Array.isArray(input.items) ? input.items : []).map((raw) => {
+      const item = raw as Record<string, unknown>;
+      const { start, end } = janelaDoPedido(item);
+      const kind = asText(item.kind);
+      return {
+        start,
+        end,
+        kind: kind === 'video' ? 'video' as const : kind === 'arquivo' ? 'arquivo' as const : 'imagem' as const,
+        destino: destinoDoPedido(item.destino),
+        prompt: asText(item.prompt),
+        arquivo: asText(item.arquivo) || undefined,
+      };
+    });
+    if (!items.length) return { colocados: 0, erros: [] };
+    return applyMarkedMedia(directory, items);
   });
 
   ipcMain.handle('preview:suggest-mark-prompt', async (
