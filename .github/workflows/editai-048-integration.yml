@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   integrate:
+    if: ${{ !contains(github.event.head_commit.message || '', '[048-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -24,23 +25,122 @@ jobs:
           git config user.name "EDIT AI Integration Bot"
           git config user.email "actions@users.noreply.github.com"
 
-      - name: Fetch upstream 0.48
+      - name: Fetch and apply upstream 0.48
         run: |
           git remote add upstream https://github.com/fillrochaa/edvid-desktop.git || true
           git fetch upstream b47be8c1691cfa342f90d8636908450b1af87379
-
-      - name: Cherry-pick upstream 0.48
-        run: |
           set +e
           git cherry-pick b47be8c1691cfa342f90d8636908450b1af87379
           status=$?
+          set -e
           if [ "$status" -ne 0 ]; then
-            echo "--- unresolved files ---"
-            git diff --name-only --diff-filter=U
-            echo "--- status ---"
-            git status --short
-            exit "$status"
+            # Preserve EDIT AI identity and tests that diverged intentionally.
+            git checkout --ours agent.md package.json scripts/test-helpers.mjs scripts/test-split-layout.mjs src/codex-app-server.ts src/main.ts
+            git rm -f scripts/test-media-request.mjs || true
+            git add agent.md package.json scripts/test-helpers.mjs scripts/test-split-layout.mjs src/codex-app-server.ts src/main.ts
+            git add resources/helpers/clean_cut.py resources/remotion-template/src/Main.tsx src/App.tsx src/clean-cut.ts src/media-request.ts
+            git cherry-pick --continue
           fi
+
+      - name: Adapt 0.48 to EDIT AI surface
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, re
+
+          main = Path('src/main.ts')
+          s = main.read_text(encoding='utf-8')
+          old_import = "import { colocacaoPara, type MediaRequest, parseMediaRequests } from './media-request';"
+          new_import = "import { arquivoLegado, colocacaoPara, type MediaRequest, parseMediaRequests } from './media-request';"
+          if old_import in s:
+              s = s.replace(old_import, new_import, 1)
+          elif new_import not in s:
+              raise SystemExit('media-request import anchor missing')
+
+          helper = '''async function migrarNomeLegado(pasta: string, request: MediaRequest, kind: 'video' | 'imagem'): Promise<void> {
+            const antigo = arquivoLegado(request.prompt, kind);
+            if (antigo === request.arquivo) return;
+            const destino = path.join(pasta, request.arquivo);
+            if (await stat(destino).then(() => true, () => false)) return;
+            const origem = path.join(pasta, antigo);
+            if (!await stat(origem).then(() => true, () => false)) return;
+            await rename(origem, destino);
+          }
+
+          '''
+          anchor = 'function fulfillVideoRequests(projectDirectory: string): Promise<ImageGenState> {'
+          if 'async function migrarNomeLegado(' not in s:
+              if anchor not in s:
+                  raise SystemExit('fulfillVideoRequests anchor missing')
+              s = s.replace(anchor, helper + anchor, 1)
+
+          def patch_fulfill(text, function_name, next_name, folder, kind):
+              start = text.find(f'function {function_name}')
+              if start < 0:
+                  raise SystemExit(f'{function_name} missing')
+              end = text.find(f'function {next_name}', start) if next_name else len(text)
+              if end < 0:
+                  end = len(text)
+              segment = text[start:end]
+              call = f"await migrarNomeLegado({folder}, request, '{kind}');"
+              if call in segment:
+                  return text
+              pattern = r'(for \(const request of requests\) \{\n)(\s*)'
+              updated, count = re.subn(pattern, lambda m: m.group(1) + m.group(2) + call + '\n' + m.group(2), segment, count=1)
+              if count != 1:
+                  raise SystemExit(f'loop anchor missing in {function_name}')
+              return text[:start] + updated + text[end:]
+
+          s = patch_fulfill(s, 'fulfillVideoRequests', 'fulfillImageRequests', 'clipsDirectory', 'video')
+          s = patch_fulfill(s, 'fulfillImageRequests', 'applyMarkedMedia', 'imagesDirectory', 'imagem')
+          main.write_text(s, encoding='utf-8')
+
+          codex = Path('src/codex-app-server.ts')
+          c = codex.read_text(encoding='utf-8')
+          c, count = re.subn(
+              r'^- O CORTE LIMPO NAO E TAREFA SUA\..*$',
+              '- O CORTE LIMPO NAO E TAREFA SUA. O EDIT AI faz sozinho, fora do sandbox, quando o aluno inicia o Corte Limpo: transcreve cada video na ordem da timeline, mede o silencio real do audio, descarta tentativas abandonadas quando a frase e refeita e remove trechos muito abaixo do nivel da voz principal (fala de fundo ou leitura baixa), corta, concatena e escreve edit/edl.json e edit/corte_limpo.mp4. NAO refaca essa analise, NAO transcreva para cortar, NAO rode o clean_cut.py, NAO corte com FFmpeg e NAO escreva edit/edl.json. Se o aluno pedir o corte limpo no chat, informe em uma frase que o Corte Limpo do EDIT AI executa essa analise; nunca devolva uma lista de passos nem tente refazer o corte dentro do sandbox.',
+              c,
+              count=1,
+              flags=re.M,
+          )
+          if count != 1:
+              raise SystemExit('clean-cut instruction anchor missing')
+          codex.write_text(c, encoding='utf-8')
+
+          test = Path('scripts/test-editai-048.mjs')
+          test.write_text("""import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const media = readFileSync('src/media-request.ts','utf8');
+          const main = readFileSync('src/main.ts','utf8');
+          const clean = readFileSync('resources/helpers/clean_cut.py','utf8');
+          const remotion = readFileSync('resources/remotion-template/src/Main.tsx','utf8');
+          const cleanTs = readFileSync('src/clean-cut.ts','utf8');
+          assert.match(media, /function assinatura\(/u);
+          assert.match(media, /export function arquivoLegado\(/u);
+          assert.match(media, /assinatura\(limpo\)/u);
+          assert.match(main, /async function migrarNomeLegado\(/u);
+          assert.match(main, /migrarNomeLegado\(clipsDirectory, request, 'video'\)/u);
+          assert.match(main, /migrarNomeLegado\(imagesDirectory, request, 'imagem'\)/u);
+          assert.match(clean, /RETAKE_MIN_COVERAGE = 0\.58/u);
+          assert.match(clean, /def subsequence_length\(/u);
+          assert.match(cleanTs, /secondary_speech_removed/u);
+          assert.doesNotMatch(remotion, /<AbsoluteFill style=\{\{opacity, backgroundColor: 'black'\}\}>/u);
+          console.log('test:editai-048 ok — retakes por cobertura, fala secundaria, nomes unicos e B-roll sem fade.');
+          """, encoding='utf-8')
+
+          pkg_path = Path('package.json')
+          pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+          pkg['scripts']['test:editai-048'] = 'node scripts/test-editai-048.mjs'
+          verify = pkg['scripts']['verify:editai']
+          if 'test:editai-048' not in verify:
+              pkg['scripts']['verify:editai'] = verify + ' && npm run test:editai-048'
+          pkg_path.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+      - name: Commit EDIT AI adaptation
+        run: |
+          git add src/main.ts src/codex-app-server.ts package.json scripts/test-editai-048.mjs
+          git commit -m "feat(editai): adapt upstream 0.48 clean cut and media safety [048-applied]"
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
