@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -86,7 +86,16 @@ try {
     'edit-ai-diagnostico-1.0.0-editai.2-2026-08-27T17-05-06-123.md',
   );
 
-  console.log('test:editai-diagnostics ok — relatório diagnostica, anonimiza a home e não vaza segredos.');
+  // O QA fat embute perto de 1 GB de runtimes. O cold-start do Windows 2025
+  // ja ultrapassou 120 s mesmo com verify:editai verde; esse contrato impede
+  // reintroduzir um timeout que mede o I/O do runner em vez do aplicativo.
+  const smokeScript = readFileSync(path.join(root, 'scripts', 'editai-smoke-windows.ps1'), 'utf8');
+  const timeout = /\[int\]\$TimeoutSeconds\s*=\s*(\d+)/u.exec(smokeScript);
+  assert.ok(timeout, 'smoke Windows precisa declarar TimeoutSeconds');
+  assert.ok(Number(timeout[1]) >= 240, 'smoke do pacote fat precisa tolerar cold-start de pelo menos 240 s');
+  assert.match(smokeScript, /Smoke test excedeu \$\{TimeoutSeconds\}s\./u);
+
+  console.log('test:editai-diagnostics ok — diagnóstico seguro e timeout do smoke fat protegidos.');
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

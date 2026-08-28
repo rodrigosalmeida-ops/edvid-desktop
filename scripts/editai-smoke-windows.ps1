@@ -1,7 +1,11 @@
 param(
   [string]$ExecutablePath,
   [string]$OutputPath,
-  [int]$TimeoutSeconds = 120,
+  # O pacote QA fat carrega perto de 1 GB de runtimes. Em cold-start do runner
+  # Windows 2025 ele pode passar dos 120 s antes de chegar ao smoke interno,
+  # mesmo com todos os testes e runtimes verdes. Mantemos um limite finito,
+  # mas largo o bastante para medir o executavel em vez da velocidade do disco.
+  [int]$TimeoutSeconds = 240,
   [switch]$EnsureRuntimePack
 )
 $ErrorActionPreference = 'Stop'
@@ -30,6 +34,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $OutputPath -Parent) | Out
 Remove-Item $OutputPath -Force -ErrorAction SilentlyContinue
 
 Write-Host "[EDIT AI] smoke executavel: $Exe"
+Write-Host "[EDIT AI] smoke timeout: ${TimeoutSeconds}s"
 $arg = "--editai-smoke-output=$OutputPath"
 $arguments = @('--editai-smoke', $arg)
 if ($EnsureRuntimePack) { $arguments += '--editai-smoke-ensure-runtime' }
