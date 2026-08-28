@@ -1,0 +1,118 @@
+name: EDIT AI approval hardening once
+
+on:
+  push:
+    branches:
+      - editai-approval-hardening-20260828
+    paths:
+      - .github/workflows/editai-approval-hardening-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: editai-approval-hardening-20260828
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply guarded approval patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app = Path('src/App.tsx')
+          text = app.read_text(encoding='utf-8')
+          state_old = """  const [cutsPending, setCutsPending] = useState(false);
+            // Muda quando um render termina: o EditorWorkspace re-busca os dados da
+          """.replace('            ', '  ')
+          state_new = """  const [cutsPending, setCutsPending] = useState(false);
+            // A aprovação roda dentro de callback assíncrono; use o valor atual,
+            // não um snapshot de render anterior, para nunca aprovar EDL velho.
+            const cutsPendingRef = useRef(cutsPending);
+            cutsPendingRef.current = cutsPending;
+            // Muda quando um render termina: o EditorWorkspace re-busca os dados da
+          """.replace('            ', '  ')
+          if state_old not in text:
+              raise SystemExit('Guard failed: cutsPending state changed')
+          text = text.replace(state_old, state_new, 1)
+
+          old = """  async function approveCleanCut(messageId: string) {
+              if (approvingCut || sending) return;
+              setApprovingCut(true);
+              const prompt = [
+                'Aprovado. Considere o corte limpo oficialmente aprovado e preserve este gate.',
+                'Não faça perguntas de estilo no chat: o usuário escolherá tipo de edição, headline, legendas e elementos visualmente na aba Estilos.',
+                'Aguarde o briefing estruturado que será enviado automaticamente ao clicar em “Salvar e aplicar”.',
+              ].join(' ');
+          """.replace('              ', '    ')
+          new = """  async function approveCleanCut(messageId: string) {
+              if (approvingCut || sending) return;
+              setApprovingCut(true);
+              // O corte aprovado precisa ser exatamente o que o usuário editou.
+              // Se trims/deletes ainda estão pendentes, materialize antes; falha
+              // interrompe a aprovação em vez de oficializar silenciosamente o EDL velho.
+              if (cutsPendingRef.current) {
+                const applied = await applyTimelineEdits().catch(() => false);
+                if (!applied) {
+                  setMessages((current) => [...current, {
+                    id: `error:${Date.now()}`,
+                    role: 'system',
+                    text: 'Não consegui aplicar os seus ajustes da timeline antes de aprovar. Resolva o erro indicado e aprove novamente, para o corte aprovado ser exatamente o que você editou.',
+                  }]);
+                  setApprovingCut(false);
+                  return;
+                }
+              }
+              const prompt = [
+                'Aprovado. Considere o corte limpo oficialmente aprovado e preserve este gate.',
+                'O usuário pode ter ajustado a timeline antes de aprovar; o corte aprovado é o que está no disco agora, então releia a transcrição e o EDL antes de usar qualquer tempo.',
+                'Se havia um pedido em andamento quando você pediu o corte, RETOME AGORA sem pedir que o usuário repita: o corte era o gate que faltava.',
+                'Não faça perguntas de estilo no chat: o usuário escolherá tipo de edição, headline, legendas e elementos visualmente na aba Estilos.',
+                'Sem pedido em andamento, apenas confirme e aguarde o briefing estruturado que será enviado automaticamente ao aplicar os estilos.',
+              ].join(' ');
+          """.replace('              ', '    ')
+          if old not in text:
+              raise SystemExit('Guard failed: approveCleanCut context changed')
+          app.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          test = Path('scripts/test-clean-cut.mjs')
+          t = test.read_text(encoding='utf-8')
+          marker = "  console.log('test:clean-cut ok — silêncio manda, bordas apertadas e take refeito descartado sem levar frase boa junto.');\n"
+          contract = """  // --- Aprovação leva os ajustes e retoma o pedido -------------------------
+            const appSource = readFileSync(path.join(projectRoot, 'src', 'App.tsx'), 'utf8');
+            assert.match(appSource, /cutsPendingRef = useRef\(cutsPending\)/u,
+              'aprovação precisa enxergar o estado atual dos ajustes pendentes');
+            assert.match(appSource,
+              /async function approveCleanCut[\s\S]{0,2200}?if \(cutsPendingRef\.current\)[\s\S]{0,900}?await applyTimelineEdits\(\)[\s\S]{0,900}?setApprovingCut\(false\);\s*return;/u,
+              'aprovação aplica os ajustes antes e para se eles falharem');
+            assert.match(appSource, /RETOME AGORA/u,
+              'aprovação manda a IA retomar o pedido interrompido pelo corte');
+            assert.match(appSource, /releia a transcrição e o EDL antes de usar qualquer tempo/u,
+              'tempos precisam ser relidos após trims/deletes do usuário');
+
+          """.replace('            ', '  ')
+          if marker not in t:
+              raise SystemExit('Guard failed: clean-cut test marker changed')
+          test.write_text(t.replace(marker, contract + marker, 1), encoding='utf-8')
+      - run: npm ci
+      - name: Verify approval hardening
+        run: |
+          npm run typecheck
+          npm run test:clean-cut
+      - name: Commit verified hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/editai-approval-hardening-once.yml
+          git config user.name "editai-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/App.tsx scripts/test-clean-cut.mjs .github/workflows/editai-approval-hardening-once.yml
+          git commit -m "fix(clean-cut): approve current edits and resume pending request"
+          git push origin HEAD:editai-approval-hardening-20260828
