@@ -1,0 +1,63 @@
+name: EDIT AI Browser Runtime V3
+
+on:
+  push:
+    branches:
+      - editai-browser-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: ${{ !contains(github.event.head_commit.message || '', '[browser-runtime-v3-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout browser runtime
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "EDIT AI Browser Bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Apply browser runtime wiring
+        run: python scripts/editai-browser-runtime-patch.py
+
+      - name: Align IPC uniqueness diagnostic
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('scripts/test-editai-diagnostics.mjs')
+          s = p.read_text(encoding='utf-8')
+          old = "const splitPromptHandlers = mainSource.match(/ipcMain\\.handle\\('preview:suggest-split-prompt'/gu) ?? [];"
+          new = "const splitPromptHandlers = mainSource.match(/(?:ipcMain\\.handle|registerIpcHandle)\\('preview:suggest-split-prompt'/gu) ?? [];"
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('split prompt diagnostic anchor missing')
+          p.write_text(s, encoding='utf-8')
+
+      - name: Commit browser runtime
+        run: |
+          git add src/main.ts package.json scripts/test-browser-production.mjs scripts/test-browser-local-server.mjs scripts/test-editai-diagnostics.mjs
+          git commit -m "feat(web): validate browser-local production runtime [browser-runtime-applied] [browser-runtime-v2-applied] [browser-runtime-v3-applied]"
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full EDIT AI verification
+        run: npm run verify:editai
+
+      - name: Push validated browser runtime
+        run: git push origin HEAD:editai-browser-runtime
