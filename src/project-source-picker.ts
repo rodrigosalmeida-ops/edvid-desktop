@@ -12,7 +12,7 @@ type RecentProjectsDocument = { version?: number; projects?: unknown };
 
 function cleanProjectName(value: string): string {
   return value
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/gu, ' ')
+    .replace(/[<>:"\/\\|?*\u0000-\u001f]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()
     .slice(0, 80);
