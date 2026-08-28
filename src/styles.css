@@ -1078,3 +1078,13 @@ button:disabled, textarea:disabled, input:disabled { cursor: not-allowed; opacit
   align-self: center; padding: 3px 8px; border-radius: 999px;
   background: rgba(10,11,14,.85); color: var(--dim); font-size: 10.5px;
 }
+
+
+/* EDIT AI style-layer tabs parity */
+.style-layer-tabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; padding:0 2px 12px; position:sticky; top:0; z-index:8; background:var(--panel,#111214); }
+.style-layer-tabs button { min-height:42px; border:1px solid rgba(255,255,255,.10); border-radius:10px; background:rgba(255,255,255,.035); color:inherit; display:inline-flex; align-items:center; justify-content:center; gap:7px; cursor:pointer; }
+.style-layer-tabs button.active { border-color:var(--style-accent); background:color-mix(in srgb,var(--style-accent) 14%,transparent); }
+.style-layer-tabs svg { width:16px; height:16px; }
+.style-layer-hidden { display:none !important; }
+.apply-style-layers.contextual { justify-content:flex-end; }
+.apply-style-layers.contextual .apply-style { width:auto; min-width:118px; }
