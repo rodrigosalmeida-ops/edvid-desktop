@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: read
 
 concurrency:
   group: editai-browser-only-final-${{ github.ref }}
@@ -17,6 +19,8 @@ jobs:
   browser-only-final:
     runs-on: windows-latest
     timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout EDIT AI
         uses: actions/checkout@v4
