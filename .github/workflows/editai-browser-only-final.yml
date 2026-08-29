@@ -1,0 +1,60 @@
+name: EDIT AI Browser Only Final
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - editai-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editai-browser-only-final-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-only-final:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout EDIT AI
+        uses: actions/checkout@v4
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify EDIT AI
+        run: npm run verify:editai
+      - name: Stage FFmpeg runtime
+        run: node scripts/editai-ci-stage-torchcodec-prebuilt.mjs
+      - name: Build Windows Setup
+        run: npm run build:editai:win:qa
+      - name: Install EDIT AI
+        run: npm run smoke:editai:install
+      - name: Prove installed browser-only runtime
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/editai-browser-installed-smoke-windows.ps1
+      - name: Installed media smoke
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/editai-media-smoke-windows.ps1 -SmokeReportPath out\editai-installed-smoke.json -OutputPath out\editai-installed-media-smoke.json
+      - name: Real video E2E
+        run: npm run smoke:editai:e2e
+      - name: Upload final browser-only installer and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edit-ai-browser-only-final-${{ github.run_number }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            out/make/squirrel.windows/x64/**
+            out/editai-install-smoke.json
+            out/editai-browser-installed-smoke.json
+            out/editai-installed-media-smoke.json
+            out/editai-e2e-real-report.json
+            out/editai-e2e-real-summary.json
+            out/editai-e2e-real/**
