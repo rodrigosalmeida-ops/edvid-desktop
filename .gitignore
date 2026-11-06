@@ -20,3 +20,12 @@ signing.env
 # Experimento da prévia ao vivo: links para a pasta de um projeto do aluno.
 spike/public
 spike/fonts
+
+# Ruflo local secrets and runtime data
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+.swarm/
+.claude-flow/metrics/
