@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Mesa Play</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  .screen { min-height: 100dvh; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 8px 0 4px; }
+  h2 { font-size: 18px; margin: 24px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .field { width: 100%; padding: 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 18px; }
+  .btn { width: 100%; padding: 16px; font-size: 18px; font-weight: 800; background: var(--accent); color: #0b1020; margin-top: 12px; }
+  .btn.ghost { background: var(--panel-2); color: var(--text); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; text-align: left; color: var(--text); }
+  .card .emoji { font-size: 34px; }
+  .card b { display: block; font-size: 17px; margin-top: 6px; }
+  .card small { color: var(--muted); }
+  .status { background: var(--panel-2); border-radius: 12px; padding: 12px 14px; margin-top: 12px; font-size: 15px; }
+  .status.live { background: #422006; border: 1px solid var(--accent); }
+  .voucher { background: var(--panel); border: 1px dashed var(--accent); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .voucher code { font-size: 22px; font-weight: 900; color: var(--accent); }
+  /* controle */
+  .ctrl { display: flex; flex-direction: column; height: 100dvh; padding: 16px; max-width: 520px; margin: 0 auto; }
+  .ctrl header { text-align: center; }
+  .ctrl .pad { flex: 1; display: grid; place-items: center; }
+  .tap { width: min(72vw, 320px); aspect-ratio: 1; border-radius: 50%; font-size: 42px; font-weight: 900; color: #0b1020; box-shadow: 0 10px 0 #0006; }
+  .tap:active { transform: translateY(6px); box-shadow: 0 4px 0 #0006; }
+  .stick { width: min(76vw, 320px); aspect-ratio: 1; border-radius: 50%; background: var(--panel); border: 2px solid var(--line); position: relative; touch-action: none; }
+  .stick .knob { position: absolute; width: 38%; aspect-ratio: 1; border-radius: 50%; left: 31%; top: 31%; }
+  .modal { position: fixed; inset: 0; background: #000b; display: grid; place-items: center; padding: 16px; z-index: 50; }
+  .modal > div { background: var(--panel); border-radius: 20px; padding: 24px; text-align: center; width: 100%; max-width: 420px; }
+  .modal .code { font-size: 40px; font-weight: 900; color: var(--accent); letter-spacing: .05em; margin: 12px 0; }
+  /* solo */
+  .solo { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; }
+  .solo header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; }
+  .solo header button { background: var(--panel-2); color: var(--text); padding: 8px 14px; }
+  .solo canvas { flex: 1; width: 100%; touch-action: none; }
+  .mem { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 16px; max-width: 480px; margin: 0 auto; width: 100%; }
+  .mem button { aspect-ratio: 1; font-size: 34px; background: var(--panel-2); color: transparent; }
+  .mem button.open, .mem button.done { background: var(--panel); color: inherit; }
+  .mem button.done { opacity: .45; }
+</style>
+</head>
+<body>
+<!-- 1. nome -->
+<section class="screen hidden" id="s-name">
+  <h1>🎮 Mesa Play</h1>
+  <p class="muted" id="venueLine">Jogue pelo celular e dispute na TV do restaurante.</p>
+  <h2>Como te chamam?</h2>
+  <input class="field" id="nameInput" maxlength="16" placeholder="Seu apelido" autocomplete="nickname">
+  <button class="btn" id="enterBtn">Entrar</button>
+  <p class="muted" style="font-size:13px;margin-top:16px">Sem cadastro e sem aposta: os prêmios saem de rodadas grátis por habilidade.</p>
+</section>
+
+<!-- 2. menu -->
+<section class="screen hidden" id="s-menu">
+  <h1 id="hello">Oi!</h1>
+  <p class="muted" id="venueName"></p>
+  <div class="status" id="roomStatus">Conectando…</div>
+  <h2>Disputa na TV</h2>
+  <div class="grid">
+    <button class="card" data-join="arena"><span class="emoji">🪙</span><b>Arena de Moedas</b><small>joystick · até 4</small></button>
+    <button class="card" data-join="tapRace"><span class="emoji">🏁</span><b>Corrida do Toque</b><small>toque rápido · até 4</small></button>
+  </div>
+  <h2>Jogar sozinho</h2>
+  <div class="grid">
+    <button class="card" data-solo="corrida"><span class="emoji">🏎️</span><b>Corrida</b><small>desvie dos carros</small></button>
+    <button class="card" data-solo="memoria"><span class="emoji">🧠</span><b>Memória</b><small>ache os pares</small></button>
+  </div>
+  <h2>Meus prêmios</h2>
+  <div id="vouchers"><p class="muted">Ganhe uma rodada surpresa para levar um prêmio.</p></div>
+  <button class="btn ghost" id="renameBtn" style="margin-top:24px">Trocar apelido</button>
+</section>
+
+<!-- 3. controle das disputas -->
+<section class="ctrl hidden" id="s-ctrl">
+  <header><h1 id="ctrlTitle"></h1><p class="muted" id="ctrlInfo"></p></header>
+  <div class="pad" id="pad"></div>
+  <button class="btn ghost" id="leaveBtn">Sair da disputa</button>
+</section>
+
+<!-- jogos solo -->
+<section class="solo hidden" id="s-solo">
+  <header><b id="soloTitle"></b><span id="soloScore"></span><button id="soloBack">Voltar</button></header>
+  <div id="soloBody" style="flex:1;display:flex;flex-direction:column"></div>
+</section>
+
+<div class="modal hidden" id="modal"><div id="modalBody"></div></div>
+<script type="module" src="/play.js"></script>
+</body>
+</html>

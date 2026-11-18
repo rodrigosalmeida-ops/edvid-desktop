@@ -1,0 +1,17 @@
+{
+  "name": "mesa-play",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Jogos por QR Code nas TVs do restaurante: disputas na TV, rodadas surpresa com prêmios e espaço de anúncio.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/smoke.mjs"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}

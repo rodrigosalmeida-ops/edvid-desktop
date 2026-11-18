@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mesa Play</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
+  a.card { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-top: 12px; color: var(--text); text-decoration: none; }
+  a.card b { font-size: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎮 Mesa Play</h1>
+  <p class="muted">Jogos por QR Code nas TVs do restaurante.</p>
+  <a class="card" href="/tv?id=1"><b>📺 Tela da TV 1</b><br><span class="muted">Abra em tela cheia no navegador da TV.</span></a>
+  <a class="card" href="/play?tv=1"><b>📱 Jogar (celular)</b><br><span class="muted">O que o cliente abre ao ler o QR Code.</span></a>
+  <a class="card" href="/admin"><b>⚙️ Painel do restaurante</b><br><span class="muted">Anúncios, prêmios, rodadas surpresa e validação de códigos.</span></a>
+</main>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mesa Play — TV</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { overflow: hidden; }
+  .tv { display: grid; grid-template-columns: 2fr 1fr; gap: 1.2vw; padding: 1.2vw; height: 100vh; }
+  .stage { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; }
+  .stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .fallback { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+    background: radial-gradient(circle at 30% 30%, #1e3a8a, #0b1020 70%); }
+  .fallback h1 { font-size: 4.2vw; margin: 0; }
+  .fallback p { font-size: 1.6vw; color: var(--muted); }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: #0d1530; }
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+    background: radial-gradient(circle at 50% 30%, #1e293b, #0b1020 75%); padding: 3vw; }
+  .overlay h2 { font-size: 3.4vw; margin: 0 0 .6vw; }
+  .overlay p { font-size: 1.5vw; color: var(--muted); margin: .3vw 0; }
+  .big { font-size: 7vw; font-weight: 900; letter-spacing: .05em; }
+  .chips { display: flex; gap: 1vw; justify-content: center; flex-wrap: wrap; margin-top: 1.5vw; }
+  .chip { padding: .6vw 1.2vw; border-radius: 999px; font-weight: 800; font-size: 1.5vw; color: #0b1020; }
+  .hud { position: absolute; top: 1vw; left: 50%; transform: translateX(-50%); background: #000a;
+    padding: .4vw 1.4vw; border-radius: 999px; font-weight: 800; font-size: 1.6vw; }
+  .side { display: grid; grid-template-rows: 1fr auto auto; gap: 1.2vw; min-height: 0; }
+  .ad { border-radius: var(--radius); padding: 2vw; display: flex; flex-direction: column; justify-content: flex-end;
+    color: #0b1020; position: relative; overflow: hidden; transition: background .6s; background-size: cover; background-position: center; }
+  .ad .tag { position: absolute; top: 1vw; left: 1vw; font-size: .8vw; font-weight: 800; letter-spacing: .1em;
+    background: #0b102033; padding: .2vw .6vw; border-radius: 6px; text-transform: uppercase; }
+  .ad h3 { font-size: 2.6vw; margin: 0; line-height: 1.05; }
+  .ad p { font-size: 1.3vw; margin: .6vw 0 0; font-weight: 600; }
+  .ad.has-img { color: #fff; text-shadow: 0 2px 12px #000; }
+  .qr { background: var(--panel); border-radius: var(--radius); padding: 1.2vw; display: flex; gap: 1.2vw; align-items: center; }
+  .qr img { width: 9.5vw; height: 9.5vw; background: #fff; border-radius: 10px; padding: .3vw; }
+  .qr h4 { margin: 0; font-size: 1.7vw; }
+  .qr p { margin: .4vw 0 0; color: var(--muted); font-size: 1.05vw; }
+  .board { background: var(--panel); border-radius: var(--radius); padding: 1vw 1.2vw; font-size: 1.05vw; }
+  .board h5 { margin: 0 0 .5vw; font-size: 1.1vw; color: var(--accent); text-transform: uppercase; letter-spacing: .08em; }
+  .board ol { margin: 0; padding-left: 1.4vw; }
+  .board .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1vw; }
+  .offline { position: fixed; top: 8px; right: 8px; background: var(--bad); padding: 4px 10px; border-radius: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="tv">
+  <section class="stage" id="stage">
+    <div class="fallback" id="fallback"><div><h1 id="venue">Mesa Play</h1><p>Escaneie o QR Code ao lado e jogue pelo celular</p></div></div>
+    <iframe id="content" class="hidden" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    <canvas id="game" class="hidden"></canvas>
+    <div class="hud hidden" id="hud"></div>
+    <div class="overlay hidden" id="overlay"></div>
+  </section>
+  <aside class="side">
+    <div class="ad" id="ad"><span class="tag">Publicidade</span><h3></h3><p></p></div>
+    <div class="qr"><img id="qr" alt="QR Code para jogar"><div><h4>Aponte a câmera e jogue!</h4><p id="qrHint">Jogos no celular, disputas aqui na TV e rodadas surpresa com prêmios.</p></div></div>
+    <div class="board"><h5>Recordes de hoje</h5><div class="cols"><div><b>🏎️ Corrida</b><ol id="lb-corrida"></ol></div><div><b>🧠 Memória</b><ol id="lb-memoria"></ol></div></div></div>
+  </aside>
+</div>
+<div class="offline hidden" id="offline">sem conexão</div>
+<script type="module" src="/tv.js"></script>
+</body>
+</html>
